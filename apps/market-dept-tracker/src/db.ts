@@ -1,0 +1,225 @@
+import { DatabaseSync } from 'node:sqlite'
+import { mkdirSync, readFileSync } from 'node:fs'
+import { dirname } from 'node:path'
+import { createHash, randomBytes } from 'node:crypto'
+import type { Department, Duty, Person, Position } from './types.ts'
+
+/**
+ * Storage for the tracker. Everything lives in one SQLite file so the whole
+ * platform can be copied between machines as a single artifact.
+ */
+
+export interface Database {
+  raw: DatabaseSync
+  close(): void
+}
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS departments (
+  id         TEXT PRIMARY KEY,
+  code       TEXT NOT NULL UNIQUE,
+  name       TEXT NOT NULL,
+  name_en    TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS positions (
+  id              TEXT PRIMARY KEY,
+  department_id   TEXT NOT NULL REFERENCES departments(id),
+  name            TEXT NOT NULL,
+  role            TEXT NOT NULL DEFAULT '',
+  level           TEXT NOT NULL,
+  parent_id       TEXT REFERENCES positions(id),
+  headcount_note  TEXT NOT NULL DEFAULT '',
+  instructions    TEXT NOT NULL DEFAULT '',
+  boundary        TEXT NOT NULL DEFAULT '',
+  note            TEXT NOT NULL DEFAULT '',
+  ordinal         INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS duties (
+  id           TEXT PRIMARY KEY,
+  position_id  TEXT NOT NULL REFERENCES positions(id),
+  ordinal      INTEGER NOT NULL,
+  text         TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS people (
+  id             TEXT PRIMARY KEY,
+  department_id  TEXT NOT NULL REFERENCES departments(id),
+  name           TEXT NOT NULL,
+  position_id    TEXT NOT NULL REFERENCES positions(id),
+  token          TEXT NOT NULL UNIQUE,
+  pending        INTEGER NOT NULL DEFAULT 0,
+  note           TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS reports (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  person_id      TEXT NOT NULL REFERENCES people(id),
+  period_type    TEXT NOT NULL,
+  period_key     TEXT NOT NULL,
+  period_label   TEXT NOT NULL,
+  summary        TEXT NOT NULL DEFAULT '',
+  blockers       TEXT NOT NULL DEFAULT '',
+  next_plan      TEXT NOT NULL DEFAULT '',
+  submitted_at   TEXT NOT NULL,
+  UNIQUE (person_id, period_type, period_key)
+);
+
+CREATE TABLE IF NOT EXISTS report_items (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  report_id   INTEGER NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+  duty_id     TEXT NOT NULL REFERENCES duties(id),
+  status      TEXT NOT NULL,
+  percent     INTEGER,
+  note        TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_duties_position ON duties(position_id);
+CREATE INDEX IF NOT EXISTS idx_people_position ON people(position_id);
+CREATE INDEX IF NOT EXISTS idx_reports_period ON reports(period_type, period_key);
+CREATE INDEX IF NOT EXISTS idx_report_items_report ON report_items(report_id);
+`
+
+export function openDatabase(file: string): Database {
+  if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true })
+  const raw = new DatabaseSync(file)
+  raw.exec('PRAGMA journal_mode = WAL')
+  raw.exec('PRAGMA foreign_keys = ON')
+  raw.exec(SCHEMA)
+  return { raw, close: () => raw.close() }
+}
+
+/** Turn a Chinese or mixed name into a URL-safe slug. */
+export function slugify(input: string): string {
+  const ascii = input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  if (ascii) return ascii
+  // No latin characters: fall back to a stable hash of the name.
+  return 'p-' + createHash('sha1').update(input).digest('hex').slice(0, 10)
+}
+
+/** A short, unguessable token used in a person's own report link. */
+export function makeToken(): string {
+  return randomBytes(16).toString('hex')
+}
+
+export interface SeedFile {
+  departments: {
+    code: string
+    name: string
+    name_en: string
+    positions: {
+      name: string
+      role: string
+      level: string
+      parent: string | null
+      headcount_note: string
+      instructions: string
+      boundary: string
+      note?: string
+      duties: string[]
+      members: string[]
+    }[]
+    pending?: { name: string; note: string }[]
+  }[]
+}
+
+function readSeedFile(path: string): SeedFile {
+  return JSON.parse(readFileSync(path, 'utf8')) as SeedFile
+}
+
+/**
+ * Load the responsibility table into the database.
+ *
+ * Positions and people keep stable ids derived from their names, so re-seeding
+ * an existing database keeps the links people already have. Reports and people
+ * are preserved: the seed only fills in what is missing.
+ */
+export function seedDatabase(db: Database, seedPath: string): { departments: number; positions: number; people: number; duties: number } {
+  const seed = readSeedFile(seedPath)
+  const counts = { departments: 0, positions: 0, people: 0, duties: 0 }
+
+  const insertDept = db.raw.prepare(
+    'INSERT INTO departments (id, code, name, name_en) VALUES (?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET name = excluded.name, name_en = excluded.name_en',
+  )
+  const insertPosition = db.raw.prepare(
+    `INSERT INTO positions (id, department_id, name, role, level, parent_id, headcount_note, instructions, boundary, note, ordinal)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (id) DO UPDATE SET
+       name = excluded.name, role = excluded.role, level = excluded.level, parent_id = excluded.parent_id,
+       headcount_note = excluded.headcount_note, instructions = excluded.instructions,
+       boundary = excluded.boundary, note = excluded.note, ordinal = excluded.ordinal`,
+  )
+  const insertDuty = db.raw.prepare(
+    'INSERT INTO duties (id, position_id, ordinal, text) VALUES (?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET ordinal = excluded.ordinal, text = excluded.text',
+  )
+  const insertPerson = db.raw.prepare(
+    `INSERT INTO people (id, department_id, name, position_id, token, pending, note)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (id) DO UPDATE SET name = excluded.name, position_id = excluded.position_id, pending = excluded.pending, note = excluded.note`,
+  )
+  const selectPerson = db.raw.prepare('SELECT id, token FROM people WHERE id = ?')
+  const selectDuty = db.raw.prepare('SELECT id FROM duties WHERE id = ?')
+
+  for (const dept of seed.departments) {
+    const deptId = slugify(dept.code)
+    insertDept.run(deptId, dept.code, dept.name, dept.name_en)
+    counts.departments++
+
+    // Position ids come from the name, but must be unique inside the
+    // department, so a repeated name gets a numeric suffix.
+    const usedIds = new Map<string, number>()
+    const positionId = (name: string): string => {
+      const base = slugify(name)
+      const seen = usedIds.get(base) ?? 0
+      usedIds.set(base, seen + 1)
+      return seen === 0 ? base : `${base}-${seen + 1}`
+    }
+
+    const ids = new Map<string, string>()
+    for (const p of dept.positions) ids.set(p.name, positionId(p.name))
+
+    for (const [index, p] of dept.positions.entries()) {
+      const id = ids.get(p.name)!
+      insertPosition.run(
+        id, deptId, p.name, p.role ?? p.name, p.level, p.parent ? (ids.get(p.parent) ?? null) : null,
+        p.headcount_note ?? '', p.instructions ?? '', p.boundary ?? '', p.note ?? '', index,
+      )
+      counts.positions++
+
+      for (const [ordinal, text] of p.duties.entries()) {
+        const dutyId = `${id}#${ordinal + 1}`
+        insertDuty.run(dutyId, id, ordinal + 1, text)
+        if (!selectDuty.get(dutyId)) counts.duties++
+      }
+
+      for (const name of p.members) {
+        const personId = slugify(name)
+        const existing = selectPerson.get(personId) as { id: string; token: string } | undefined
+        const token = existing?.token ?? makeToken()
+        insertPerson.run(personId, deptId, name, id, token, 0, '')
+        counts.people++
+      }
+    }
+
+    // People whose placement the source table left open still need a slot to
+    // report against, so they land in a holding position under the manager.
+    for (const p of dept.pending ?? []) {
+      const personId = slugify(p.name)
+      const existing = selectPerson.get(personId) as { id: string; token: string } | undefined
+      if (existing) {
+        db.raw.prepare('UPDATE people SET note = ? WHERE id = ?').run(p.note, personId)
+        continue
+      }
+      const holderId = `${deptId}-pending`
+      insertPosition.run(holderId, deptId, '待定岗人员', '待定岗', 'specialist_staff', null, '', '', '', '', 9999)
+      insertPerson.run(personId, deptId, p.name, holderId, makeToken(), 1, p.note)
+      counts.people++
+    }
+  }
+
+  return counts
+}

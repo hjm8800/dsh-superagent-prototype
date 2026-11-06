@@ -1,0 +1,25 @@
+{
+  "name": "market-dept-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "市场部岗位职责与周/月工作完成情况收集平台",
+  "type": "module",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "bin": {
+    "market-dept-tracker": "./lib/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node lib/src/cli.js",
+    "dev": "node --experimental-strip-types src/cli.ts",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "check": "pnpm typecheck && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "@types/node": "24.0.0",
+    "typescript": "5.9.2"
+  }
+}
