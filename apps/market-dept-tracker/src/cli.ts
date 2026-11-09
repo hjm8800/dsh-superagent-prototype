@@ -1,11 +1,13 @@
 #!/usr/bin/env node
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { openDatabase, seedDatabase } from './db.ts'
+import { openDatabase, seedArtifacts, seedDatabase } from './db.ts'
 import { Store } from './store.ts'
 import { createTrackerServer } from './server.ts'
+import { collect } from './collection.ts'
+import { DirectorySource, FeishuFolderSource, type FileSource } from './collector.ts'
 
 /**
  * Command line entry point.
@@ -64,9 +66,39 @@ function findSeed(): string | undefined {
   return candidates.find((path) => existsSync(path))
 }
 
+/** Locate the expected-outputs file, beside the seed file. */
+function findArtifacts(): string | undefined {
+  const candidates = [
+    resolve(HERE, '..', 'seed', 'artifacts.json'),
+    resolve(HERE, '..', '..', 'seed', 'artifacts.json'),
+    resolve(process.cwd(), 'seed', 'artifacts.json'),
+  ]
+  return candidates.find((path) => existsSync(path))
+}
+
+/** The shared place the employees leave their outcome files. */
+function fileSource(options: Record<string, string>): FileSource | undefined {
+  const folder = options['feishu-folder']
+  if (folder) return new FeishuFolderSource('飞书云空间', folder)
+  const directory = options['collect-dir']
+  if (directory) {
+    const path = resolve(directory)
+    // A share that keeps a list of who owns which file; the name of the
+    // file is the fallback.
+    const rosterPath = join(path, 'owners.json')
+    if (existsSync(rosterPath)) {
+      const roster = JSON.parse(readFileSync(rosterPath, 'utf8')) as Record<string, string>
+      return new DirectorySource('指定目录', path, { owners: (name) => roster[name] ?? '' })
+    }
+    return new DirectorySource('指定目录', path)
+  }
+  return undefined
+}
+
 const { command, options } = parseArgs(process.argv.slice(2))
 const dataFile = resolve(options['data'] ?? join(process.cwd(), 'data', 'tracker.db'))
 const seedPath = findSeed()
+const artifactPath = findArtifacts()
 
 if (!seedPath) {
   console.error('找不到岗位种子数据 seed/market-department.json')
@@ -75,10 +107,23 @@ if (!seedPath) {
 
 const db = openDatabase(dataFile)
 const counts = seedDatabase(db, seedPath)
+const artifactCount = artifactPath ? seedArtifacts(db, artifactPath) : 0
 const store = new Store(db)
 
 if (command === 'seed') {
-  console.log(`已写入 ${counts.positions} 个岗位、${counts.people} 名人员、${counts.duties} 条职责到 ${dataFile}`)
+  // The counts say what was added; the totals say what the database holds.
+  const totals = {
+    positions: store.positions().length,
+    people: store.people().length,
+    duties: store.positions().reduce((sum, p) => sum + store.duties(p.id).length, 0),
+    artifacts: store.artifacts().length,
+  }
+  console.log(
+    `${dataFile}：现有 ${totals.positions} 个岗位、${totals.people} 名人员、${totals.duties} 条职责、${totals.artifacts} 项预期产出`,
+  )
+  if (counts.positions > 0) {
+    console.log(`本次新增：${counts.positions} 个岗位、${counts.people} 名人员、${counts.duties} 条职责、${artifactCount} 项预期产出`)
+  }
   db.close()
   process.exit(0)
 }
@@ -88,6 +133,32 @@ if (command === 'links') {
   for (const person of store.people()) {
     const position = store.positionById(person.positionId)
     console.log(`${person.name}\t${position?.name ?? ''}\t${base}/report?token=${person.token}`)
+  }
+  db.close()
+  process.exit(0)
+}
+
+if (command === 'collect') {
+  const source = fileSource(options)
+  if (!source) {
+    console.error('请指定成果文件的位置：--feishu-folder <云空间文件夹 token> 或 --collect-dir <目录>')
+    process.exit(1)
+  }
+  const periodType = options['type'] === 'month' ? 'month' : 'week'
+  const outcome = await collect(store, source, {
+    periodType,
+    periodKey: options['period'],
+    periodLabel: options['period-label'],
+  })
+  console.log(`来源：${outcome.source}`)
+  console.log(`周期：${outcome.periodLabel}（${outcome.periodKey}）`)
+  console.log(`认出的产出 ${outcome.credited} 份，认不出 ${outcome.uncredited} 份，非成果文件 ${outcome.ignored} 份`)
+  if (outcome.unmatched.length > 0) {
+    console.log('')
+    console.log('认不出的文件：')
+    for (const item of outcome.unmatched) {
+      console.log(`  ${item.file.name} —— ${item.reason}`)
+    }
   }
   db.close()
   process.exit(0)

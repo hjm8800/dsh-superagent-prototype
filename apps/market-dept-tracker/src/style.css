@@ -142,7 +142,7 @@ body {
 
 /* --------------------------------------------------------------- chips */
 
-.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 
 .chip {
   padding: 4px 12px;
@@ -156,6 +156,28 @@ body {
 
 .chip:hover { border-color: var(--primary); color: var(--primary); }
 .chip.is-active { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
+
+/* ---------------------------------------------------------- mode switch */
+
+.mode-switch {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 16px;
+  background: var(--surface);
+}
+
+.mode {
+  padding: 6px 16px;
+  font-size: 13px;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.mode + .mode { border-left: 1px solid var(--border); }
+.mode:hover { color: var(--primary); }
+.mode.is-active { background: var(--primary); color: #fff; font-weight: 600; }
 
 /* -------------------------------------------------------------- table */
 

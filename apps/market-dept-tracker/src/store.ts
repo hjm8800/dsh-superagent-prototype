@@ -1,5 +1,6 @@
 import type { Database } from './db.ts'
 import type {
+  ArtifactGroup,
   Department,
   Duty,
   Person,
@@ -10,6 +11,69 @@ import type {
   Report,
   ReportItem,
 } from './types.ts'
+
+/** A row of the artifacts table, before it is mapped to the model. */
+interface ArtifactRow {
+  id: string
+  position_id: string
+  artifact: string
+  keywords: string
+  duty_ids: string
+  note: string
+}
+
+/** A row of the collected_files table, before it is mapped to the model. */
+interface CollectedFileRow {
+  id: string
+  name: string
+  owner_name: string
+  modified_at: string
+  location: string
+  person_id: string | null
+  artifact_id: string | null
+  matched_keyword: string
+  reason: string
+}
+
+/** A file the collector found, as the views need it. */
+export interface CollectedFileRecord {
+  id: string
+  name: string
+  ownerName: string
+  modifiedAt: string
+  location: string
+  personId: string | null
+  artifactId: string | null
+  matchedKeyword: string
+  reason: string
+}
+
+/** One person's completion, derived from the files they filed. */
+export interface PersonProgress {
+  personId: string
+  personName: string
+  positionId: string
+  positionName: string
+  level: string
+  /** How many files the collector credited to this person. */
+  files: number
+  /** How many of their duties expect an output. */
+  expected: number
+  /** How many of those outputs arrived. */
+  done: number
+  /** Completion percentage, 0-100. */
+  percent: number
+}
+
+/** Read a list stored as a JSON array in a text column. */
+function parseList(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed.map(String) : []
+  } catch {
+    return []
+  }
+}
 
 /** A row as it comes back from SQLite, before it is mapped to the model. */
 interface PositionRow {
@@ -246,6 +310,194 @@ export class Store {
   }
 
   // ---------------------------------------------------------- aggregation
+
+  /**
+   * The expected outputs of every post that declares one.
+   */
+  artifacts(): ArtifactGroup[] {
+    const rows = this.db.raw
+      .prepare('SELECT id, position_id, artifact, keywords, duty_ids, note FROM artifacts ORDER BY position_id, id')
+      .all() as unknown as ArtifactRow[]
+    return rows.map((r) => ({
+      id: r.id,
+      positionId: r.position_id,
+      artifact: r.artifact,
+      keywords: parseList(r.keywords),
+      dutyIds: parseList(r.duty_ids),
+      note: r.note,
+    }))
+  }
+
+  /**
+   * Store what the collector found.
+   *
+   * Files are keyed by their id in the source, so re-running the collector
+   * over the same folder updates a file rather than adding a second one.
+   */
+  saveCollectedFiles(
+    periodType: string,
+    periodKey: string,
+    files: {
+      id: string
+      name: string
+      ownerName: string
+      modifiedAt: string
+      location: string
+      personId: string | null
+      artifactId: string | null
+      matchedKeyword: string
+      reason: string
+    }[],
+    collectedAt: string,
+  ): void {
+    const insert = this.db.raw.prepare(
+      `INSERT INTO collected_files (id, period_type, period_key, name, owner_name, modified_at, location, person_id, artifact_id, matched_keyword, reason, collected_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (id) DO UPDATE SET
+         period_type = excluded.period_type, period_key = excluded.period_key, name = excluded.name,
+         owner_name = excluded.owner_name, modified_at = excluded.modified_at, location = excluded.location,
+         person_id = excluded.person_id, artifact_id = excluded.artifact_id,
+         matched_keyword = excluded.matched_keyword, reason = excluded.reason, collected_at = excluded.collected_at`,
+    )
+    this.db.raw.exec('BEGIN')
+    try {
+      for (const file of files) {
+        insert.run(
+          file.id, periodType, periodKey, file.name, file.ownerName, file.modifiedAt, file.location,
+          file.personId, file.artifactId, file.matchedKeyword, file.reason, collectedAt,
+        )
+      }
+      this.db.raw.exec('COMMIT')
+    } catch (error) {
+      this.db.raw.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  /** The files the collector found for one period. */
+  collectedFiles(periodType: string, periodKey: string): CollectedFileRecord[] {
+    const rows = this.db.raw
+      .prepare(
+        `SELECT id, name, owner_name, modified_at, location, person_id, artifact_id, matched_keyword, reason
+         FROM collected_files WHERE period_type = ? AND period_key = ? ORDER BY name`,
+      )
+      .all(periodType, periodKey) as unknown as CollectedFileRow[]
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      ownerName: r.owner_name,
+      modifiedAt: r.modified_at,
+      location: r.location,
+      personId: r.person_id,
+      artifactId: r.artifact_id,
+      matchedKeyword: r.matched_keyword,
+      reason: r.reason,
+    }))
+  }
+
+  /**
+   * Completion per position, derived from the files the collector found.
+   *
+   * A duty counts as done when the person filed a file for the output that
+   * duty expects. A position's expected count is its people times its duties,
+   * so a post where nobody filed anything shows as incomplete rather than
+   * quietly missing.
+   */
+  artifactProgress(
+    periodType: string,
+    periodKey: string,
+    departmentId?: string,
+  ): PositionProgress[] {
+    const positions = this.positions(departmentId)
+    const people = this.people(departmentId)
+    const artifacts = this.artifacts()
+    const files = this.collectedFiles(periodType, periodKey)
+    const artifactsByDuty = new Map<string, ArtifactGroup>()
+    for (const artifact of artifacts) {
+      for (const dutyId of artifact.dutyIds) artifactsByDuty.set(dutyId, artifact)
+    }
+    const filesByPersonAndArtifact = new Set<string>()
+    for (const file of files) {
+      if (file.personId && file.artifactId) filesByPersonAndArtifact.add(`${file.personId}|${file.artifactId}`)
+    }
+
+    return positions.map((position) => {
+      const duties = this.duties(position.id)
+      const members = people.filter((p) => p.positionId === position.id)
+      let answered = 0
+      let expected = 0
+      let done = 0
+      for (const member of members) {
+        for (const duty of duties) {
+          const artifact = artifactsByDuty.get(duty.id)
+          if (!artifact) continue
+          expected++
+          if (filesByPersonAndArtifact.has(`${member.id}|${artifact.id}`)) {
+            answered++
+            done++
+          }
+        }
+      }
+      return {
+        positionId: position.id,
+        positionName: position.name,
+        level: position.level,
+        reported: members.filter((m) => files.some((f) => f.personId === m.id)).length,
+        total: members.length,
+        answered,
+        expected,
+        percent: expected === 0 ? 0 : Math.round((done / expected) * 1000) / 10,
+        done,
+        blocked: 0,
+      }
+    })
+  }
+
+  /**
+   * Completion per person, derived from the files the collector found.
+   */
+  artifactProgressByPerson(
+    periodType: string,
+    periodKey: string,
+    departmentId?: string,
+  ): PersonProgress[] {
+    const people = this.people(departmentId)
+    const artifacts = this.artifacts()
+    const files = this.collectedFiles(periodType, periodKey)
+    const artifactsByDuty = new Map<string, ArtifactGroup>()
+    for (const artifact of artifacts) {
+      for (const dutyId of artifact.dutyIds) artifactsByDuty.set(dutyId, artifact)
+    }
+    const filesByPersonAndArtifact = new Set<string>()
+    const filesByPerson = new Map<string, number>()
+    for (const file of files) {
+      if (!file.personId) continue
+      filesByPerson.set(file.personId, (filesByPerson.get(file.personId) ?? 0) + 1)
+      if (file.artifactId) filesByPersonAndArtifact.add(`${file.personId}|${file.artifactId}`)
+    }
+
+    return people.map((person) => {
+      const position = this.positionById(person.positionId)
+      const duties = position?.duties ?? []
+      const expected = duties.filter((duty) => artifactsByDuty.has(duty.id)).length
+      let done = 0
+      for (const duty of duties) {
+        const artifact = artifactsByDuty.get(duty.id)
+        if (artifact && filesByPersonAndArtifact.has(`${person.id}|${artifact.id}`)) done++
+      }
+      return {
+        personId: person.id,
+        personName: person.name,
+        positionId: person.positionId,
+        positionName: position?.name ?? '',
+        level: position?.level ?? 'specialist_staff',
+        files: filesByPerson.get(person.id) ?? 0,
+        expected,
+        done,
+        percent: expected === 0 ? 0 : Math.round((done / expected) * 1000) / 10,
+      }
+    })
+  }
 
   /**
    * Completion per position for one period.

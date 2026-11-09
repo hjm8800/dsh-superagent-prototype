@@ -15,6 +15,23 @@ export interface OverviewData {
   reportedCount: number
   tree: PositionView[]
   items: OverviewItem[]
+  /**
+   * How the completion was worked out: from the outcome files the team
+   * filed, or from the reports people filled in.
+   */
+  mode: 'files' | 'reports'
+  /** The completion per person, derived from the collected files. */
+  filePeople?: {
+    personId: string
+    personName: string
+    positionName: string
+    files: number
+    expected: number
+    done: number
+    percent: number
+  }[]
+  /** How many files the collector could not place. */
+  unmatchedCount?: number
 }
 
 export interface OverviewItem {
@@ -28,6 +45,166 @@ export interface OverviewItem {
   submittedAt: string
 }
 
+/** One expected output of a post. */
+export interface ArtifactView {
+  id: string
+  positionName: string
+  artifact: string
+  keywords: string[]
+  dutyIds: string[]
+  note: string
+}
+
+/** A file the collector found, with what it was credited to. */
+export interface CollectedFileView {
+  name: string
+  personName: string
+  positionName: string
+  artifactName: string
+  matchedKeyword: string
+  reason: string
+  modifiedAt: string
+  /** The uploader, when the file could not be credited to a person. */
+  ownerHint?: string
+}
+
+export interface CollectionData {
+  departmentName: string
+  periodType: PeriodType
+  periodKey: string
+  periodLabel: string
+  /** Where the files were read from. */
+  source: string
+  /** When the collection ran. */
+  collectedAt: string
+  artifacts: ArtifactView[]
+  files: CollectedFileView[]
+  /** Files that could not be credited. */
+  unmatched: CollectedFileView[]
+  /** Completion per person, derived from the files. */
+  people: {
+    personId: string
+    personName: string
+    positionName: string
+    files: number
+    expected: number
+    done: number
+    percent: number
+  }[]
+}
+
+/**
+ * The collection page: what the platform recognized, and what it did not.
+ */
+export function renderCollection(data: CollectionData): string {
+  const artifactRows = data.artifacts
+    .map(
+      (a) => `<tr>
+  <td>${escapeHtml(a.positionName)}</td>
+  <td>${escapeHtml(a.artifact)}</td>
+  <td class="note-cell">${escapeHtml(a.keywords.join('、'))}</td>
+  <td class="num">${a.dutyIds.length}</td>
+</tr>`,
+    )
+    .join('')
+
+  const fileRows = data.files
+    .map(
+      (f) => `<tr>
+  <td>${escapeHtml(f.name)}</td>
+  <td>${escapeHtml(f.personName || '—')}</td>
+  <td>${escapeHtml(f.positionName || '—')}</td>
+  <td>${escapeHtml(f.artifactName || '—')}</td>
+  <td class="note-cell">${escapeHtml(f.matchedKeyword || '—')}</td>
+  <td class="note-cell">${escapeHtml(f.modifiedAt.slice(0, 10))}</td>
+</tr>`,
+    )
+    .join('')
+
+  const unmatchedRows = data.unmatched
+    .map(
+      (f) => `<tr>
+  <td>${escapeHtml(f.name)}</td>
+  <td>${escapeHtml(f.ownerHint ?? '')}</td>
+  <td class="note-cell is-alert">${escapeHtml(f.reason)}</td>
+</tr>`,
+    )
+    .join('')
+
+  const personRows = data.people
+    .filter((p) => p.expected > 0)
+    .map(
+      (p) => `<tr>
+  <td>${escapeHtml(p.personName)}</td>
+  <td>${escapeHtml(p.positionName)}</td>
+  <td class="num">${p.files}</td>
+  <td class="num">${p.done}/${p.expected}</td>
+  <td class="wide">${bar(p.percent)}<span class="pct">${p.percent}%</span></td>
+</tr>`,
+    )
+    .join('')
+
+  const body = `
+${pageHead(
+  `${data.departmentName} · 成果文件采集`,
+  `${data.periodLabel}，来源：${escapeHtml(data.source)}，采集于 ${escapeHtml(data.collectedAt.slice(0, 16).replace('T', ' '))}`,
+)}
+<div class="stat-row">
+  ${stat('认出的产出', String(data.files.length), '已归到人和产出')}
+  ${stat('认不出的文件', String(data.unmatched.length), data.unmatched.length > 0 ? '需要确认' : '没有遗漏')}
+  ${stat('预期产出项', String(data.artifacts.length), '各岗位应交的成果')}
+  ${stat('有产出的岗位', String(data.people.filter((p) => p.files > 0).length), '按人统计')}
+</div>
+
+<section class="card">
+  <h2>按人统计</h2>
+  ${
+    personRows
+      ? `<table class="table">
+  <thead><tr><th>姓名</th><th>岗位</th><th>文件数</th><th>已交/应交</th><th>完成度</th></tr></thead>
+  <tbody>${personRows}</tbody>
+</table>`
+      : empty('还没有采集到成果文件。')
+  }
+</section>
+
+<section class="card">
+  <h2>认出的产出</h2>
+  ${
+    fileRows
+      ? `<table class="table">
+  <thead><tr><th>文件</th><th>提交人</th><th>岗位</th><th>对应产出</th><th>命中关键词</th><th>修改时间</th></tr></thead>
+  <tbody>${fileRows}</tbody>
+</table>`
+      : empty('还没有认出的成果文件。')
+  }
+</section>
+
+${
+  data.unmatched.length > 0
+    ? `<section class="card">
+  <h2>认不出的文件</h2>
+  <p class="muted small">这些文件没有被算进完成情况。改名成「姓名＋产出名」即可自动归位。</p>
+  <table class="table">
+  <thead><tr><th>文件</th><th>上传人</th><th>原因</th></tr></thead>
+  <tbody>${unmatchedRows}</tbody>
+</table>
+</section>`
+    : ''
+}
+
+<section class="card">
+  <h2>各岗位的预期产出</h2>
+  <p class="muted small">文件名里出现任一关键词，就认为这项产出已交。</p>
+  <table class="table">
+  <thead><tr><th>岗位</th><th>预期产出</th><th>识别关键词</th><th>覆盖职责</th></tr></thead>
+  <tbody>${artifactRows}</tbody>
+</table>
+</section>
+`
+  return layout({ title: '成果采集', active: 'collection', body })
+}
+
 export function renderOverview(data: OverviewData): string {
   const reported = data.reportedCount
   const total = data.peopleCount
@@ -36,13 +213,19 @@ export function renderOverview(data: OverviewData): string {
     ? 0
     : Math.round((data.positions.reduce((sum, p) => sum + p.percent, 0) / data.positions.length) * 10) / 10
   const blocked = data.positions.reduce((sum, p) => sum + p.blocked, 0)
+  const fromFiles = data.mode === 'files'
 
   const periodOptions = join(
     data.periods.map(
       (p) =>
-        `<a class="chip${p.key === data.periodKey ? ' is-active' : ''}" href="/?type=${data.periodType}&period=${encodeURIComponent(p.key)}">${escapeHtml(p.label)}</a>`,
+        `<a class="chip${p.key === data.periodKey ? ' is-active' : ''}" href="/?type=${data.periodType}&period=${encodeURIComponent(p.key)}${fromFiles ? '&mode=files' : ''}">${escapeHtml(p.label)}</a>`,
     ),
   )
+
+  const modeSwitch = `<div class="mode-switch">
+  <a class="mode${fromFiles ? '' : ' is-active'}" href="/?type=${data.periodType}&period=${encodeURIComponent(data.periodKey)}&mode=reports">按填报统计</a>
+  <a class="mode${fromFiles ? ' is-active' : ''}" href="/?type=${data.periodType}&period=${encodeURIComponent(data.periodKey)}&mode=files">按成果文件统计</a>
+</div>`
 
   const rows = data.positions
     .filter((p) => p.total > 0)
@@ -71,18 +254,43 @@ export function renderOverview(data: OverviewData): string {
     )
     .join('')
 
+  const fileRows = (data.filePeople ?? [])
+    .filter((p) => p.expected > 0)
+    .map(
+      (p) => `<tr>
+  <td>${escapeHtml(p.personName)}</td>
+  <td>${escapeHtml(p.positionName)}</td>
+  <td class="num">${p.files}</td>
+  <td class="num">${p.done}/${p.expected}</td>
+  <td class="wide">${bar(p.percent)}<span class="pct">${p.percent}%</span></td>
+</tr>`,
+    )
+    .join('')
+
   const body = `
 ${pageHead(
   `${data.departmentName} · ${PERIOD_LABELS[data.periodType]}总览`,
-  `${data.periodLabel}，共 ${total} 人应报，已报 ${reported} 人。`,
-  `<a class="btn btn-primary" href="/report">我要填报</a>`,
+  fromFiles
+    ? `${data.periodLabel}，完成情况来自同事放到指定目录的成果文件。`
+    : `${data.periodLabel}，共 ${total} 人应报，已报 ${reported} 人。`,
+  fromFiles
+    ? `<a class="btn" href="/collection">查看采集详情</a>`
+    : `<a class="btn btn-primary" href="/report">我要填报</a>`,
 )}
 <div class="chips">${periodOptions}</div>
+${modeSwitch}
 <div class="stat-row">
-  ${stat('填报率', `${rate}%`, `${reported}/${total} 人已交`)}
+  ${
+    fromFiles
+      ? `${stat('产出到位率', `${rate}%`, `${reported}/${total} 人交了成果`)}
+  ${stat('平均完成度', `${avg}%`, '按岗位加权')}
+  ${stat('认不出的文件', String(data.unmatchedCount ?? 0), (data.unmatchedCount ?? 0) > 0 ? '需要确认' : '没有遗漏')}
+  ${stat('岗位数', String(data.positions.filter((p) => p.total > 0).length), '在编岗位')}`
+      : `${stat('填报率', `${rate}%`, `${reported}/${total} 人已交`)}
   ${stat('平均完成度', `${avg}%`, '按岗位加权')}
   ${stat('受阻事项', String(blocked), blocked > 0 ? '需要关注' : '暂无受阻')}
-  ${stat('岗位数', String(data.positions.filter((p) => p.total > 0).length), '在编岗位')}
+  ${stat('岗位数', String(data.positions.filter((p) => p.total > 0).length), '在编岗位')}`
+  }
 </div>
 
 <section class="card">
@@ -97,7 +305,20 @@ ${pageHead(
   }
 </section>
 
-<section class="card">
+${
+  fromFiles
+    ? `<section class="card">
+  <h2>按人统计</h2>
+  ${
+    fileRows
+      ? `<table class="table">
+  <thead><tr><th>姓名</th><th>岗位</th><th>成果文件</th><th>已交/应交</th><th>完成度</th></tr></thead>
+  <tbody>${fileRows}</tbody>
+</table>`
+      : empty('该周期还没有采集到成果文件。')
+  }
+</section>`
+    : `<section class="card">
   <h2>个人填报明细</h2>
   ${
     itemRows
@@ -107,7 +328,8 @@ ${pageHead(
 </table>`
       : empty('该周期还没有人提交填报。')
   }
-</section>
+</section>`
+}
 `
   return layout({ title: '总览', active: 'overview', body })
 }

@@ -11,6 +11,7 @@ import {
   renderReportForm,
   renderLinks,
   renderPersonReport,
+  renderCollection,
   type OverviewItem,
 } from './views.ts'
 import { escapeHtml, layout } from './html.ts'
@@ -84,10 +85,16 @@ export function createTrackerServer(options: ServerOptions) {
     const periods = recentPeriods(periodType, today, 8)
     const periodKey = periods.some((p) => p.key === requested) ? (requested as string) : current.key
     const periodLabel = periods.find((p) => p.key === periodKey)?.label ?? current.label
+    // The completion comes from the outcome files when the team is filing
+    // them, and from the reports people fill in otherwise.
+    const fromFiles = url.searchParams.get('mode') === 'files'
 
-    const positions = store.progress(periodType, periodKey, dept.id)
     const people = store.people(dept.id)
     const reports = store.reportsForPeriod(periodType, periodKey)
+    const files = store.collectedFiles(periodType, periodKey)
+    const positions = fromFiles
+      ? store.artifactProgress(periodType, periodKey, dept.id)
+      : store.progress(periodType, periodKey, dept.id)
 
     const items: OverviewItem[] = reports
       .map((report) => {
@@ -121,6 +128,11 @@ export function createTrackerServer(options: ServerOptions) {
       })
       .sort((a, b) => a.positionName.localeCompare(b.positionName, 'zh'))
 
+    const filePeople = store.artifactProgressByPerson(periodType, periodKey, dept.id)
+    // The people who filed at least one file, for the reporting rate.
+    const filed = new Set(files.map((f) => f.personId).filter(Boolean))
+    const unmatchedCount = files.filter((f) => !(f.personId && f.artifactId)).length
+
     sendHtml(
       res,
       renderOverview({
@@ -131,9 +143,12 @@ export function createTrackerServer(options: ServerOptions) {
         periods,
         positions,
         peopleCount: people.length,
-        reportedCount: reports.length,
+        reportedCount: fromFiles ? filed.size : reports.length,
         tree: store.tree(dept.id),
         items,
+        mode: fromFiles ? 'files' : 'reports',
+        filePeople,
+        unmatchedCount,
       }),
     )
   }
@@ -143,6 +158,70 @@ export function createTrackerServer(options: ServerOptions) {
     sendHtml(
       res,
       renderLedger({ departmentName: dept.name, tree: store.tree(dept.id) }),
+    )
+  }
+
+  const collection = (_req: IncomingMessage, res: ServerResponse, url: URL) => {
+    const dept = department()
+    const periodType = parseType(url.searchParams.get('type'))
+    const today = now()
+    const current = periodFor(periodType, today)
+    const periods = recentPeriods(periodType, today, 8)
+    const requested = url.searchParams.get('period')
+    const periodKey = periods.some((p) => p.key === requested) ? (requested as string) : current.key
+    const periodLabel = periods.find((p) => p.key === periodKey)?.label ?? current.label
+
+    const artifacts = store.artifacts()
+    const positions = store.positions(dept.id)
+    const people = store.people(dept.id)
+    const files = store.collectedFiles(periodType, periodKey)
+
+    const artifactViews = artifacts.map((artifact) => {
+      const position = positions.find((p) => p.id === artifact.positionId)
+      return {
+        id: artifact.id,
+        positionName: position?.name ?? '',
+        artifact: artifact.artifact,
+        keywords: artifact.keywords,
+        dutyIds: artifact.dutyIds,
+        note: artifact.note,
+      }
+    })
+
+    const artifactById = new Map(artifacts.map((a) => [a.id, a]))
+    const personById = new Map(people.map((p) => [p.id, p]))
+    const positionName = (positionId: string): string =>
+      positions.find((p) => p.id === positionId)?.name ?? ''
+
+    const fileViews = files.map((file) => {
+      const person = file.personId ? personById.get(file.personId) : undefined
+      const artifact = file.artifactId ? artifactById.get(file.artifactId) : undefined
+      return {
+        name: file.name,
+        personName: person?.name ?? '',
+        positionName: person ? positionName(person.positionId) : '',
+        artifactName: artifact?.artifact ?? '',
+        matchedKeyword: file.matchedKeyword,
+        reason: file.reason,
+        modifiedAt: file.modifiedAt,
+        ownerHint: file.ownerName,
+      }
+    })
+
+    sendHtml(
+      res,
+      renderCollection({
+        departmentName: dept.name,
+        periodType,
+        periodKey,
+        periodLabel,
+        source: '指定目录',
+        collectedAt: files.length > 0 ? files[0]?.modifiedAt ?? '' : '',
+        artifacts: artifactViews,
+        files: fileViews.filter((f) => f.personName && f.artifactName),
+        unmatched: fileViews.filter((f) => !(f.personName && f.artifactName)),
+        people: store.artifactProgressByPerson(periodType, periodKey, dept.id),
+      }),
     )
   }
 
@@ -316,6 +395,7 @@ export function createTrackerServer(options: ServerOptions) {
 
     try {
       if (route === '/' && method === 'GET') return overview(req, res, url)
+      if (route === '/collection' && method === 'GET') return collection(req, res, url)
       if (route === '/ledger' && method === 'GET') return ledger(req, res)
       if (route === '/links' && method === 'GET') return links(req, res)
       if (route === '/report' && method === 'GET') return reportForm(req, res, url)

@@ -29,6 +29,7 @@ export interface LayoutOptions {
 
 const NAV = [
   { key: 'overview', label: '总览', href: '/' },
+  { key: 'collection', label: '成果采集', href: '/collection' },
   { key: 'ledger', label: '岗位职责', href: '/ledger' },
   { key: 'report', label: '我的填报', href: '/report' },
   { key: 'links', label: '填报链接', href: '/links' },

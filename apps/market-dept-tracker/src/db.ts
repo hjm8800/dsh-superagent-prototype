@@ -75,10 +75,39 @@ CREATE TABLE IF NOT EXISTS report_items (
   note        TEXT NOT NULL DEFAULT ''
 );
 
+-- What a post is expected to produce, and the words that identify the output.
+CREATE TABLE IF NOT EXISTS artifacts (
+  id           TEXT PRIMARY KEY,
+  position_id  TEXT NOT NULL REFERENCES positions(id),
+  artifact     TEXT NOT NULL,
+  keywords     TEXT NOT NULL,
+  duty_ids     TEXT NOT NULL,
+  note         TEXT NOT NULL DEFAULT ''
+);
+
+-- A file the collector found in the shared folder.
+CREATE TABLE IF NOT EXISTS collected_files (
+  id           TEXT PRIMARY KEY,
+  period_type  TEXT NOT NULL,
+  period_key   TEXT NOT NULL,
+  name         TEXT NOT NULL,
+  owner_name   TEXT NOT NULL DEFAULT '',
+  owner_id     TEXT NOT NULL DEFAULT '',
+  modified_at  TEXT NOT NULL,
+  location     TEXT NOT NULL DEFAULT '',
+  person_id    TEXT REFERENCES people(id),
+  artifact_id  TEXT REFERENCES artifacts(id),
+  matched_keyword TEXT NOT NULL DEFAULT '',
+  reason       TEXT NOT NULL DEFAULT '',
+  collected_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_duties_position ON duties(position_id);
 CREATE INDEX IF NOT EXISTS idx_people_position ON people(position_id);
 CREATE INDEX IF NOT EXISTS idx_reports_period ON reports(period_type, period_key);
 CREATE INDEX IF NOT EXISTS idx_report_items_report ON report_items(report_id);
+CREATE INDEX IF NOT EXISTS idx_artifacts_position ON artifacts(position_id);
+CREATE INDEX IF NOT EXISTS idx_collected_files_period ON collected_files(period_type, period_key);
 `
 
 export function openDatabase(file: string): Database {
@@ -125,6 +154,19 @@ export interface SeedFile {
     }[]
     pending?: { name: string; note: string }[]
   }[]
+}
+
+/** The expected outputs, as a separate file beside the responsibility table. */
+export interface ArtifactFile {
+  positions: Record<
+    string,
+    {
+      duties: number[]
+      artifact: string
+      keywords: string[]
+      note?: string
+    }[]
+  >
 }
 
 function readSeedFile(path: string): SeedFile {
@@ -192,8 +234,11 @@ export function seedDatabase(db: Database, seedPath: string): { departments: num
 
       for (const [ordinal, text] of p.duties.entries()) {
         const dutyId = `${id}#${ordinal + 1}`
+        // The check runs before the write, so the count says how many duties
+        // this call added rather than how many the database holds.
+        const existed = selectDuty.get(dutyId)
         insertDuty.run(dutyId, id, ordinal + 1, text)
-        if (!selectDuty.get(dutyId)) counts.duties++
+        if (!existed) counts.duties++
       }
 
       for (const name of p.members) {
@@ -222,4 +267,40 @@ export function seedDatabase(db: Database, seedPath: string): { departments: num
   }
 
   return counts
+}
+
+/**
+ * Load the expected outputs into the database.
+ *
+ * Each group names the post it belongs to, the duties it answers for, and
+ * the words that identify the output in a file name. The groups keep stable
+ * ids, so re-running this does not disturb what the collector has matched.
+ */
+export function seedArtifacts(db: Database, artifactPath: string): number {
+  const file = JSON.parse(readFileSync(artifactPath, 'utf8')) as ArtifactFile
+  const insert = db.raw.prepare(
+    `INSERT INTO artifacts (id, position_id, artifact, keywords, duty_ids, note)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (id) DO UPDATE SET
+       position_id = excluded.position_id, artifact = excluded.artifact,
+       keywords = excluded.keywords, duty_ids = excluded.duty_ids, note = excluded.note`,
+  )
+  const selectPosition = db.raw.prepare('SELECT id FROM positions WHERE name = ? AND department_id = ?')
+  const department = db.raw.prepare('SELECT id FROM departments ORDER BY code LIMIT 1').get() as
+    | { id: string }
+    | undefined
+  if (!department) return 0
+
+  let count = 0
+  for (const [positionName, groups] of Object.entries(file.positions)) {
+    const position = selectPosition.get(positionName, department.id) as { id: string } | undefined
+    if (!position) continue
+    for (const [index, group] of groups.entries()) {
+      const id = `${position.id}--a${index + 1}`
+      const dutyIds = group.duties.map((ordinal) => `${position.id}#${ordinal}`)
+      insert.run(id, position.id, group.artifact, JSON.stringify(group.keywords), JSON.stringify(dutyIds), group.note ?? '')
+      count++
+    }
+  }
+  return count
 }

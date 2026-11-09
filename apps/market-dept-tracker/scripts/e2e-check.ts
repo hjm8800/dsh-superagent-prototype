@@ -1,15 +1,23 @@
 // End-to-end check against a running tracker: read a person's link, file a
 // report through the form, and confirm it reaches the dashboard.
-import { openDatabase, seedDatabase } from '../src/db.ts'
+import { openDatabase, seedArtifacts, seedDatabase } from '../src/db.ts'
 import { Store } from '../src/store.ts'
+import { collect } from '../src/collection.ts'
+import { DirectorySource } from '../src/collector.ts'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const BASE = process.argv[2] ?? 'http://127.0.0.1:3111'
 const DATA = process.argv[3] ?? join(HERE, '..', 'data', 'tracker.db')
+const SEED = join(HERE, '..', 'seed', 'market-department.json')
+const ARTIFACTS = join(HERE, '..', 'seed', 'artifacts.json')
 
 const db = openDatabase(DATA)
+// The seed is idempotent and keeps the tokens people already have, so the
+// links the running server shows stay valid.
+seedDatabase(db, SEED)
+seedArtifacts(db, ARTIFACTS)
 const store = new Store(db)
 
 // 1. The links page lists a working link for every person.
@@ -88,6 +96,30 @@ if (!ledgerHtml.includes('市场营销和合同管理专责')) throw new Error('
 const bad = await fetch(`${BASE}/report?token=deadbeef`)
 console.log(`invalid token -> ${bad.status}`)
 if (bad.status !== 404) throw new Error('an invalid token was not rejected')
+
+// 8. The collector recognizes the outcome files and credits them.
+const demoFolder = join(HERE, '..', 'demo-folder')
+const outcome = await collect(store, new DirectorySource('指定目录', demoFolder), {
+  periodType: 'week',
+  periodKey: '2026-W45',
+  periodLabel: '2026年第45周',
+})
+console.log(
+  `collected ${outcome.credited} files, ${outcome.uncredited} unmatched, ${outcome.ignored} ignored`,
+)
+if (outcome.credited === 0) throw new Error('the collector recognized nothing')
+
+// 9. The collection shows what it recognized and what it did not.
+const collectionHtml = await (await fetch(`${BASE}/collection?type=week&period=2026-W45`)).text()
+if (!collectionHtml.includes('认出的产出')) throw new Error('the collection page is missing')
+if (!collectionHtml.includes('认不出的文件')) throw new Error('the unmatched files are not shown')
+
+// 10. The overview counts the completion from the collected files.
+const filesOverview = await (await fetch(`${BASE}/?type=week&period=2026-W45&mode=files`)).text()
+if (!filesOverview.includes('产出到位率')) throw new Error('the file-based overview is missing')
+if (!filesOverview.includes('按人统计')) throw new Error('the per-person list is missing')
+const reportsOverview = await (await fetch(`${BASE}/?type=week&period=2026-W45&mode=reports`)).text()
+if (!reportsOverview.includes('填报率')) throw new Error('the report-based overview is missing')
 
 console.log('END TO END OK')
 db.close()

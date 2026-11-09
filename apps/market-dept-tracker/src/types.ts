@@ -132,6 +132,68 @@ export interface Department {
   nameEn: string
 }
 
+/**
+ * A deliverable a post is expected to produce.
+ *
+ * The collector recognizes a file as the output of a duty by looking for one
+ * of the group's keywords in the file name, and by who uploaded it.
+ */
+export interface ArtifactGroup {
+  /** Stable id, e.g. `contract-ledger`. */
+  id: string
+  positionId: string
+  /** What the post is expected to produce, in the words people use. */
+  artifact: string
+  /** Any one of these in a file name means the file is this output. */
+  keywords: string[]
+  /** The duties this output answers for. */
+  dutyIds: string[]
+  /** Note about the output, for the ledger. */
+  note: string
+}
+
+/** A file found in the shared folder. */
+export interface CollectedFile {
+  /** Identifier of the file in its source, used to recognise it again. */
+  sourceId: string
+  /** File name as people see it. */
+  name: string
+  /** Who uploaded it, as the source reports them. */
+  ownerName: string
+  /** When it was last changed, as an ISO timestamp. */
+  modifiedAt: string
+  /** Where it came from, for the collector's log. */
+  location: string
+}
+
+/** How a collected file was recognized. */
+export interface FileMatch {
+  file: CollectedFile
+  /** The person the file was credited to. */
+  personId: string | null
+  /** The artifact group the file matched. */
+  artifactId: string | null
+  /** The keyword that matched. */
+  matchedKeyword: string | null
+  /** Why the file could not be credited, when it could not be. */
+  reason: string | null
+}
+
+/** What the collector found for one period. */
+export interface CollectionResult {
+  periodType: PeriodType
+  periodKey: string
+  periodLabel: string
+  /** Files credited to a person and an artifact. */
+  matches: FileMatch[]
+  /** Files that could not be credited, with the reason. */
+  unmatched: FileMatch[]
+  /** When the collection ran. */
+  collectedAt: string
+  /** Where the files were read from. */
+  source: string
+}
+
 /** A position plus the people in it, as the views need it. */
 export interface PositionView extends Position {
   people: Person[]

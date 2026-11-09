@@ -340,3 +340,28 @@ test('a report shows the confirmation after it is submitted', async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()))
   db.close()
 })
+
+test('the overview offers both ways of counting the completion', async () => {
+  const db = openDatabase(':memory:')
+  seedDatabase(db, SEED)
+  const store = new Store(db)
+  const server = createTrackerServer({
+    store,
+    baseUrl: 'http://127.0.0.1:0',
+    now: () => new Date('2026-11-05T00:00:00Z'),
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  const port = typeof address === 'object' && address ? address.port : 0
+
+  const reports = await (await fetch(`http://127.0.0.1:${port}/`)).text()
+  assert.ok(reports.includes('按成果文件统计'), 'the overview must offer the file-based count')
+  assert.ok(reports.includes('填报率'), 'the overview must keep the reporting rate')
+
+  const files = await (await fetch(`http://127.0.0.1:${port}/?mode=files`)).text()
+  assert.ok(files.includes('产出到位率'), 'the file-based count must lead with the output rate')
+  assert.ok(files.includes('按人统计'), 'the file-based count must list the people')
+
+  await new Promise<void>((resolve) => server.close(() => resolve()))
+  db.close()
+})
