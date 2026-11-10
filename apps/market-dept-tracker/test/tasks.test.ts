@@ -460,3 +460,118 @@ test('the seed file for the posts stays well formed', () => {
   const seed = JSON.parse(readFileSync(SEED, 'utf8')) as { departments: unknown[] }
   assert.ok(seed.departments.length > 0)
 })
+
+// ------------------------------------------------------------- the mini program
+
+/** The JSON answer of a call, as the mini program reads it. */
+async function json<T = Record<string, unknown>>(response: Response): Promise<T> {
+  return (await response.json()) as T
+}
+
+test('the api says who the link belongs to', async () => {
+  await withServer(async (base, store) => {
+    const clerk = store.people().find((p) => p.name === '黄美琳')!
+    const data = await json<{
+      ok: boolean
+      person: { id: string }
+      position: { name: string }
+      role: string
+    }>(await fetch(`${base}/api/me?token=${clerk.token}`))
+    assert.equal(data.ok, true)
+    assert.equal(data.person.id, clerk.id)
+    assert.equal(data.position.name, '合同管理业务员')
+    assert.equal(data.role, 'member')
+  })
+})
+
+test('the api hands a person their own tasks', async () => {
+  await withServer(async (base, store) => {
+    const clerk = store.people().find((p) => p.name === '黄美琳')!
+    const other = store.people().find((p) => p.name === '潘清河')!
+    for (const [id, person, title] of [
+      ['api-task-own', clerk, '我自己的任务'],
+      ['api-task-other', other, '别人的任务'],
+    ] as const) {
+      store.createTask({
+        id,
+        departmentId: 'mkt',
+        kind: 'assigned',
+        title,
+        detail: '',
+        personId: person.id,
+        positionId: person.positionId,
+        periodType: 'week',
+        periodKey: '2026-W45',
+        periodLabel: '2026年第45周',
+        assignedById: null,
+        recurringTaskId: null,
+        dutyId: null,
+        artifactId: null,
+        createdAt: NOW,
+      })
+    }
+    const data = await json<Record<string, any>>(await fetch(`${base}/api/my-tasks?token=${clerk.token}&type=week&period=2026-W45`))
+    assert.equal(data.ok, true)
+    const titles = data.tasks.map((t: { title: string }) => t.title)
+    assert.ok(titles.includes('我自己的任务'))
+    assert.ok(!titles.includes('别人的任务'), 'the api must not hand over another person task')
+  })
+})
+
+test('the api moves a task on, but only its owner may', async () => {
+  await withServer(async (base, store) => {
+    const clerk = store.people().find((p) => p.name === '黄美琳')!
+    const other = store.people().find((p) => p.name === '潘清河')!
+    store.createTask({
+      id: 'api-task-move',
+      departmentId: 'mkt',
+      kind: 'assigned',
+      title: '交回款凭证',
+      detail: '',
+      personId: clerk.id,
+      positionId: clerk.positionId,
+      periodType: 'week',
+      periodKey: '2026-W45',
+      periodLabel: '2026年第45周',
+      assignedById: null,
+      recurringTaskId: null,
+      dutyId: null,
+      artifactId: null,
+      createdAt: NOW,
+    })
+
+    const post = (token: string) =>
+      fetch(`${base}/api/my-tasks/status`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token, id: 'api-task-move', status: 'done', note: '已交' }).toString(),
+      })
+
+    const denied = await post(other.token)
+    assert.equal(denied.status, 403, 'another person may not move it')
+
+    const ok = await post(clerk.token)
+    assert.equal(ok.status, 200)
+    const data = await json<{ ok: boolean; task: { status: string } }>(ok)
+    assert.equal(data.ok, true)
+    assert.equal(data.task.status, 'done')
+    assert.equal(store.task('api-task-move')?.status, 'done')
+  })
+})
+
+test('the api keeps the department overview for the leaders', async () => {
+  await withServer(async (base, store) => {
+    const clerk = store.people().find((p) => p.name === '黄美琳')!
+    const denied = await fetch(`${base}/api/overview?token=${clerk.token}`)
+    assert.equal(denied.status, 403, 'a member may not read the overview')
+
+    const leader = makeLeader(store)
+    const ok = await fetch(`${base}/api/overview?token=${leader.token}`)
+    assert.equal(ok.status, 200)
+    const data = await json<{ ok: boolean; peopleCount: number; positions: unknown[] }>(ok)
+    assert.equal(data.ok, true)
+    assert.equal(data.peopleCount, 25)
+    assert.ok(Array.isArray(data.positions))
+    assert.ok(data.positions.length > 0)
+  })
+})

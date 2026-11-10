@@ -1,0 +1,121 @@
+/* The mini program's look, kept close to the web page's. */
+
+page {
+  background: #f5f6f8;
+  color: #1f2933;
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 28rpx;
+  line-height: 1.6;
+}
+
+.container { padding: 24rpx; }
+
+.card {
+  background: #ffffff;
+  border-radius: 16rpx;
+  padding: 28rpx;
+  margin-bottom: 20rpx;
+}
+
+.title { font-size: 34rpx; font-weight: 600; margin-bottom: 8rpx; }
+.subtitle { color: #6b7785; font-size: 24rpx; margin-bottom: 20rpx; }
+.muted { color: #6b7785; font-size: 24rpx; }
+.small { font-size: 22rpx; }
+
+.stats { display: flex; gap: 16rpx; margin-bottom: 20rpx; }
+
+.stat {
+  flex: 1;
+  background: #ffffff;
+  border-radius: 16rpx;
+  padding: 22rpx;
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-value { font-size: 40rpx; font-weight: 650; }
+.stat-label { color: #6b7785; font-size: 22rpx; }
+
+.task {
+  background: #ffffff;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  margin-bottom: 16rpx;
+}
+
+.task-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10rpx; }
+.task-title { font-size: 30rpx; font-weight: 600; flex: 1; margin-right: 12rpx; }
+.task-detail { color: #6b7785; font-size: 24rpx; margin-bottom: 16rpx; }
+
+.tag {
+  padding: 2rpx 14rpx;
+  border-radius: 8rpx;
+  font-size: 22rpx;
+  white-space: nowrap;
+}
+
+.tag-assigned { background: #e8f0fe; color: #1f6feb; }
+.tag-recurring { background: #e6f4ec; color: #1a7f4b; }
+
+.status-open { background: #eef1f4; color: #6b7785; }
+.status-in_progress { background: #e8f0fe; color: #1f6feb; }
+.status-done { background: #e6f4ec; color: #1a7f4b; }
+.status-blocked { background: #fdecea; color: #b42318; }
+.status-cancelled { background: #f3f0fa; color: #5b3fc4; }
+
+.row { display: flex; align-items: center; gap: 12rpx; margin-top: 12rpx; }
+
+.picker {
+  flex: 1;
+  border: 1rpx solid #e3e6ea;
+  border-radius: 10rpx;
+  padding: 14rpx 18rpx;
+  font-size: 26rpx;
+  background: #ffffff;
+}
+
+.input {
+  width: 100%;
+  border: 1rpx solid #e3e6ea;
+  border-radius: 10rpx;
+  padding: 16rpx 18rpx;
+  font-size: 26rpx;
+  box-sizing: border-box;
+  background: #ffffff;
+}
+
+.btn {
+  background: #1f6feb;
+  color: #ffffff;
+  border-radius: 10rpx;
+  padding: 16rpx 28rpx;
+  font-size: 28rpx;
+  text-align: center;
+  border: none;
+}
+
+.btn-ghost {
+  background: #ffffff;
+  color: #1f6feb;
+  border: 1rpx solid #1f6feb;
+}
+
+.btn[disabled] { background: #b9c4d2; }
+
+.empty { text-align: center; color: #6b7785; padding: 60rpx 0; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 12rpx; margin-bottom: 20rpx; }
+
+.chip {
+  padding: 8rpx 20rpx;
+  border-radius: 999rpx;
+  background: #ffffff;
+  border: 1rpx solid #e3e6ea;
+  color: #6b7785;
+  font-size: 24rpx;
+}
+
+.chip-active { background: #1f6feb; border-color: #1f6feb; color: #ffffff; }
+
+.bar { height: 12rpx; background: #e9edf1; border-radius: 999rpx; overflow: hidden; margin-top: 8rpx; }
+.bar-fill { height: 100%; background: #1f6feb; }

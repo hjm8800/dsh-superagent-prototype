@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
 import { join, extname } from 'node:path'
@@ -15,6 +16,25 @@ import type { ArtifactGroup, CollectedFile, PeriodType } from './types.ts'
  */
 
 const run = promisify(execFile)
+
+/**
+ * Where the Feishu CLI lives.
+ *
+ * On Windows the command is a shim that only the shell can start, and the
+ * executable itself sits beside it; prefer the executable so the collector
+ * needs no shell.
+ */
+function defaultFeishuCli(): string {
+  const candidates = [
+    process.env['LARK_CLI'],
+    'C:\\Users\\38307\\.dsh\\tools\\lark-cli-bin\\lark-cli.exe',
+    process.env['USERPROFILE'] + '\\.dsh\\tools\\lark-cli-bin\\lark-cli.exe',
+  ]
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) return candidate
+  }
+  return 'lark-cli'
+}
 
 export interface FileSource {
   /** A short name for the source, shown in the collection log. */
@@ -87,7 +107,7 @@ export class FeishuFolderSource implements FileSource {
   private readonly folderToken: string
   private readonly cli: string
 
-  constructor(name: string, folderToken: string, cli = 'lark-cli') {
+  constructor(name: string, folderToken: string, cli = defaultFeishuCli()) {
     this.name = name
     this.folderToken = folderToken
     this.cli = cli

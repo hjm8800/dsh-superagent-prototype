@@ -1,0 +1,55 @@
+<view class="container">
+  <view wx:if="{{forbidden && !loading}}" class="card">
+    <view class="title">这一页只有领导能看</view>
+    <view class="subtitle">部门整体情况只对经理、副经理和公司领导开放。你的任务在「我的任务」里。</view>
+    <button class="btn" bindtap="goLogin">用领导的链接进入</button>
+  </view>
+
+  <block wx:else>
+    <view class="card">
+      <view class="title">部门总览</view>
+      <view class="subtitle">{{periodLabel}}</view>
+      <view class="chips">
+        <view
+          wx:for="{{periods}}"
+          wx:key="key"
+          class="chip {{item.label === periodLabel ? 'chip-active' : ''}}"
+          data-key="{{item.key}}"
+          bindtap="pickPeriod"
+        >{{item.label}}</view>
+      </view>
+    </view>
+
+    <view wx:if="{{error}}" class="card" style="color:#b42318;">{{error}}</view>
+    <view wx:if="{{loading}}" class="empty">正在加载…</view>
+
+    <block wx:else>
+      <view class="stats">
+        <view class="stat">
+          <text class="stat-value">{{stats.reportedCount}}/{{stats.peopleCount}}</text>
+          <text class="stat-label">已交成果</text>
+        </view>
+        <view class="stat">
+          <text class="stat-value">{{stats.taskDone}}/{{stats.taskTotal}}</text>
+          <text class="stat-label">任务完成</text>
+        </view>
+        <view class="stat">
+          <text class="stat-value" style="color:{{stats.unmatchedFiles > 0 ? '#b42318' : '#1a7f4b'}};">{{stats.unmatchedFiles}}</text>
+          <text class="stat-label">认不出的文件</text>
+        </view>
+      </view>
+
+      <view class="task" wx:for="{{positions}}" wx:key="name">
+        <view class="task-head">
+          <text class="task-title">{{item.name}}</text>
+          <text class="tag tag-{{item.level}}">{{item.levelLabel}}</text>
+        </view>
+        <view class="muted small">{{item.reported}}/{{item.total}} 人已交｜{{item.done}} 项已完成</view>
+        <view class="bar">
+          <view class="bar-fill" style="width:{{item.percent}}%;"></view>
+        </view>
+        <view class="muted small" style="margin-top:8rpx;">{{item.percent}}%</view>
+      </view>
+    </block>
+  </block>
+</view>

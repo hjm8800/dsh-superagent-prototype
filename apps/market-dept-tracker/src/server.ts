@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { Store } from './store.ts'
 import { PROGRESS_STATUSES, type ProgressStatus, type ReportItem } from './types.ts'
+import { LEVEL_LABELS, TASK_KIND_LABELS, TASK_STATUS_LABELS } from './types.ts'
 import { periodFor, periodRange, recentPeriods } from './period.ts'
 import {
   renderOverview,
@@ -71,6 +72,21 @@ export function createTrackerServer(options: ServerOptions) {
     res.writeHead(status, {
       'content-type': 'text/plain; charset=utf-8',
       'content-length': body.byteLength,
+    })
+    res.end(body)
+  }
+
+  /** An answer for the mini program and any other JSON caller. */
+  const sendJson = (res: ServerResponse, value: unknown, status = 200) => {
+    const body = Buffer.from(JSON.stringify(value), 'utf8')
+    res.writeHead(status, {
+      'content-type': 'application/json; charset=utf-8',
+      'content-length': body.byteLength,
+      'cache-control': 'no-store',
+      // The mini program and the web page are served from different origins.
+      'access-control-allow-origin': '*',
+      'access-control-allow-headers': 'content-type',
+      'access-control-allow-methods': 'GET,POST,OPTIONS',
     })
     res.end(body)
   }
@@ -739,12 +755,177 @@ export function createTrackerServer(options: ServerOptions) {
     return true
   }
 
+  // ----------------------------------------------------------------- api
+
+  /**
+   * The JSON the mini program reads.
+   *
+   * The pages the web shows are rendered on the server; the mini program asks
+   * for the same information as data, so both read one source of truth.
+   */
+  const api = async (
+    req: IncomingMessage,
+    res: ServerResponse,
+    url: URL,
+    route: string,
+    method: string,
+  ): Promise<void> => {
+    if (method === 'OPTIONS') {
+      sendJson(res, { ok: true })
+      return
+    }
+    const token = url.searchParams.get('token') ?? ''
+    const dept = department()
+    const periods = (type: PeriodType) => recentPeriods(type, now(), 8)
+    const pickPeriod = (type: PeriodType): { key: string; label: string } => {
+      const list = periods(type)
+      const asked = url.searchParams.get('period')
+      return list.find((p) => p.key === asked) ?? list[0] ?? { key: '', label: '' }
+    }
+
+    // Who the caller is, and what they may see.
+    if (route === '/api/me' && method === 'GET') {
+      const { person, position, role } = viewerOf(token)
+      if (!person) {
+        sendJson(res, { ok: false, error: '链接无效' }, 404)
+        return
+      }
+      sendJson(res, {
+        ok: true,
+        person: { id: person.id, name: person.name },
+        position: { id: position?.id ?? '', name: position?.name ?? '', level: position?.level ?? '' },
+        role,
+      })
+      return
+    }
+
+    if (route === '/api/periods' && method === 'GET') {
+      const type = parseType(url.searchParams.get('type'))
+      sendJson(res, { ok: true, type, periods: periods(type) })
+      return
+    }
+
+    // A person's own task list.
+    if (route === '/api/my-tasks' && method === 'GET') {
+      const person = store.personByToken(token)
+      if (!person) {
+        sendJson(res, { ok: false, error: '链接无效' }, 404)
+        return
+      }
+      const type = parseType(url.searchParams.get('type'))
+      const period = pickPeriod(type)
+      store.materialiseRecurringTasks(dept.id, type, period.key, period.label, now().toISOString())
+      const position = store.positionById(person.positionId)
+      const tasks = store
+        .taskViews(type, period.key, dept.id)
+        .filter((t) => t.personId === person.id)
+      sendJson(res, {
+        ok: true,
+        position: position?.name ?? '',
+        periodType: type,
+        periodKey: period.key,
+        periodLabel: period.label,
+        tasks: tasks.map((t) => ({
+          id: t.id,
+          title: t.title,
+          detail: t.detail || t.dutyText || t.artifactName,
+          kind: t.kind,
+          kindLabel: TASK_KIND_LABELS[t.kind],
+          status: t.status,
+          statusLabel: TASK_STATUS_LABELS[t.status],
+          note: t.note,
+        })),
+      })
+      return
+    }
+
+    // A person moves their own task on.
+    if (route === '/api/my-tasks/status' && method === 'POST') {
+      const form = await readBody(req)
+      // A POST carries who is asking in its body; a GET carries it in the query.
+      const caller = form.get('token') ?? token
+      const task = store.task(form.get('id') ?? '')
+      if (!task) {
+        sendJson(res, { ok: false, error: '任务不存在' }, 404)
+        return
+      }
+      const owner = store.personByToken(caller)
+      if (!owner || owner.id !== task.personId) {
+        sendJson(res, { ok: false, error: '这不是你的任务' }, 403)
+        return
+      }
+      const status = (form.get('status') ?? 'open') as TaskStatus
+      const allowed: TaskStatus[] = ['open', 'in_progress', 'done', 'blocked', 'cancelled']
+      store.updateTask(
+        task.id,
+        allowed.includes(status) ? status : 'open',
+        (form.get('note') ?? '').toString().slice(0, 2000),
+        now().toISOString(),
+      )
+      const updated = store.task(task.id)
+      sendJson(res, {
+        ok: true,
+        task: updated
+          ? { id: updated.id, status: updated.status, statusLabel: TASK_STATUS_LABELS[updated.status], note: updated.note }
+          : null,
+      })
+      return
+    }
+
+    // The department as a whole, for the leaders.
+    if (route === '/api/overview' && method === 'GET') {
+      const { role } = viewerOf(token)
+      if (role !== 'leader') {
+        sendJson(res, { ok: false, error: '只有领导可以查看部门整体情况' }, 403)
+        return
+      }
+      const type = parseType(url.searchParams.get('type'))
+      const period = pickPeriod(type)
+      const people = store.people(dept.id)
+      const files = store.collectedFiles(type, period.key)
+      const reports = store.reportsForPeriod(type, period.key)
+      const positions = store.artifactProgress(type, period.key, dept.id)
+      const tasks = store.tasks(type, period.key, dept.id)
+      sendJson(res, {
+        ok: true,
+        periodType: type,
+        periodKey: period.key,
+        periodLabel: period.label,
+        peopleCount: people.length,
+        reportedCount: new Set(files.map((f) => f.personId).filter(Boolean)).size,
+        reportCount: reports.length,
+        unmatchedFiles: files.filter((f) => !(f.personId && f.artifactId)).length,
+        tasks: {
+          total: tasks.length,
+          done: tasks.filter((t) => t.status === 'done').length,
+          blocked: tasks.filter((t) => t.status === 'blocked').length,
+        },
+        positions: positions
+          .filter((p) => p.total > 0)
+          .map((p) => ({
+            name: p.positionName,
+            level: p.level,
+            levelLabel: LEVEL_LABELS[p.level],
+            reported: p.reported,
+            total: p.total,
+            done: p.done,
+            percent: p.percent,
+          })),
+      })
+      return
+    }
+
+    sendJson(res, { ok: false, error: '没有这个接口' }, 404)
+  }
+
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', options.baseUrl)
     const route = url.pathname
     const method = req.method ?? 'GET'
 
     try {
+      // The mini program and any other JSON caller read the same data.
+      if (route.startsWith('/api/')) return void api(req, res, url, route, method)
       // The pages that show the department as a whole are for the leaders.
       const guarded = ['/', '/collection', '/ledger', '/links', '/tasks']
       if (guarded.includes(route) && method === 'GET') {

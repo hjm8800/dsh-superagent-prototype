@@ -1,0 +1,25 @@
+<view class="container">
+  <view class="card">
+    <view class="title">市场部工作台</view>
+    <view class="subtitle">把部门发给你的链接粘贴进来，只用填一次。</view>
+
+    <input
+      class="input"
+      placeholder="粘贴你的专属链接或口令"
+      value="{{link}}"
+      bindinput="onInput"
+      confirm-type="done"
+      bindconfirm="submit"
+    />
+
+    <view wx:if="{{error}}" class="muted" style="color:#b42318; margin-top:16rpx;">{{error}}</view>
+
+    <button class="btn" style="margin-top:24rpx;" bindtap="submit" disabled="{{busy}}">
+      {{busy ? '正在验证…' : '进入'}}
+    </button>
+
+    <view class="muted small" style="margin-top:20rpx;">
+      链接由部门负责人发出；忘记或没有链接，问部门负责人。
+    </view>
+  </view>
+</view>

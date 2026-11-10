@@ -1,0 +1,74 @@
+<view class="container">
+  <block wx:if="{{!person && !loading}}">
+    <view class="card">
+      <view class="title">还没有进入</view>
+      <view class="subtitle">把部门发给你的链接粘贴进来，就能看到自己的任务。</view>
+      <button class="btn" bindtap="goLogin">粘贴链接进入</button>
+    </view>
+  </block>
+
+  <block wx:else>
+    <view class="card" wx:if="{{person}}">
+      <view class="title">{{position}}</view>
+      <view class="subtitle">{{periodLabel}}｜{{person.name ? '已进入' : ''}}</view>
+      <view class="chips">
+        <view
+          wx:for="{{periods}}"
+          wx:key="key"
+          class="chip {{item.label === periodLabel ? 'chip-active' : ''}}"
+          data-key="{{item.key}}"
+          bindtap="pickPeriod"
+        >{{item.label}}</view>
+      </view>
+      <button class="btn btn-ghost small" bindtap="signOut">换个链接</button>
+    </view>
+
+    <view class="stats" wx:if="{{person}}">
+      <view class="stat">
+        <text class="stat-value">{{stats.total}}</text>
+        <text class="stat-label">任务</text>
+      </view>
+      <view class="stat">
+        <text class="stat-value" style="color:#1a7f4b;">{{stats.done}}</text>
+        <text class="stat-label">已完成</text>
+      </view>
+      <view class="stat">
+        <text class="stat-value">{{stats.open}}</text>
+        <text class="stat-label">待办</text>
+      </view>
+      <view class="stat">
+        <text class="stat-value" style="color:#b42318;">{{stats.blocked}}</text>
+        <text class="stat-label">受阻</text>
+      </view>
+    </view>
+
+    <view wx:if="{{error}}" class="card" style="color:#b42318;">{{error}}</view>
+
+    <view wx:if="{{loading}}" class="empty">正在加载…</view>
+
+    <block wx:elif="{{person}}">
+      <view wx:if="{{tasks.length === 0}}" class="empty">这个周期还没有任务</view>
+
+      <view class="task" wx:for="{{tasks}}" wx:key="id">
+        <view class="task-head">
+          <text class="task-title">{{item.title}}</text>
+          <text class="tag tag-{{item.kind}}">{{item.kindLabel}}</text>
+        </view>
+        <view class="task-detail" wx:if="{{item.detail}}">{{item.detail}}</view>
+        <view class="row">
+          <text class="muted small">状态</text>
+          <picker
+            class="picker"
+            range="{{statusChoices}}"
+            range-key="label"
+            value="{{item.statusIndex}}"
+            data-id="{{item.id}}"
+            bindchange="changeStatus"
+          >
+            <view>{{statusChoices[item.statusIndex].label}}</view>
+          </picker>
+        </view>
+      </view>
+    </block>
+  </block>
+</view>
