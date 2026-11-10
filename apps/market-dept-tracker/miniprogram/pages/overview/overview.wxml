@@ -18,6 +18,7 @@
           bindtap="pickPeriod"
         >{{item.label}}</view>
       </view>
+      <button class="btn btn-ghost small" bindtap="goAssign">下达任务</button>
     </view>
 
     <view wx:if="{{error}}" class="card" style="color:#b42318;">{{error}}</view>

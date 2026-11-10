@@ -119,3 +119,44 @@ page {
 
 .bar { height: 12rpx; background: #e9edf1; border-radius: 999rpx; overflow: hidden; margin-top: 8rpx; }
 .bar-fill { height: 100%; background: #1f6feb; }
+
+/* A duty in the report form. */
+.duty {
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid #eef1f4;
+}
+
+.duty:last-child { border-bottom: none; }
+
+.duty-text {
+  display: flex;
+  align-items: flex-start;
+  gap: 10rpx;
+  font-size: 27rpx;
+  line-height: 1.5;
+}
+
+.duty-no {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36rpx;
+  height: 36rpx;
+  border-radius: 50%;
+  background: #e8f0fe;
+  color: #1f6feb;
+  font-size: 20rpx;
+  margin-top: 4rpx;
+}
+
+textarea.input {
+  width: 100%;
+  min-height: 120rpx;
+  box-sizing: border-box;
+  border: 1rpx solid #e3e6ea;
+  border-radius: 10rpx;
+  padding: 16rpx 18rpx;
+  font-size: 26rpx;
+  background: #ffffff;
+}

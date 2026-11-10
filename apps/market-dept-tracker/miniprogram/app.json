@@ -1,8 +1,10 @@
 {
   "pages": [
     "pages/tasks/tasks",
-    "pages/login/login",
-    "pages/overview/overview"
+    "pages/duties/duties",
+    "pages/overview/overview",
+    "pages/assign/assign",
+    "pages/login/login"
   ],
   "window": {
     "navigationBarTitleText": "市场部工作台",
@@ -16,6 +18,7 @@
     "backgroundColor": "#ffffff",
     "list": [
       { "pagePath": "pages/tasks/tasks", "text": "我的任务" },
+      { "pagePath": "pages/duties/duties", "text": "职责与填报" },
       { "pagePath": "pages/overview/overview", "text": "部门总览" }
     ]
   },

@@ -61,6 +61,10 @@ Page({
     wx.navigateTo({ url: '/pages/login/login' })
   },
 
+  goAssign() {
+    wx.navigateTo({ url: '/pages/assign/assign' })
+  },
+
   onPullDownRefresh() {
     this.load().finally(() => wx.stopPullDownRefresh())
   },

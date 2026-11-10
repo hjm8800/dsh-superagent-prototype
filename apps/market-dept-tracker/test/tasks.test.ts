@@ -575,3 +575,96 @@ test('the api keeps the department overview for the leaders', async () => {
     assert.ok(data.positions.length > 0)
   })
 })
+
+test('the api hands a person the duties of their post', async () => {
+  await withServer(async (base, store) => {
+    const clerk = store.people().find((p) => p.name === '黄美琳')!
+    const data = await json<{
+      ok: boolean
+      position: string
+      periodKey: string
+      duties: { id: string; status: string }[]
+    }>(await fetch(`${base}/api/my-duties?token=${clerk.token}&type=week`))
+    assert.equal(data.ok, true)
+    assert.equal(data.position, '合同管理业务员')
+    assert.ok(data.duties.length > 0)
+    assert.equal(data.duties[0]?.status, 'not_started', 'nothing answered yet')
+  })
+})
+
+test('the api saves a report and hands it back', async () => {
+  await withServer(async (base, store) => {
+    const clerk = store.people().find((p) => p.name === '黄美琳')!
+    const duties = await json<{
+      periodKey: string
+      duties: { id: string }[]
+    }>(await fetch(`${base}/api/my-duties?token=${clerk.token}&type=week`))
+
+    const items = duties.duties.map((duty, index) => ({
+      id: duty.id,
+      status: index === 0 ? 'done' : 'not_started',
+      percent: index === 0 ? 100 : 0,
+      note: index === 0 ? '已归档' : '',
+    }))
+    const response = await fetch(`${base}/api/report`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: [
+        `token=${encodeURIComponent(clerk.token)}`,
+        'periodType=week',
+        `periodKey=${encodeURIComponent(duties.periodKey)}`,
+        `summary=${encodeURIComponent('本周小结')}`,
+        `items=${encodeURIComponent(JSON.stringify(items))}`,
+      ].join('&'),
+    })
+    assert.equal(response.status, 200)
+    const saved = await json<{ ok: boolean }>(response)
+    assert.equal(saved.ok, true)
+
+    const stored = store.reportFor(clerk.id, 'week', duties.periodKey)
+    assert.ok(stored, 'the report reached the database')
+    assert.equal(stored.summary, '本周小结')
+    assert.equal(stored.items.length, duties.duties.length)
+
+    // Reading the duties back shows the answer.
+    const again = await json<{ duties: { status: string }[]; dismissed: { summary: string } | null }>(
+      await fetch(`${base}/api/my-duties?token=${clerk.token}&type=week&period=${duties.periodKey}`),
+    )
+    assert.equal(again.duties[0]?.status, 'done')
+    assert.equal(again.dismissed?.summary, '本周小结')
+  })
+})
+
+test('the api lets a leader give a task, and refuses a member', async () => {
+  await withServer(async (base, store) => {
+    const clerk = store.people().find((p) => p.name === '黄美琳')!
+    const leader = makeLeader(store)
+
+    const refused = await fetch(`${base}/api/assignable?token=${clerk.token}`)
+    assert.equal(refused.status, 403, 'a member may not list the posts')
+
+    const list = await json<{ ok: boolean; positions: { id: string; headcount: number }[] }>(
+      await fetch(`${base}/api/assignable?token=${leader.token}`),
+    )
+    assert.equal(list.ok, true)
+    assert.ok(list.positions.length > 0)
+
+    const post = list.positions.find((p) => p.headcount > 0)!
+    const response = await fetch(`${base}/api/tasks/assign`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: [
+        `token=${encodeURIComponent(leader.token)}`,
+        `positionId=${encodeURIComponent(post.id)}`,
+        'periodType=week',
+        'periodKey=2026-W45',
+        `title=${encodeURIComponent('小程序下达的任务')}`,
+      ].join('&'),
+    })
+    assert.equal(response.status, 200)
+    const data = await json<{ ok: boolean; people: number }>(response)
+    assert.equal(data.ok, true)
+    const created = store.tasks('week', '2026-W45').filter((t) => t.title === '小程序下达的任务')
+    assert.equal(created.length, post.headcount, 'everyone holding the post got it')
+  })
+})

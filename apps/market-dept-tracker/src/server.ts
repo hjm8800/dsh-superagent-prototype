@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { Store } from './store.ts'
 import { PROGRESS_STATUSES, type ProgressStatus, type ReportItem } from './types.ts'
-import { LEVEL_LABELS, TASK_KIND_LABELS, TASK_STATUS_LABELS } from './types.ts'
+import { LEVEL_LABELS, PROGRESS_LABELS, TASK_KIND_LABELS, TASK_STATUS_LABELS } from './types.ts'
 import { periodFor, periodRange, recentPeriods } from './period.ts'
 import {
   renderOverview,
@@ -912,6 +912,184 @@ export function createTrackerServer(options: ServerOptions) {
             percent: p.percent,
           })),
       })
+      return
+    }
+
+    // The duties of my post, and what I answered for each of them.
+    if (route === '/api/my-duties' && method === 'GET') {
+      const person = store.personByToken(token)
+      if (!person) {
+        sendJson(res, { ok: false, error: '链接无效' }, 404)
+        return
+      }
+      const type = parseType(url.searchParams.get('type'))
+      const period = pickPeriod(type)
+      const position = store.positionById(person.positionId)
+      const report = store.reportFor(person.id, type, period.key)
+      const answered = new Map((report?.items ?? []).map((item) => [item.dutyId, item]))
+      sendJson(res, {
+        ok: true,
+        position: position?.name ?? '',
+        instructions: position?.instructions ?? '',
+        boundary: position?.boundary ?? '',
+        periodType: type,
+        periodKey: period.key,
+        periodLabel: period.label,
+        dismissed: report
+          ? { summary: report.summary, blockers: report.blockers, nextPlan: report.nextPlan, submittedAt: report.submittedAt }
+          : null,
+        duties: (position?.duties ?? []).map((duty) => {
+          const item = answered.get(duty.id)
+          return {
+            id: duty.id,
+            ordinal: duty.ordinal,
+            text: duty.text,
+            status: item?.status ?? 'not_started',
+            statusLabel: PROGRESS_LABELS[item?.status ?? 'not_started'],
+            percent: item?.percent ?? null,
+            note: item?.note ?? '',
+          }
+        }),
+      })
+      return
+    }
+
+    // A person files their weekly or monthly report.
+    if (route === '/api/report' && method === 'POST') {
+      const form = await readBody(req)
+      const caller = form.get('token') ?? token
+      const person = store.personByToken(caller)
+      if (!person) {
+        sendJson(res, { ok: false, error: '链接无效' }, 404)
+        return
+      }
+      const type = parseType(form.get('periodType'))
+      const period = periods(type).find((p) => p.key === (form.get('periodKey') ?? ''))
+      if (!period) {
+        sendJson(res, { ok: false, error: '周期无效' }, 400)
+        return
+      }
+      const position = store.positionById(person.positionId)
+      const duties = position?.duties ?? []
+      let payload: unknown
+      try {
+        payload = JSON.parse(form.get('items') ?? '[]')
+      } catch {
+        sendJson(res, { ok: false, error: '填报内容格式不对' }, 400)
+        return
+      }
+      const answered = new Map<string, { status?: string; percent?: number | null; note?: string }>()
+      if (Array.isArray(payload)) {
+        for (const entry of payload) {
+          const row = entry as { id?: string; status?: string; percent?: number | null; note?: string }
+          if (row && typeof row.id === 'string') answered.set(row.id, row)
+        }
+      }
+      const items: ReportItem[] = duties.map((duty) => {
+        const row = answered.get(duty.id)
+        const status = (row?.status ?? 'not_started') as ProgressStatus
+        const percent = row?.percent === null || row?.percent === undefined ? null : Number(row.percent)
+        return {
+          dutyId: duty.id,
+          status: PROGRESS_STATUSES.includes(status) ? status : 'not_started',
+          percent: percent !== null && Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : null,
+          note: String(row?.note ?? '').slice(0, 2000),
+        }
+      })
+      store.saveReport({
+        personId: person.id,
+        periodType: type,
+        periodKey: period.key,
+        periodLabel: period.label,
+        summary: String(form.get('summary') ?? '').slice(0, 5000),
+        blockers: String(form.get('blockers') ?? '').slice(0, 5000),
+        nextPlan: String(form.get('nextPlan') ?? '').slice(0, 5000),
+        items,
+      })
+      sendJson(res, { ok: true, periodKey: period.key, periodLabel: period.label, items: items.length })
+      return
+    }
+
+    // The posts a leader may give a task to.
+    if (route === '/api/assignable' && method === 'GET') {
+      const { person, position } = viewerOf(token)
+      if (!person || !position) {
+        sendJson(res, { ok: false, error: '链接无效' }, 404)
+        return
+      }
+      if (accessOf(person, position, leaderGrants(db.raw)) !== 'leader') {
+        sendJson(res, { ok: false, error: '只有领导可以下达任务' }, 403)
+        return
+      }
+      const assignable = assignablePosts(taskPositions(dept.id), position.id)
+      sendJson(res, {
+        ok: true,
+        positions: assignable.map((post) => ({
+          id: post.id,
+          name: post.name,
+          headcount: post.people.length,
+        })),
+      })
+      return
+    }
+
+    // A leader gives a task to a post.
+    if (route === '/api/tasks/assign' && method === 'POST') {
+      const form = await readBody(req)
+      const caller = form.get('token') ?? token
+      const viewer = store.personByToken(caller)
+      const viewerPosition = viewer ? store.positionById(viewer.positionId) : undefined
+      if (!viewer || !viewerPosition) {
+        sendJson(res, { ok: false, error: '链接无效' }, 404)
+        return
+      }
+      if (accessOf(viewer, viewerPosition, leaderGrants(db.raw)) !== 'leader') {
+        sendJson(res, { ok: false, error: '只有领导可以下达任务' }, 403)
+        return
+      }
+      const post = assignablePosts(taskPositions(dept.id), viewerPosition.id).find(
+        (p) => p.id === (form.get('positionId') ?? ''),
+      )
+      if (!post) {
+        sendJson(res, { ok: false, error: '不能给这个岗位下达任务' }, 403)
+        return
+      }
+      if (post.people.length === 0) {
+        sendJson(res, { ok: false, error: '这个岗位暂时没有人' }, 400)
+        return
+      }
+      const title = String(form.get('title') ?? '').trim().slice(0, 200)
+      if (!title) {
+        sendJson(res, { ok: false, error: '任务名称不能为空' }, 400)
+        return
+      }
+      const type = parseType(form.get('periodType'))
+      const period = periods(type).find((p) => p.key === (form.get('periodKey') ?? ''))
+      if (!period) {
+        sendJson(res, { ok: false, error: '周期无效' }, 400)
+        return
+      }
+      const stamp = Date.now().toString(36)
+      for (const member of post.people) {
+        store.createTask({
+          id: `task-${member.id}-${stamp}`,
+          departmentId: dept.id,
+          kind: 'assigned',
+          title,
+          detail: String(form.get('detail') ?? '').slice(0, 1000),
+          personId: member.id,
+          positionId: post.id,
+          periodType: type,
+          periodKey: period.key,
+          periodLabel: period.label,
+          assignedById: viewer.id,
+          recurringTaskId: null,
+          dutyId: null,
+          artifactId: null,
+          createdAt: now().toISOString(),
+        })
+      }
+      sendJson(res, { ok: true, position: post.name, people: post.people.length })
       return
     }
 

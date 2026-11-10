@@ -1,0 +1,51 @@
+<view class="container">
+  <view wx:if="{{forbidden && !loading}}" class="card">
+    <view class="title">只有领导可以下达任务</view>
+    <view class="subtitle">这一页对经理、副经理和公司领导开放。</view>
+  </view>
+
+  <block wx:else>
+    <view wx:if="{{loading}}" class="empty">正在加载…</view>
+    <view wx:elif="{{error}}" class="card" style="color:#b42318;">{{error}}</view>
+
+    <block wx:else>
+      <view class="card">
+        <view class="title">下达任务</view>
+        <view class="subtitle">选一个岗位，该岗位的人都会收到这条任务。</view>
+
+        <view class="muted small" style="margin:12rpx 0 6rpx;">交给哪个岗位</view>
+        <picker
+          class="picker"
+          range="{{positions}}"
+          range-key="name"
+          value="{{positionIndex}}"
+          bindchange="pickPosition"
+        >
+          <view>{{positions[positionIndex].name}}（{{positions[positionIndex].headcount}} 人）</view>
+        </picker>
+
+        <view class="muted small" style="margin:12rpx 0 6rpx;">周期</view>
+        <picker
+          class="picker"
+          range="{{periods}}"
+          range-key="label"
+          bindchange="pickPeriod"
+        >
+          <view>{{periodLabel}}</view>
+        </picker>
+
+        <view class="muted small" style="margin:12rpx 0 6rpx;">任务</view>
+        <input class="input" placeholder="要下属做什么" value="{{title}}" bindinput="inputTitle" maxlength="200" />
+
+        <view class="muted small" style="margin:12rpx 0 6rpx;">说明（可选）</view>
+        <input class="input" placeholder="补充要求" value="{{detail}}" bindinput="inputDetail" maxlength="500" />
+
+        <button class="btn" style="margin-top:24rpx;" bindtap="submit" disabled="{{submitting}}">
+          {{submitting ? '正在下达…' : '下达'}}
+        </button>
+
+        <view wx:if="{{lastResult}}" class="muted small" style="margin-top:12rpx; color:#1a7f4b;">{{lastResult}}</view>
+      </view>
+    </block>
+  </block>
+</view>
