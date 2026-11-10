@@ -6,8 +6,10 @@
  * them, and from then on sees their own task list.
  */
 
-/** Where the platform answers. Set this to the address the server runs on. */
-const BASE_URL = 'https://your-server.example.com'
+const config = require('./config.js')
+
+/** Where the platform answers; change it in config.js, not here. */
+const BASE_URL = config.baseUrl
 
 App({
   globalData: {

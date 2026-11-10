@@ -27,38 +27,35 @@ miniprogram/
 
 ## 怎么发起来
 
-小程序不是把代码放上去就能用的，它要挂在微信的账号下面。三件事：
+AppID 已经填好（`wx22e42e97d2c93a04`）。分两步：先在开发机上看到界面，再发布给全部门。
 
-### 1. 注册小程序，拿到 AppID
+### 第一步：在电脑上看到界面（不用买域名）
 
-到 <https://mp.weixin.qq.com> 注册一个「小程序」账号，在「开发 → 开发管理 → 开发设置」里能看到 AppID。
-把 `project.config.json` 里的 `"appid"` 从 `touristappid` 改成这个 AppID。
+1. 装 [微信开发者工具](https://developers.weixin.qq.com/miniprogram/dev/devtools/download.html)。
+2. 「导入项目」，目录选本文件夹，AppID 会自动认出来。
+3. 点右上角「详情 → 本地设置」，勾上
+   **「不校验合法域名、web-view（业务域名）、TLS 版本以及 HTTPS 证书」**。
+4. 编译。这时小程序连的是 `config.js` 里写的地址（默认是局域网里的平台），
+   用同事的链接就能看到真实数据。
 
-### 2. 把平台放到有域名的服务器上
+### 第二步：发布给全部门
 
-小程序只能请求 **HTTPS** 的地址，而且域名要在微信后台白名单里，所以平台不能只跑在某个人的电脑上。
+小程序发布后只能请求 **HTTPS** 域名，而且域名要在微信后台白名单里，所以要先给平台一个正经的地址：
 
-- 找一台常开的机器（公司服务器或云主机），把平台跑起来：
+- 一台常开的服务器（云主机即可），把平台跑起来：
   ```bash
   node lib/src/cli.js --port 3000 --host 0.0.0.0 --base https://mkt.example.com
   ```
-- 前面挂一层 HTTPS（Nginx + 证书，或用云厂商的负载均衡），让它对外的地址是 `https://你的域名`。
-- 到微信后台「开发 → 开发管理 → 服务器域名 → request 合法域名」把这个域名加进去。
+- 前面挂一层 HTTPS（Nginx + 证书，或用云厂商的负载均衡）。
+- 微信后台「开发 → 开发管理 → 服务器域名 → request 合法域名」加上这个域名。
 
-然后把 `miniprogram/app.js` 第一行的地址改掉：
+然后改 `config.js`：
 
 ```js
-const BASE_URL = 'https://mkt.example.com'
+module.exports = { baseUrl: 'https://mkt.example.com' }
 ```
 
-### 3. 用微信开发者工具上传
-
-1. 装 [微信开发者工具](https://developers.weixin.qq.com/miniprogram/dev/devtools/download.html)。
-2. 「导入项目」，目录选本文件夹里的 `miniprogram/`，填上你的 AppID。
-3. 本地能预览后，点「上传」，填版本号和备注。
-4. 到微信后台「管理 → 版本管理」把刚上传的版本提交审核，审核通过后发布。
-
-审核时说明这是个内部使用的部门工作台即可；个人主体也能注册和发布。
+最后用开发者工具点「上传」，到微信后台「管理 → 版本管理」提交审核，通过后发布。
 
 ## 用法
 
