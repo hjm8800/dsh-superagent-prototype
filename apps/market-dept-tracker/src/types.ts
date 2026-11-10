@@ -50,6 +50,36 @@ export const LEVEL_LABELS: Record<PositionLevel, string> = {
   team: '班组',
 }
 
+/**
+ * What a person may see.
+ *
+ * A member sees only their own work. The manager, the deputy manager and the
+ * people the department leader names see the whole department.
+ */
+export type AccessRole = 'member' | 'leader'
+
+export const ACCESS_ROLE_LABELS: Record<AccessRole, string> = {
+  member: '岗位成员',
+  leader: '查看全部',
+}
+
+/**
+ * A person who may see the whole department, beyond the manager and the
+ * deputy manager.
+ *
+ * These are the company leaders the department head names; the table of the
+ * market department does not list them, so they are named here.
+ */
+export interface LeaderGrant {
+  /** Stable id of the person, the same slug the roster uses. */
+  id: string
+  name: string
+  /** Who gave the access. */
+  grantedBy: string
+  /** When it was given. */
+  grantedAt: string
+}
+
 export interface Position {
   /** Stable slug, e.g. `contract-clerk`. */
   id: string
@@ -130,6 +160,89 @@ export interface Department {
   code: string
   name: string
   nameEn: string
+}
+
+/**
+ * A task someone has to get done.
+ *
+ * Two kinds: a task a superior assigned to a person, and a fixed task that
+ * repeats every week or every month for a whole post.
+ */
+export type TaskKind = 'assigned' | 'recurring'
+
+export const TASK_KIND_LABELS: Record<TaskKind, string> = {
+  assigned: '上级下达',
+  recurring: '固定任务',
+}
+
+/** How far along a task is. */
+export type TaskStatus = 'open' | 'in_progress' | 'done' | 'blocked' | 'cancelled'
+
+export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
+  open: '待办',
+  in_progress: '进行中',
+  done: '已完成',
+  blocked: '受阻',
+  cancelled: '已取消',
+}
+
+/** A fixed task that repeats, and the post it belongs to. */
+export interface RecurringTask {
+  id: string
+  departmentId: string
+  positionId: string
+  /** What has to be done. */
+  title: string
+  /** What the task is about, in the words people use. */
+  detail: string
+  /** How often it repeats. */
+  cadence: PeriodType
+  /** The duty this task serves, when it serves one. */
+  dutyId: string | null
+  /** The output this task produces, when it produces one. */
+  artifactId: string | null
+  /** When the task was set up. */
+  createdAt: string
+}
+
+/** One occurrence of a task, for one person and one period. */
+export interface Task {
+  id: string
+  departmentId: string
+  kind: TaskKind
+  /** The task itself. */
+  title: string
+  detail: string
+  /** Who has to do it. */
+  personId: string
+  positionId: string
+  /** The period the task belongs to. */
+  periodType: PeriodType
+  periodKey: string
+  periodLabel: string
+  status: TaskStatus
+  /** Who assigned it, when a person did. */
+  assignedById: string | null
+  /** The fixed task this occurrence came from, when it came from one. */
+  recurringTaskId: string | null
+  /** The duty it serves, when it serves one. */
+  dutyId: string | null
+  /** The output it produces, when it produces one. */
+  artifactId: string | null
+  /** When the task was given and when it was last touched. */
+  createdAt: string
+  updatedAt: string
+  /** Note from the person doing it. */
+  note: string
+}
+
+/** A task as the views need it, with the names resolved. */
+export interface TaskView extends Task {
+  personName: string
+  positionName: string
+  assignedByName: string
+  dutyText: string
+  artifactName: string
 }
 
 /**

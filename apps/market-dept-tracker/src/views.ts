@@ -32,10 +32,18 @@ export interface OverviewData {
   }[]
   /** How many files the collector could not place. */
   unmatchedCount?: number
+  /** The tasks of the period, for the dashboard. */
+  tasks?: {
+    total: number
+    done: number
+    blocked: number
+    assigned: number
+    recurring: number
+  }
 }
 
 export interface OverviewItem {
-  personName: string
+  /** Nobody is named in the overview; everything is by post. */
   positionName: string
   level: string
   status: string
@@ -58,14 +66,12 @@ export interface ArtifactView {
 /** A file the collector found, with what it was credited to. */
 export interface CollectedFileView {
   name: string
-  personName: string
+  /** The post the file was credited to; nobody is named. */
   positionName: string
   artifactName: string
   matchedKeyword: string
   reason: string
   modifiedAt: string
-  /** The uploader, when the file could not be credited to a person. */
-  ownerHint?: string
 }
 
 export interface CollectionData {
@@ -112,7 +118,6 @@ export function renderCollection(data: CollectionData): string {
     .map(
       (f) => `<tr>
   <td>${escapeHtml(f.name)}</td>
-  <td>${escapeHtml(f.personName || '—')}</td>
   <td>${escapeHtml(f.positionName || '—')}</td>
   <td>${escapeHtml(f.artifactName || '—')}</td>
   <td class="note-cell">${escapeHtml(f.matchedKeyword || '—')}</td>
@@ -125,23 +130,30 @@ export function renderCollection(data: CollectionData): string {
     .map(
       (f) => `<tr>
   <td>${escapeHtml(f.name)}</td>
-  <td>${escapeHtml(f.ownerHint ?? '')}</td>
   <td class="note-cell is-alert">${escapeHtml(f.reason)}</td>
 </tr>`,
     )
     .join('')
 
-  const personRows = data.people
-    .filter((p) => p.expected > 0)
-    .map(
-      (p) => `<tr>
-  <td>${escapeHtml(p.personName)}</td>
-  <td>${escapeHtml(p.positionName)}</td>
-  <td class="num">${p.files}</td>
-  <td class="num">${p.done}/${p.expected}</td>
-  <td class="wide">${bar(p.percent)}<span class="pct">${p.percent}%</span></td>
-</tr>`,
-    )
+  // The completion from the files, by post rather than by person.
+  const byPost = new Map<string, { files: number; done: number; expected: number }>()
+  for (const person of data.people) {
+    const current = byPost.get(person.positionName) ?? { files: 0, done: 0, expected: 0 }
+    current.files += person.files
+    current.done += person.done
+    current.expected += person.expected
+    byPost.set(person.positionName, current)
+  }
+  const postRows = [...byPost.entries()]
+    .map(([post, value]) => {
+      const percent = value.expected === 0 ? 0 : Math.round((value.done / value.expected) * 1000) / 10
+      return `<tr>
+  <td>${escapeHtml(post)}</td>
+  <td class="num">${value.files}</td>
+  <td class="num">${value.done}/${value.expected}</td>
+  <td class="wide">${bar(percent)}<span class="pct">${percent}%</span></td>
+</tr>`
+    })
     .join('')
 
   const body = `
@@ -150,19 +162,19 @@ ${pageHead(
   `${data.periodLabel}，来源：${escapeHtml(data.source)}，采集于 ${escapeHtml(data.collectedAt.slice(0, 16).replace('T', ' '))}`,
 )}
 <div class="stat-row">
-  ${stat('认出的产出', String(data.files.length), '已归到人和产出')}
+  ${stat('认出的产出', String(data.files.length), '已归到岗位和产出')}
   ${stat('认不出的文件', String(data.unmatched.length), data.unmatched.length > 0 ? '需要确认' : '没有遗漏')}
   ${stat('预期产出项', String(data.artifacts.length), '各岗位应交的成果')}
-  ${stat('有产出的岗位', String(data.people.filter((p) => p.files > 0).length), '按人统计')}
+  ${stat('有产出的岗位', String(byPost.size), '按岗位统计')}
 </div>
 
 <section class="card">
-  <h2>按人统计</h2>
+  <h2>按岗位统计</h2>
   ${
-    personRows
+    postRows
       ? `<table class="table">
-  <thead><tr><th>姓名</th><th>岗位</th><th>文件数</th><th>已交/应交</th><th>完成度</th></tr></thead>
-  <tbody>${personRows}</tbody>
+  <thead><tr><th>岗位</th><th>文件数</th><th>已交/应交</th><th>完成度</th></tr></thead>
+  <tbody>${postRows}</tbody>
 </table>`
       : empty('还没有采集到成果文件。')
   }
@@ -173,7 +185,7 @@ ${pageHead(
   ${
     fileRows
       ? `<table class="table">
-  <thead><tr><th>文件</th><th>提交人</th><th>岗位</th><th>对应产出</th><th>命中关键词</th><th>修改时间</th></tr></thead>
+  <thead><tr><th>文件</th><th>岗位</th><th>对应产出</th><th>命中关键词</th><th>修改时间</th></tr></thead>
   <tbody>${fileRows}</tbody>
 </table>`
       : empty('还没有认出的成果文件。')
@@ -184,9 +196,9 @@ ${
   data.unmatched.length > 0
     ? `<section class="card">
   <h2>认不出的文件</h2>
-  <p class="muted small">这些文件没有被算进完成情况。改名成「姓名＋产出名」即可自动归位。</p>
+  <p class="muted small">这些文件没有被算进完成情况。文件名里带上产出名即可自动归位。</p>
   <table class="table">
-  <thead><tr><th>文件</th><th>上传人</th><th>原因</th></tr></thead>
+  <thead><tr><th>文件</th><th>原因</th></tr></thead>
   <tbody>${unmatchedRows}</tbody>
 </table>
 </section>`
@@ -214,6 +226,7 @@ export function renderOverview(data: OverviewData): string {
     : Math.round((data.positions.reduce((sum, p) => sum + p.percent, 0) / data.positions.length) * 10) / 10
   const blocked = data.positions.reduce((sum, p) => sum + p.blocked, 0)
   const fromFiles = data.mode === 'files'
+  const tasks = data.tasks ?? { total: 0, done: 0, blocked: 0, assigned: 0, recurring: 0 }
 
   const periodOptions = join(
     data.periods.map(
@@ -244,7 +257,6 @@ export function renderOverview(data: OverviewData): string {
   const itemRows = data.items
     .map(
       (i) => `<tr>
-  <td>${escapeHtml(i.personName)}</td>
   <td>${escapeHtml(i.positionName)}</td>
   <td>${escapeHtml(i.status)}</td>
   <td class="wide">${bar(i.percent)}<span class="pct">${i.percent}%</span></td>
@@ -254,17 +266,25 @@ export function renderOverview(data: OverviewData): string {
     )
     .join('')
 
-  const fileRows = (data.filePeople ?? [])
-    .filter((p) => p.expected > 0)
-    .map(
-      (p) => `<tr>
-  <td>${escapeHtml(p.personName)}</td>
-  <td>${escapeHtml(p.positionName)}</td>
-  <td class="num">${p.files}</td>
-  <td class="num">${p.done}/${p.expected}</td>
-  <td class="wide">${bar(p.percent)}<span class="pct">${p.percent}%</span></td>
-</tr>`,
-    )
+  // The completion from the collected files, by post rather than by person.
+  const fileByPost = new Map<string, { files: number; done: number; expected: number; percent: number }>()
+  for (const person of data.filePeople ?? []) {
+    const current = fileByPost.get(person.positionName) ?? { files: 0, done: 0, expected: 0, percent: 0 }
+    current.files += person.files
+    current.done += person.done
+    current.expected += person.expected
+    fileByPost.set(person.positionName, current)
+  }
+  const fileRows = [...fileByPost.entries()]
+    .map(([post, value]) => {
+      const percent = value.expected === 0 ? 0 : Math.round((value.done / value.expected) * 1000) / 10
+      return `<tr>
+  <td>${escapeHtml(post)}</td>
+  <td class="num">${value.files}</td>
+  <td class="num">${value.done}/${value.expected}</td>
+  <td class="wide">${bar(percent)}<span class="pct">${percent}%</span></td>
+</tr>`
+    })
     .join('')
 
   const body = `
@@ -306,24 +326,46 @@ ${modeSwitch}
 </section>
 
 ${
+  tasks.total > 0
+    ? `<section class="card">
+  <div class="card-head">
+    <h2>任务清单</h2>
+    <span class="muted small">${tasks.done}/${tasks.total} 完成${tasks.blocked > 0 ? `，${tasks.blocked} 项受阻` : ''}</span>
+    ${bar(tasks.total === 0 ? 0 : (tasks.done / tasks.total) * 100)}
+    <a class="btn" href="/tasks?type=${data.periodType}&period=${encodeURIComponent(data.periodKey)}">查看</a>
+  </div>
+  <table class="table">
+  <thead><tr><th>上级下达</th><th>固定任务</th><th>已完成</th><th>受阻</th></tr></thead>
+  <tbody><tr>
+  <td class="num">${tasks.assigned}</td>
+  <td class="num">${tasks.recurring}</td>
+  <td class="num">${tasks.done}</td>
+  <td class="num${tasks.blocked > 0 ? ' is-alert' : ''}">${tasks.blocked}</td>
+</tr></tbody>
+</table>
+</section>`
+    : ''
+}
+
+${
   fromFiles
     ? `<section class="card">
-  <h2>按人统计</h2>
+  <h2>按岗位统计</h2>
   ${
     fileRows
       ? `<table class="table">
-  <thead><tr><th>姓名</th><th>岗位</th><th>成果文件</th><th>已交/应交</th><th>完成度</th></tr></thead>
+  <thead><tr><th>岗位</th><th>成果文件</th><th>已交/应交</th><th>完成度</th></tr></thead>
   <tbody>${fileRows}</tbody>
 </table>`
       : empty('该周期还没有采集到成果文件。')
   }
 </section>`
     : `<section class="card">
-  <h2>个人填报明细</h2>
+  <h2>各岗位填报情况</h2>
   ${
     itemRows
       ? `<table class="table">
-  <thead><tr><th>姓名</th><th>岗位</th><th>状态</th><th>完成度</th><th>本期小结</th><th>受阻</th></tr></thead>
+  <thead><tr><th>岗位</th><th>状态</th><th>完成度</th><th>本期小结</th><th>受阻</th></tr></thead>
   <tbody>${itemRows}</tbody>
 </table>`
       : empty('该周期还没有人提交填报。')
@@ -341,11 +383,10 @@ export interface LedgerData {
 
 export function renderLedger(data: LedgerData): string {
   const renderNode = (node: PositionView): string => {
+    // The ledger is by post; nobody is named here.
     const people = node.people.length
-      ? `<ul class="people">${node.people
-          .map((p) => `<li>${escapeHtml(p.name)}${p.pending ? '<span class="tag tag-pending">待定岗</span>' : ''}</li>`)
-          .join('')}</ul>`
-      : ''
+      ? `<p class="muted small">在岗 ${node.people.length} 人</p>`
+      : '<p class="muted small">本岗位暂无人</p>'
     const duties = node.duties.length
       ? `<ol class="duties">${node.duties.map((d) => `<li>${escapeHtml(d.text)}</li>`).join('')}</ol>`
       : '<p class="muted">本岗位暂无单独列出的职责条目。</p>'
@@ -375,7 +416,7 @@ ${pageHead(`${data.departmentName} · 岗位职责台账`, '按层级展示每�
 }
 
 export interface ReportFormData {
-  personName: string
+  /** Nobody is named; the page is titled by the post. */
   positionName: string
   periodType: PeriodType
   periodKey: string
@@ -425,8 +466,8 @@ export function renderReportForm(data: ReportFormData): string {
 
   const body = `
 ${pageHead(
-  `${data.personName} · ${PERIOD_LABELS[data.periodType]}填报`,
-  `${data.positionName} · ${data.periodLabel}（${data.rangeStart} 至 ${data.rangeEnd}）`,
+  `${data.positionName} · ${PERIOD_LABELS[data.periodType]}填报`,
+  `${data.periodLabel}（${data.rangeStart} 至 ${data.rangeEnd}）`,
 )}
 ${data.error ? `<div class="alert is-error">${escapeHtml(data.error)}</div>` : ''}
 ${data.saved ? `<div class="alert is-success">已提交${escapeHtml(PERIOD_LABELS[data.periodType])}，负责人可在总览页看到。</div>` : ''}
@@ -461,27 +502,26 @@ ${data.saved ? `<div class="alert is-success">已提交${escapeHtml(PERIOD_LABEL
 
 export interface LinksData {
   departmentName: string
-  people: {
+  /** The links of each post; nobody is named. */
+  posts: {
     id: string
     name: string
-    positionName: string
     level: string
-    pending: boolean
-    note: string
-    link: string
-    token: string
+    headcount: number
+    /** The links of the people in the post. */
+    links: { link: string; taskLink: string }[]
   }[]
 }
 
 export function renderLinks(data: LinksData): string {
-  const rows = data.people
+  const rows = data.posts
     .map(
       (p) => `<tr>
-  <td>${escapeHtml(p.name)}${p.pending ? ' <span class="tag tag-pending">待定岗</span>' : ''}</td>
-  <td>${escapeHtml(p.positionName)}</td>
+  <td>${escapeHtml(p.name)}</td>
   <td><span class="tag tag-${p.level}">${escapeHtml(LEVEL_LABELS[p.level as keyof typeof LEVEL_LABELS])}</span></td>
-  <td class="note-cell">${escapeHtml(p.note || '—')}</td>
-  <td class="link-cell"><code>${escapeHtml(p.link)}</code></td>
+  <td class="num">${p.headcount}</td>
+  <td class="link-cell">${p.links.map((l) => `<code>${escapeHtml(l.link)}</code>`).join('<br>')}</td>
+  <td class="link-cell">${p.links.map((l) => `<code>${escapeHtml(l.taskLink)}</code>`).join('<br>')}</td>
 </tr>`,
     )
     .join('')
@@ -489,42 +529,46 @@ export function renderLinks(data: LinksData): string {
   const body = `
 ${pageHead(
   `${data.departmentName} · 填报链接`,
-  '把下面的专属链接发给对应同事，他们打开链接即可填报自己的周报／月报，无需登录。',
-  `<button class="btn" type="button" id="copy-all">复制全部链接</button>`,
+  '把下面的链接发给对应同事，他们打开链接即可填报自己的周报／月报、查看自己的任务，无需登录。',
+  `<button class="btn" type="button" id="copy-all">复制全部填报链接</button>
+   <button class="btn" type="button" id="copy-tasks">复制全部任务链接</button>`,
 )}
 <section class="card">
   ${
     rows
       ? `<table class="table">
-  <thead><tr><th>姓名</th><th>岗位</th><th>层级</th><th>备注</th><th>专属链接</th></tr></thead>
+  <thead><tr><th>岗位</th><th>层级</th><th>人数</th><th>填报链接</th><th>任务链接</th></tr></thead>
   <tbody>${rows}</tbody>
 </table>`
       : empty('暂无人员。')
   }
 </section>
 `
+  const allLinks = data.posts.flatMap((p) => p.links.map((l) => l.link))
+  const allTaskLinks = data.posts.flatMap((p) => p.links.map((l) => l.taskLink))
   return layout({
     title: '填报链接',
     active: 'links',
     body,
     script: `
-document.getElementById('copy-all')?.addEventListener('click', async () => {
-  const links = ${JSON.stringify(data.people.map((p) => p.link))};
+const copy = async (links, id, label) => {
   const text = links.join('\\n');
   try {
     await navigator.clipboard.writeText(text);
-    const btn = document.getElementById('copy-all');
+    const btn = document.getElementById(id);
     btn.textContent = '已复制';
-    setTimeout(() => { btn.textContent = '复制全部链接'; }, 1500);
+    setTimeout(() => { btn.textContent = label; }, 1500);
   } catch {
     alert('复制失败，请手动选中复制。');
   }
-});`,
+};
+document.getElementById('copy-all')?.addEventListener('click', () => copy(${JSON.stringify(allLinks)}, 'copy-all', '复制全部填报链接'));
+document.getElementById('copy-tasks')?.addEventListener('click', () => copy(${JSON.stringify(allTaskLinks)}, 'copy-tasks', '复制全部任务链接'));`,
   })
 }
 
 export interface PersonReportData {
-  personName: string
+  /** Nobody is named; the page is titled by the post. */
   positionName: string
   report: Report
   duties: Map<string, string>
@@ -544,8 +588,8 @@ export function renderPersonReport(data: PersonReportData): string {
 
   const body = `
 ${pageHead(
-  `${data.personName} · ${PERIOD_LABELS[data.report.periodType]}`,
-  `${data.positionName} · ${data.report.periodLabel}，提交于 ${escapeHtml(data.report.submittedAt)}`,
+  `${data.positionName} · ${PERIOD_LABELS[data.report.periodType]}`,
+  `${data.report.periodLabel}，提交于 ${escapeHtml(data.report.submittedAt)}`,
 )}
 <div class="stat-row">
   ${stat('完成项', String(data.report.items.filter((i) => i.status === 'done').length))}

@@ -1,15 +1,22 @@
 import type { Database } from './db.ts'
+import { taskStore } from './tasks.ts'
 import type {
   ArtifactGroup,
   Department,
   Duty,
   Person,
+  PeriodType,
   Position,
   PositionProgress,
   PositionView,
   ProgressStatus,
+  RecurringTask,
   Report,
   ReportItem,
+  Task,
+  TaskKind,
+  TaskStatus,
+  TaskView,
 } from './types.ts'
 
 /** A row of the artifacts table, before it is mapped to the model. */
@@ -101,11 +108,68 @@ interface PersonRow {
 
 /** Read and write operations over the tracker's tables. */
 export class Store {
-  private readonly db: Database
+  /** The database, for the callers that need the raw connection. */
+  readonly db: Database
 
   constructor(db: Database) {
     this.db = db
   }
+
+  // The task list operations live in their own file and are mixed in below.
+  declare recurringTasks: (departmentId?: string) => RecurringTask[]
+  declare createRecurringTask: (input: {
+    id: string
+    departmentId: string
+    positionId: string
+    title: string
+    detail: string
+    cadence: PeriodType
+    dutyId: string | null
+    artifactId: string | null
+    createdAt: string
+  }) => void
+  declare tasks: (periodType: string, periodKey: string, departmentId?: string) => Task[]
+  declare createTask: (input: {
+    id: string
+    departmentId: string
+    kind: TaskKind
+    title: string
+    detail: string
+    personId: string
+    positionId: string
+    periodType: PeriodType
+    periodKey: string
+    periodLabel: string
+    assignedById: string | null
+    recurringTaskId: string | null
+    dutyId: string | null
+    artifactId: string | null
+    createdAt: string
+  }) => void
+  declare updateTask: (id: string, status: TaskStatus, note: string, updatedAt: string) => void
+  declare task: (id: string) => Task | undefined
+  declare materialiseRecurringTasks: (
+    departmentId: string,
+    periodType: PeriodType,
+    periodKey: string,
+    periodLabel: string,
+    now: string,
+  ) => number
+  declare taskViews: (periodType: string, periodKey: string, departmentId?: string) => TaskView[]
+  declare taskProgress: (
+    periodType: string,
+    periodKey: string,
+    departmentId?: string,
+  ) => {
+    positionId: string
+    positionName: string
+    level: string
+    total: number
+    done: number
+    blocked: number
+    percent: number
+  }[]
+
   // ------------------------------------------------------------- reading
 
   departments(): Department[] {
@@ -566,4 +630,73 @@ export function statusWeight(status: ProgressStatus): number {
     case 'not_applicable':
       return 100
   }
+}
+
+// The task list lives beside the rest of the store; mixing it in keeps the
+// task operations in their own file.
+Object.assign(Store.prototype, taskStore)
+
+/**
+ * The tasks of a period with the names resolved, for the views.
+ */
+Store.prototype.taskViews = function taskViews(
+  this: Store,
+  periodType: string,
+  periodKey: string,
+  departmentId?: string,
+): TaskView[] {
+  const tasks = this.tasks(periodType, periodKey, departmentId)
+  const people = this.people(departmentId)
+  const positions = this.positions(departmentId)
+  const duties = new Map<string, string>()
+  for (const position of positions) {
+    for (const duty of this.duties(position.id)) duties.set(duty.id, duty.text)
+  }
+  const artifacts = new Map(this.artifacts().map((a) => [a.id, a.artifact]))
+  const nameOf = (id: string | null): string =>
+    id ? (people.find((p) => p.id === id)?.name ?? '') : ''
+
+  return tasks.map((task) => ({
+    ...task,
+    personName: nameOf(task.personId),
+    positionName: positions.find((p) => p.id === task.positionId)?.name ?? '',
+    assignedByName: nameOf(task.assignedById),
+    dutyText: task.dutyId ? (duties.get(task.dutyId) ?? '') : '',
+    artifactName: task.artifactId ? (artifacts.get(task.artifactId) ?? '') : '',
+  }))
+}
+
+/**
+ * How the tasks of a period stand, for the dashboard.
+ */
+Store.prototype.taskProgress = function taskProgress(
+  this: Store,
+  periodType: string,
+  periodKey: string,
+  departmentId?: string,
+): {
+  positionId: string
+  positionName: string
+  level: string
+  total: number
+  done: number
+  blocked: number
+  percent: number
+}[] {
+  const tasks = this.tasks(periodType, periodKey, departmentId)
+  const positions = this.positions(departmentId)
+  return positions.map((position) => {
+    const own = tasks.filter((t) => t.positionId === position.id)
+    const done = own.filter((t) => t.status === 'done').length
+    const blocked = own.filter((t) => t.status === 'blocked').length
+    return {
+      positionId: position.id,
+      positionName: position.name,
+      level: position.level,
+      total: own.length,
+      done,
+      blocked,
+      percent: own.length === 0 ? 0 : Math.round((done / own.length) * 1000) / 10,
+    }
+  })
 }

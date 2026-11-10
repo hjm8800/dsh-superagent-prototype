@@ -102,12 +102,61 @@ CREATE TABLE IF NOT EXISTS collected_files (
   collected_at TEXT NOT NULL
 );
 
+-- A fixed task that repeats every week or every month for a whole post.
+CREATE TABLE IF NOT EXISTS recurring_tasks (
+  id             TEXT PRIMARY KEY,
+  department_id  TEXT NOT NULL REFERENCES departments(id),
+  position_id    TEXT NOT NULL REFERENCES positions(id),
+  title          TEXT NOT NULL,
+  detail         TEXT NOT NULL DEFAULT '',
+  cadence        TEXT NOT NULL,
+  duty_id        TEXT REFERENCES duties(id),
+  artifact_id    TEXT REFERENCES artifacts(id),
+  created_at     TEXT NOT NULL
+);
+
+-- The company leaders who may see the whole department, beyond the manager
+-- and the deputy manager.
+CREATE TABLE IF NOT EXISTS leader_grants (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  granted_by  TEXT NOT NULL DEFAULT '',
+  granted_at  TEXT NOT NULL
+);
+
+-- One occurrence of a task, for one person and one period.
+CREATE TABLE IF NOT EXISTS tasks (
+  id                TEXT PRIMARY KEY,
+  department_id     TEXT NOT NULL REFERENCES departments(id),
+  kind              TEXT NOT NULL,
+  title             TEXT NOT NULL,
+  detail            TEXT NOT NULL DEFAULT '',
+  person_id         TEXT NOT NULL REFERENCES people(id),
+  position_id       TEXT NOT NULL REFERENCES positions(id),
+  period_type       TEXT NOT NULL,
+  period_key        TEXT NOT NULL,
+  period_label      TEXT NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'open',
+  assigned_by_id    TEXT REFERENCES people(id),
+  recurring_task_id TEXT REFERENCES recurring_tasks(id),
+  duty_id           TEXT REFERENCES duties(id),
+  artifact_id       TEXT REFERENCES artifacts(id),
+  created_at        TEXT NOT NULL,
+  updated_at        TEXT NOT NULL,
+  note              TEXT NOT NULL DEFAULT '',
+  UNIQUE (person_id, period_type, period_key, recurring_task_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_duties_position ON duties(position_id);
 CREATE INDEX IF NOT EXISTS idx_people_position ON people(position_id);
 CREATE INDEX IF NOT EXISTS idx_reports_period ON reports(period_type, period_key);
 CREATE INDEX IF NOT EXISTS idx_report_items_report ON report_items(report_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_position ON artifacts(position_id);
 CREATE INDEX IF NOT EXISTS idx_collected_files_period ON collected_files(period_type, period_key);
+CREATE INDEX IF NOT EXISTS idx_recurring_tasks_position ON recurring_tasks(position_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_period ON tasks(period_type, period_key);
+CREATE INDEX IF NOT EXISTS idx_tasks_person ON tasks(person_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_position ON tasks(position_id);
 `
 
 export function openDatabase(file: string): Database {
@@ -269,6 +318,74 @@ export function seedDatabase(db: Database, seedPath: string): { departments: num
   return counts
 }
 
+/**
+ * Load the people who may see the whole department.
+ *
+ * The market-department table leaves the manager and the deputy manager posts
+ * empty, and the company leaders are not in it at all, so they are named here.
+ */
+export function seedLeaders(db: Database, leaderPath: string): number {
+  const file = JSON.parse(readFileSync(leaderPath, 'utf8')) as {
+    leaders: { name: string; id?: string; granted_by?: string }[]
+  }
+  const insert = db.raw.prepare(
+    `INSERT INTO leader_grants (id, name, granted_by, granted_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT (id) DO UPDATE SET name = excluded.name, granted_by = excluded.granted_by`,
+  )
+  const now = new Date().toISOString()
+  let count = 0
+  for (const leader of file.leaders) {
+    const id = leader.id ?? slugify(leader.name)
+    insert.run(id, leader.name, leader.granted_by ?? '', now)
+    count++
+  }
+  return count
+}
+
+/**
+ * Load the fixed tasks into the database.
+ *
+ * Each entry names the post it belongs to, what has to be done, how often it
+ * repeats, and the duty it serves. The ids are stable, so re-running this does
+ * not disturb the tasks already generated from them.
+ */
+export function seedFixedTasks(db: Database, taskPath: string): number {
+  const file = JSON.parse(readFileSync(taskPath, 'utf8')) as {
+    positions: Record<
+      string,
+      { title: string; detail: string; cadence: string; duty?: number }[]
+    >
+  }
+  const department = db.raw.prepare('SELECT id FROM departments ORDER BY code LIMIT 1').get() as
+    | { id: string }
+    | undefined
+  if (!department) return 0
+
+  const selectPosition = db.raw.prepare('SELECT id FROM positions WHERE name = ? AND department_id = ?')
+  const insert = db.raw.prepare(
+    `INSERT INTO recurring_tasks (id, department_id, position_id, title, detail, cadence, duty_id, artifact_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (id) DO UPDATE SET
+       title = excluded.title, detail = excluded.detail, cadence = excluded.cadence, duty_id = excluded.duty_id`,
+  )
+  const now = new Date().toISOString()
+  let count = 0
+  for (const [positionName, entries] of Object.entries(file.positions)) {
+    const position = selectPosition.get(positionName, department.id) as { id: string } | undefined
+    if (!position) continue
+    for (const [index, entry] of entries.entries()) {
+      const id = `${position.id}--t${index + 1}`
+      const dutyId = entry.duty ? `${position.id}#${entry.duty}` : null
+      insert.run(
+        id, department.id, position.id, entry.title, entry.detail ?? '',
+        entry.cadence, dutyId, null, now,
+      )
+      count++
+    }
+  }
+  return count
+}
 /**
  * Load the expected outputs into the database.
  *

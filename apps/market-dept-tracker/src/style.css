@@ -179,8 +179,40 @@ body {
 .mode:hover { color: var(--primary); }
 .mode.is-active { background: var(--primary); color: #fff; font-weight: 600; }
 
-/* -------------------------------------------------------------- table */
+/* ---------------------------------------------------------------- tasks */
 
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.card-head h2 { margin: 0; }
+
+.tag-kind-assigned { background: var(--primary-weak); color: var(--primary); }
+.tag-kind-recurring { background: var(--ok-weak); color: var(--ok); }
+
+.status-open { background: #eef1f4; color: var(--muted); }
+.status-in_progress { background: var(--primary-weak); color: var(--primary); }
+.status-done { background: var(--ok-weak); color: var(--ok); }
+.status-blocked { background: var(--alert-weak); color: var(--alert); }
+.status-cancelled { background: #f3f0fa; color: #5b3fc4; }
+
+.task-form { max-width: 640px; }
+.task-form .field { margin-bottom: 12px; }
+.task-form input[type="text"],
+.task-form select { width: 100%; }
+
+.form-row { display: flex; gap: 12px; flex-wrap: wrap; }
+.form-row .field { flex: 1; min-width: 180px; }
+
+.status-form { display: flex; gap: 6px; align-items: center; }
+.status-form select { width: auto; padding: 5px 8px; }
+.status-form input[type="text"] { flex: 1; min-width: 120px; }
+.status-form .btn { padding: 5px 12px; white-space: nowrap; }
+
+/* -------------------------------------------------------------- table */
 .table { width: 100%; border-collapse: collapse; }
 
 .table th,

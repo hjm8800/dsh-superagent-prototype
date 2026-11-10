@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { Store } from './store.ts'
-import { PROGRESS_STATUSES, type PeriodType, type ProgressStatus, type ReportItem } from './types.ts'
+import { PROGRESS_STATUSES, type ProgressStatus, type ReportItem } from './types.ts'
 import { periodFor, periodRange, recentPeriods } from './period.ts'
 import {
   renderOverview,
@@ -14,13 +14,25 @@ import {
   renderCollection,
   type OverviewItem,
 } from './views.ts'
+import {
+  renderTaskList,
+  renderMyTasks,
+  assignablePosts,
+  type TaskPosition,
+  type TaskPositionNode,
+} from './task-views.ts'
+import type { PeriodType, TaskStatus, Person, Position, AccessRole } from './types.ts'
+import { accessOf, leaderGrants } from './access.ts'
 import { escapeHtml, layout } from './html.ts'
 import type { Department } from './types.ts'
+import type { Database } from './db.ts'
 
 /** HTTP layer: routes requests to the store and renders pages. */
 
 export interface ServerOptions {
   store: Store
+  /** The database, for the access grants kept beside the data. */
+  db: Database
   /** Public base URL, used to build the links handed to employees. */
   baseUrl: string
   /** Fixed "now", so tests are deterministic. */
@@ -30,7 +42,7 @@ export interface ServerOptions {
 const HERE = dirname(fileURLToPath(import.meta.url))
 
 export function createTrackerServer(options: ServerOptions) {
-  const { store } = options
+  const { store, db } = options
   const now = options.now ?? (() => new Date())
 
   /** The department this tracker covers. The seed always creates exactly one. */
@@ -116,7 +128,6 @@ export function createTrackerServer(options: ServerOptions) {
                 : '尚未开始'
           : '未填报'
         return {
-          personName: person?.name ?? report.personId,
           positionName: position?.name ?? '',
           level: position?.level ?? 'specialist_staff',
           status,
@@ -132,6 +143,15 @@ export function createTrackerServer(options: ServerOptions) {
     // The people who filed at least one file, for the reporting rate.
     const filed = new Set(files.map((f) => f.personId).filter(Boolean))
     const unmatchedCount = files.filter((f) => !(f.personId && f.artifactId)).length
+
+    const taskList = store.tasks(periodType, periodKey, dept.id)
+    const taskStats = {
+      total: taskList.length,
+      done: taskList.filter((t) => t.status === 'done').length,
+      blocked: taskList.filter((t) => t.status === 'blocked').length,
+      assigned: taskList.filter((t) => t.kind === 'assigned').length,
+      recurring: taskList.filter((t) => t.kind === 'recurring').length,
+    }
 
     sendHtml(
       res,
@@ -149,6 +169,7 @@ export function createTrackerServer(options: ServerOptions) {
         mode: fromFiles ? 'files' : 'reports',
         filePeople,
         unmatchedCount,
+        tasks: taskStats,
       }),
     )
   }
@@ -193,18 +214,17 @@ export function createTrackerServer(options: ServerOptions) {
     const positionName = (positionId: string): string =>
       positions.find((p) => p.id === positionId)?.name ?? ''
 
+    // The file is credited to the post, not to a person; nobody is named.
     const fileViews = files.map((file) => {
       const person = file.personId ? personById.get(file.personId) : undefined
       const artifact = file.artifactId ? artifactById.get(file.artifactId) : undefined
       return {
         name: file.name,
-        personName: person?.name ?? '',
         positionName: person ? positionName(person.positionId) : '',
         artifactName: artifact?.artifact ?? '',
         matchedKeyword: file.matchedKeyword,
         reason: file.reason,
         modifiedAt: file.modifiedAt,
-        ownerHint: file.ownerName,
       }
     })
 
@@ -218,8 +238,8 @@ export function createTrackerServer(options: ServerOptions) {
         source: '指定目录',
         collectedAt: files.length > 0 ? files[0]?.modifiedAt ?? '' : '',
         artifacts: artifactViews,
-        files: fileViews.filter((f) => f.personName && f.artifactName),
-        unmatched: fileViews.filter((f) => !(f.personName && f.artifactName)),
+        files: fileViews.filter((f) => f.positionName && f.artifactName),
+        unmatched: fileViews.filter((f) => !(f.positionName && f.artifactName)),
         people: store.artifactProgressByPerson(periodType, periodKey, dept.id),
       }),
     )
@@ -229,25 +249,23 @@ export function createTrackerServer(options: ServerOptions) {
     const dept = department()
     const positions = store.positions(dept.id)
     const people = store.people(dept.id)
-    sendHtml(
-      res,
-      renderLinks({
-        departmentName: dept.name,
-        people: people.map((person) => {
-          const position = positions.find((p) => p.id === person.positionId)
-          return {
-            id: person.id,
-            name: person.name,
-            positionName: position?.name ?? '',
-            level: position?.level ?? 'specialist_staff',
-            pending: person.pending,
-            note: person.note,
-            token: person.token,
+    // The links are listed by post; nobody is named.
+    const posts = positions
+      .map((position) => {
+        const members = people.filter((person) => person.positionId === position.id)
+        return {
+          id: position.id,
+          name: position.name,
+          level: position.level,
+          headcount: members.length,
+          links: members.map((person) => ({
             link: `${options.baseUrl}/report?token=${person.token}`,
-          }
-        }),
-      }),
-    )
+            taskLink: `${options.baseUrl}/my-tasks?token=${person.token}`,
+          })),
+        }
+      })
+      .filter((post) => post.links.length > 0)
+    sendHtml(res, renderLinks({ departmentName: dept.name, posts }))
   }
 
   const reportForm = (req: IncomingMessage, res: ServerResponse, url: URL) => {
@@ -280,7 +298,6 @@ export function createTrackerServer(options: ServerOptions) {
     sendHtml(
       res,
       renderReportForm({
-        personName: person.name,
         positionName: position?.name ?? '',
         periodType,
         periodKey,
@@ -369,7 +386,6 @@ export function createTrackerServer(options: ServerOptions) {
     sendHtml(
       res,
       renderPersonReport({
-        personName: person.name,
         positionName: position?.name ?? '',
         report,
         duties,
@@ -388,12 +404,353 @@ export function createTrackerServer(options: ServerOptions) {
     res.end(body)
   }
 
+  // -------------------------------------------------------------- tasks
+
+  /** The posts of the department, as the task list needs them. */
+  const taskPositions = (departmentId: string): TaskPositionNode[] => {
+    const positions = store.positions(departmentId)
+    const people = store.people(departmentId)
+    const toNode = (parentId: string | null): TaskPositionNode[] =>
+      positions
+        .filter((p) => p.parentId === parentId)
+        .map((p) => ({
+          id: p.id,
+          name: p.name,
+          level: p.level,
+          headcount: p.headcountNote,
+          people: people
+            .filter((person) => person.positionId === p.id)
+            .map((person) => ({ id: person.id, name: person.name })),
+          children: toNode(p.id),
+        }))
+    return toNode(null)
+  }
+
+  /** Every post of the department, with the posts under each one. */
+  const allTaskPositions = (departmentId: string): TaskPositionNode[] => {
+    const tree = taskPositions(departmentId)
+    const flat: TaskPositionNode[] = []
+    const walk = (nodes: TaskPositionNode[]): void => {
+      for (const node of nodes) {
+        flat.push(node)
+        walk(node.children)
+      }
+    }
+    walk(tree)
+    return flat
+  }
+
+  /** The periods a task list can be looked at. */
+  const taskPeriods = (periodType: PeriodType) => recentPeriods(periodType, now(), 8)
+
+  /**
+   * The task list of a period.
+   *
+   * The fixed tasks of the period are made first, so a post's list is there
+   * even before anyone touches it.
+   */
+  const taskList = (req: IncomingMessage, res: ServerResponse, url: URL) => {
+    const dept = department()
+    const periodType = parseType(url.searchParams.get('type'))
+    const periods = taskPeriods(periodType)
+    const current = periods[0] ?? { key: '', label: '' }
+    const requested = url.searchParams.get('period')
+    const periodKey = periods.some((p) => p.key === requested) ? (requested as string) : current.key
+    const periodLabel = periods.find((p) => p.key === periodKey)?.label ?? current.label
+
+    store.materialiseRecurringTasks(dept.id, periodType, periodKey, periodLabel, now().toISOString())
+
+    const tree = taskPositions(dept.id)
+    const positionId = url.searchParams.get('position') ?? ''
+    const viewer = store.personByToken(url.searchParams.get('token') ?? '')
+    const viewerPosition = viewer ? store.positionById(viewer.positionId) : undefined
+    // A superior gives tasks out: the people of their own post and of the
+    // posts under it.
+    const assignable = viewerPosition ? assignablePosts(tree, viewerPosition.id) : []
+    // Only the leaders give tasks out.
+    const viewerCanAssign =
+      viewerPosition && accessOf(viewer, viewerPosition, leaderGrants(db.raw)) === 'leader'
+        ? assignable.length > 0
+        : false
+
+    const wanted = positionId
+      ? store.positionById(positionId)
+      : undefined
+    const tasks = store
+      .taskViews(periodType, periodKey, dept.id)
+      .filter((task) => (wanted ? task.positionId === wanted.id : true))
+
+    const recurring = wanted
+      ? store
+          .recurringTasks(dept.id)
+          .filter((task) => task.positionId === wanted.id)
+          .map((task) => {
+            const duty = task.dutyId ? store.duties(wanted.id).find((d) => d.id === task.dutyId) : undefined
+            const artifact = task.artifactId
+              ? store.artifacts().find((a) => a.id === task.artifactId)
+              : undefined
+            return {
+              id: task.id,
+              title: task.title,
+              detail: task.detail,
+              cadence: task.cadence,
+              dutyText: duty?.text ?? '',
+              artifactName: artifact?.artifact ?? '',
+            }
+          })
+      : []
+
+    sendHtml(
+      res,
+      renderTaskList({
+        departmentName: dept.name,
+        periodType,
+        periodKey,
+        periodLabel,
+        periods,
+        position: wanted
+          ? {
+              id: wanted.id,
+              name: wanted.name,
+              level: wanted.level,
+              headcount: wanted.headcountNote,
+              people: store
+                .people(dept.id)
+                .filter((p) => p.positionId === wanted.id)
+                .map((p) => ({ id: p.id, name: p.name })),
+            }
+          : undefined,
+        positions: allTaskPositions(dept.id).map((p) => ({
+          id: p.id,
+          name: p.name,
+          level: p.level,
+          headcount: p.headcount,
+          people: p.people,
+        })),
+        tasks,
+        recurring,
+        viewerPositionName: viewerPosition?.name,
+        viewerToken: viewer?.token,
+        viewerCanAssign,
+        assignablePositions: assignable,
+      }),
+    )
+  }
+
+  /** Give a task to a person. */
+  const assignTask = async (req: IncomingMessage, res: ServerResponse) => {
+    const form = await readBody(req)
+    const viewer = store.personByToken(form.get('token') ?? '')
+    if (!viewer) {
+      sendText(res, '链接无效', 404)
+      return
+    }
+    const dept = department()
+    const viewerPosition = store.positionById(viewer.positionId)
+    // Only the manager, the deputy manager and the company leaders give tasks
+    // out; the members only work through the ones they were given.
+    if (accessOf(viewer, viewerPosition, leaderGrants(db.raw)) !== 'leader') {
+      sendText(res, '只有经理、副经理和公司领导可以下达任务', 403)
+      return
+    }
+    const tree = taskPositions(dept.id)
+    const assignable = viewerPosition ? assignablePosts(tree, viewerPosition.id) : []
+    // The task is given to a post, not to a person; everyone holding it gets it.
+    const positionId = form.get('positionId') ?? ''
+    const post = assignable.find((p) => p.id === positionId)
+    if (!post) {
+      sendText(res, '不能给这个岗位下达任务', 403)
+      return
+    }
+    if (post.people.length === 0) {
+      sendText(res, '这个岗位暂时没有人', 400)
+      return
+    }
+
+    const periodType = parseType(form.get('periodType'))
+    const periods = taskPeriods(periodType)
+    const periodKey = form.get('periodKey') ?? ''
+    const period = periods.find((p) => p.key === periodKey)
+    if (!period) {
+      sendText(res, '周期无效', 400)
+      return
+    }
+
+    const title = (form.get('title') ?? '').toString().trim().slice(0, 200)
+    if (!title) {
+      sendText(res, '任务名称不能为空', 400)
+      return
+    }
+
+    // Everyone holding the post gets the task.
+    const stamp = Date.now().toString(36)
+    for (const member of post.people) {
+      store.createTask({
+        id: `task-${member.id}-${stamp}`,
+        departmentId: dept.id,
+        kind: 'assigned',
+        title,
+        detail: (form.get('detail') ?? '').toString().slice(0, 1000),
+        personId: member.id,
+        positionId: post.id,
+        periodType,
+        periodKey: period.key,
+        periodLabel: period.label,
+        assignedById: viewer.id,
+        recurringTaskId: null,
+        dutyId: null,
+        artifactId: null,
+        createdAt: now().toISOString(),
+      })
+    }
+
+    redirect(res, `/tasks?type=${periodType}&period=${encodeURIComponent(period.key)}&token=${encodeURIComponent(viewer.token)}`)
+  }
+
+  /** Set up a fixed task for a post. */
+  const createRecurring = async (req: IncomingMessage, res: ServerResponse) => {
+    const form = await readBody(req)
+    const viewer = store.personByToken(form.get('token') ?? '')
+    if (!viewer) {
+      sendText(res, '链接无效', 404)
+      return
+    }
+    const dept = department()
+    const tree = taskPositions(dept.id)
+    const viewerPosition = store.positionById(viewer.positionId)
+    // Setting a fixed task for a post is for the leaders too.
+    if (accessOf(viewer, viewerPosition, leaderGrants(db.raw)) !== 'leader') {
+      sendText(res, '只有经理、副经理和公司领导可以设固定任务', 403)
+      return
+    }
+    const assignable = viewerPosition ? assignablePosts(tree, viewerPosition.id) : []
+    const positionId = form.get('positionId') ?? ''
+    if (!assignable.some((post) => post.id === positionId)) {
+      sendText(res, '不能给这个岗位设固定任务', 403)
+      return
+    }
+    const title = (form.get('title') ?? '').toString().trim().slice(0, 200)
+    if (!title) {
+      sendText(res, '任务名称不能为空', 400)
+      return
+    }
+    const cadence = parseType(form.get('cadence'))
+    store.createRecurringTask({
+      id: `rec-${positionId}-${Date.now().toString(36)}`,
+      departmentId: dept.id,
+      positionId,
+      title,
+      detail: (form.get('detail') ?? '').toString().slice(0, 1000),
+      cadence,
+      dutyId: null,
+      artifactId: null,
+      createdAt: now().toISOString(),
+    })
+    redirect(res, `/tasks?type=${cadence}&position=${encodeURIComponent(positionId)}&token=${encodeURIComponent(viewer.token)}`)
+  }
+
+  /** A person's own task list. */
+  const myTasks = (req: IncomingMessage, res: ServerResponse, url: URL) => {
+    const token = url.searchParams.get('token') ?? ''
+    const person = store.personByToken(token)
+    if (!person) {
+      sendText(res, '链接无效', 404)
+      return
+    }
+    const dept = department()
+    const periodType = parseType(url.searchParams.get('type'))
+    const periods = taskPeriods(periodType)
+    const current = periods[0] ?? { key: '', label: '' }
+    const requested = url.searchParams.get('period')
+    const periodKey = periods.some((p) => p.key === requested) ? (requested as string) : current.key
+    const periodLabel = periods.find((p) => p.key === periodKey)?.label ?? current.label
+    store.materialiseRecurringTasks(dept.id, periodType, periodKey, periodLabel, now().toISOString())
+    const position = store.positionById(person.positionId)
+    sendHtml(
+      res,
+      renderMyTasks({
+        positionName: position?.name ?? '',
+        periodType,
+        periodKey,
+        periodLabel,
+        periods,
+        tasks: store.taskViews(periodType, periodKey, dept.id).filter((t) => t.personId === person.id),
+      }),
+    )
+  }
+
+  /** Move a task on. */
+  const updateMyTask = async (req: IncomingMessage, res: ServerResponse) => {
+    const form = await readBody(req)
+    const task = store.task(form.get('token') ?? '')
+    if (!task) {
+      sendText(res, '任务不存在', 404)
+      return
+    }
+    const status = (form.get('status') ?? 'open') as TaskStatus
+    const allowed: TaskStatus[] = ['open', 'in_progress', 'done', 'blocked', 'cancelled']
+    store.updateTask(
+      task.id,
+      allowed.includes(status) ? status : 'open',
+      (form.get('note') ?? '').toString().slice(0, 2000),
+      now().toISOString(),
+    )
+    redirect(res, `/my-tasks?type=${task.periodType}&period=${encodeURIComponent(task.periodKey)}`)
+  }
+
+  // ------------------------------------------------------------- access
+
+  /**
+   * Who the caller is and what they may see.
+   *
+   * A person in a post sees only their own work. The manager, the deputy
+   * manager and the company leaders named by the department head see the whole
+   * department.
+   */
+  const viewerOf = (token: string | null): { person?: Person; position?: Position; role: AccessRole } => {
+    const person = token ? store.personByToken(token) : undefined
+    if (!person) return { role: 'member' }
+    const position = store.positionById(person.positionId)
+    return {
+      person,
+      position,
+      role: accessOf(person, position, leaderGrants(db.raw)),
+    }
+  }
+
+  /** The page a member without the wider access gets. */
+  const memberOnly = (role: AccessRole, res: ServerResponse): boolean => {
+    if (role === 'leader') return false
+    sendHtml(
+      res,
+      layout({
+        title: '没有权限',
+        active: '',
+        body: `<div class="page-head"><div><h1>没有权限查看这一页</h1>
+<p class="muted">这一页是部门整体情况，只有经理、副经理和公司领导可以查看。你可以打开自己的任务清单和填报。</p>
+</div></div>
+<div class="card">
+  <a class="btn btn-primary" href="/my-tasks">我的任务</a>
+  <a class="btn" href="/report">我的填报</a>
+</div>`,
+      }),
+      403,
+    )
+    return true
+  }
+
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', options.baseUrl)
     const route = url.pathname
     const method = req.method ?? 'GET'
 
     try {
+      // The pages that show the department as a whole are for the leaders.
+      const guarded = ['/', '/collection', '/ledger', '/links', '/tasks']
+      if (guarded.includes(route) && method === 'GET') {
+        const { role } = viewerOf(url.searchParams.get('token'))
+        if (memberOnly(role, res)) return
+      }
       if (route === '/' && method === 'GET') return overview(req, res, url)
       if (route === '/collection' && method === 'GET') return collection(req, res, url)
       if (route === '/ledger' && method === 'GET') return ledger(req, res)
@@ -401,6 +758,11 @@ export function createTrackerServer(options: ServerOptions) {
       if (route === '/report' && method === 'GET') return reportForm(req, res, url)
       if (route === '/report' && method === 'POST') return void submitReport(req, res)
       if (route === '/person' && method === 'GET') return personReport(req, res, url)
+      if (route === '/tasks' && method === 'GET') return taskList(req, res, url)
+      if (route === '/tasks/assign' && method === 'POST') return void assignTask(req, res)
+      if (route === '/tasks/recurring' && method === 'POST') return void createRecurring(req, res)
+      if (route === '/my-tasks' && method === 'GET') return myTasks(req, res, url)
+      if (route === '/my-tasks/status' && method === 'POST') return void updateMyTask(req, res)
       if (route === '/style.css' && method === 'GET') return void styleSheet(req, res)
       if (route === '/healthz' && method === 'GET') return sendText(res, 'ok')
       sendHtml(res, layout({ title: '404', active: '', body: '<h1>404 页面不存在</h1>' }), 404)

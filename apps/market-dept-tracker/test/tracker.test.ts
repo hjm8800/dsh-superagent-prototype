@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { openDatabase, seedDatabase, slugify } from '../src/db.ts'
 import { Store, statusWeight } from '../src/store.ts'
 import { createTrackerServer } from '../src/server.ts'
+import { grantLeaderAccess } from '../src/access.ts'
 import { isoWeekKey, monthKey, periodFor, recentPeriods } from '../src/period.ts'
 import { PROGRESS_STATUSES } from '../src/types.ts'
 
@@ -276,6 +277,7 @@ test('a report cannot be filed for a period the form never offered', async () =>
   const store = new Store(db)
   const server = createTrackerServer({
     store,
+    db,
     baseUrl: 'http://127.0.0.1:0',
     now: () => new Date('2026-11-05T00:00:00Z'),
   })
@@ -311,6 +313,8 @@ test('a report cannot be filed for a period the form never offered', async () =>
   assert.equal(ok.status, 302)
   assert.ok(store.reportFor(clerk.id, 'week', '2026-W45'))
 
+  server.closeAllConnections()
+
   await new Promise<void>((resolve) => server.close(() => resolve()))
   db.close()
 })
@@ -321,6 +325,7 @@ test('a report shows the confirmation after it is submitted', async () => {
   const store = new Store(db)
   const server = createTrackerServer({
     store,
+    db,
     baseUrl: 'http://127.0.0.1:0',
     now: () => new Date('2026-11-05T00:00:00Z'),
   })
@@ -337,6 +342,8 @@ test('a report shows the confirmation after it is submitted', async () => {
   ).text()
   assert.ok(after.includes('已提交周报'), 'the confirmation must show after submitting')
 
+  server.closeAllConnections()
+
   await new Promise<void>((resolve) => server.close(() => resolve()))
   db.close()
 })
@@ -345,8 +352,18 @@ test('the overview offers both ways of counting the completion', async () => {
   const db = openDatabase(':memory:')
   seedDatabase(db, SEED)
   const store = new Store(db)
+  // The overview is for the leaders; the source table leaves the manager post
+  // empty, so the test names who may see it.
+  const leader = store.people().find((p) => p.name === '黎嘉良')!
+  grantLeaderAccess(db.raw, {
+    id: leader.id,
+    name: leader.name,
+    grantedBy: 'test',
+    grantedAt: '2026-11-05T00:00:00.000Z',
+  })
   const server = createTrackerServer({
     store,
+    db,
     baseUrl: 'http://127.0.0.1:0',
     now: () => new Date('2026-11-05T00:00:00Z'),
   })
@@ -354,13 +371,20 @@ test('the overview offers both ways of counting the completion', async () => {
   const address = server.address()
   const port = typeof address === 'object' && address ? address.port : 0
 
-  const reports = await (await fetch(`http://127.0.0.1:${port}/`)).text()
+  const reports = await (await fetch(`http://127.0.0.1:${port}/?token=${leader.token}`)).text()
   assert.ok(reports.includes('按成果文件统计'), 'the overview must offer the file-based count')
   assert.ok(reports.includes('填报率'), 'the overview must keep the reporting rate')
 
-  const files = await (await fetch(`http://127.0.0.1:${port}/?mode=files`)).text()
+  const files = await (await fetch(`http://127.0.0.1:${port}/?mode=files&token=${leader.token}`)).text()
   assert.ok(files.includes('产出到位率'), 'the file-based count must lead with the output rate')
-  assert.ok(files.includes('按人统计'), 'the file-based count must list the people')
+  assert.ok(files.includes('按岗位统计'), 'the file-based count must be listed by post')
+
+  // A member without the leader grant does not reach the overview.
+  const clerk = store.people().find((p) => p.name === '黄美琳')!
+  const closed = await fetch(`http://127.0.0.1:${port}/?token=${clerk.token}`)
+  assert.equal(closed.status, 403, 'the overview must be closed to a member')
+
+  server.closeAllConnections()
 
   await new Promise<void>((resolve) => server.close(() => resolve()))
   db.close()

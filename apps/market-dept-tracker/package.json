@@ -15,7 +15,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node lib/src/cli.js",
     "dev": "node --experimental-strip-types src/cli.ts",
-    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "test": "node --experimental-strip-types --test test/tracker.test.ts test/collector.test.ts test/tasks.test.ts",
     "check": "pnpm typecheck && pnpm test && pnpm build"
   },
   "devDependencies": {

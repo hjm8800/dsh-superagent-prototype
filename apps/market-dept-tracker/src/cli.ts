@@ -3,7 +3,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { openDatabase, seedArtifacts, seedDatabase } from './db.ts'
+import { openDatabase, seedArtifacts, seedDatabase, seedFixedTasks, seedLeaders, slugify } from './db.ts'
+import { grantLeaderAccess, leaderGrants, revokeLeaderAccess } from './access.ts'
 import { Store } from './store.ts'
 import { createTrackerServer } from './server.ts'
 import { collect } from './collection.ts'
@@ -76,6 +77,26 @@ function findArtifacts(): string | undefined {
   return candidates.find((path) => existsSync(path))
 }
 
+/** Locate the fixed-task file, beside the seed file. */
+function findTaskSeed(): string | undefined {
+  const candidates = [
+    resolve(HERE, '..', 'seed', 'tasks.json'),
+    resolve(HERE, '..', '..', 'seed', 'tasks.json'),
+    resolve(process.cwd(), 'seed', 'tasks.json'),
+  ]
+  return candidates.find((path) => existsSync(path))
+}
+
+/** Locate the file naming who may see the whole department. */
+function findLeaderSeed(): string | undefined {
+  const candidates = [
+    resolve(HERE, '..', 'seed', 'leaders.json'),
+    resolve(HERE, '..', '..', 'seed', 'leaders.json'),
+    resolve(process.cwd(), 'seed', 'leaders.json'),
+  ]
+  return candidates.find((path) => existsSync(path))
+}
+
 /** The shared place the employees leave their outcome files. */
 function fileSource(options: Record<string, string>): FileSource | undefined {
   const folder = options['feishu-folder']
@@ -99,6 +120,8 @@ const { command, options } = parseArgs(process.argv.slice(2))
 const dataFile = resolve(options['data'] ?? join(process.cwd(), 'data', 'tracker.db'))
 const seedPath = findSeed()
 const artifactPath = findArtifacts()
+const taskSeedPath = findTaskSeed()
+const leaderSeedPath = findLeaderSeed()
 
 if (!seedPath) {
   console.error('找不到岗位种子数据 seed/market-department.json')
@@ -108,6 +131,8 @@ if (!seedPath) {
 const db = openDatabase(dataFile)
 const counts = seedDatabase(db, seedPath)
 const artifactCount = artifactPath ? seedArtifacts(db, artifactPath) : 0
+const taskCount = taskSeedPath ? seedFixedTasks(db, taskSeedPath) : 0
+const leaderCount = leaderSeedPath ? seedLeaders(db, leaderSeedPath) : 0
 const store = new Store(db)
 
 if (command === 'seed') {
@@ -117,12 +142,15 @@ if (command === 'seed') {
     people: store.people().length,
     duties: store.positions().reduce((sum, p) => sum + store.duties(p.id).length, 0),
     artifacts: store.artifacts().length,
+    fixedTasks: store.recurringTasks().length,
   }
   console.log(
-    `${dataFile}：现有 ${totals.positions} 个岗位、${totals.people} 名人员、${totals.duties} 条职责、${totals.artifacts} 项预期产出`,
+    `${dataFile}：现有 ${totals.positions} 个岗位、${totals.people} 名人员、${totals.duties} 条职责、${totals.artifacts} 项预期产出、${totals.fixedTasks} 项固定任务`,
   )
   if (counts.positions > 0) {
-    console.log(`本次新增：${counts.positions} 个岗位、${counts.people} 名人员、${counts.duties} 条职责、${artifactCount} 项预期产出`)
+    console.log(
+      `本次新增：${counts.positions} 个岗位、${counts.people} 名人员、${counts.duties} 条职责、${artifactCount} 项预期产出、${taskCount} 项固定任务`,
+    )
   }
   db.close()
   process.exit(0)
@@ -133,6 +161,43 @@ if (command === 'links') {
   for (const person of store.people()) {
     const position = store.positionById(person.positionId)
     console.log(`${person.name}\t${position?.name ?? ''}\t${base}/report?token=${person.token}`)
+  }
+  db.close()
+  process.exit(0)
+}
+
+if (command === 'leaders') {
+  // Who may see the whole department: the manager, the deputy manager and the
+  // company leaders the department head names.
+  const action = options['action'] ?? 'list'
+  const name = options['name']
+  if (action === 'list') {
+    const grants = leaderGrants(db.raw)
+    if (grants.length === 0) {
+      console.log('还没有指定可以查看全部信息的人。')
+    }
+    for (const grant of grants) {
+      const person = store.people().find((p) => p.id === grant.id)
+      console.log(`${grant.name}\t${person ? '在花名册上' : '不在花名册上'}\t${grant.id}`)
+    }
+    db.close()
+    process.exit(0)
+  }
+  if (!name) {
+    console.error('请给出名字：--name <姓名>')
+    process.exit(1)
+  }
+  const person = store.people().find((p) => p.name === name)
+  const id = person?.id ?? slugify(name)
+  if (action === 'add') {
+    grantLeaderAccess(db.raw, { id, name, grantedBy: options['by'] ?? '', grantedAt: new Date().toISOString() })
+    console.log(`已给 ${name} 查看全部信息的权限。`)
+  } else if (action === 'remove') {
+    revokeLeaderAccess(db.raw, id)
+    console.log(`已收回 ${name} 查看全部信息的权限。`)
+  } else {
+    console.error('用法：--action list | add | remove')
+    process.exit(1)
   }
   db.close()
   process.exit(0)
@@ -168,7 +233,7 @@ const port = Number(options['port'] ?? process.env['PORT'] ?? 3000)
 const host = options['host'] ?? process.env['HOST'] ?? '127.0.0.1'
 const baseUrl = options['base'] ?? `http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`
 
-const server = createTrackerServer({ store, baseUrl })
+const server = createTrackerServer({ store, db, baseUrl })
 server.listen(port, host, () => {
   console.log(`市场部工作台已启动：${baseUrl}`)
   console.log(`数据文件：${dataFile}`)
