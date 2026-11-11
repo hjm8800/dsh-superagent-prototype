@@ -158,6 +158,15 @@ page {
 /* Several small buttons in a row. */
 .btn-row { display: flex; flex-wrap: wrap; gap: 12rpx; margin-top: 16rpx; }
 
+/* Two per row, so the four leader actions do not fill the screen. */
+.btn-row .btn {
+  flex: none;
+  width: 48%;
+  margin: 0;
+  padding: 12rpx 0;
+  font-size: 26rpx;
+}
+
 /* A number input kept short, e.g. the completion percentage. */
 .small-input { width: 120rpx !important; flex: none; }
 
