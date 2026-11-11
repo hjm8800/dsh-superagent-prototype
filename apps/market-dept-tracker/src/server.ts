@@ -13,6 +13,7 @@ import {
   renderLinks,
   renderPersonReport,
   renderCollection,
+  renderWelcome,
   type OverviewItem,
 } from './views.ts'
 import {
@@ -100,6 +101,32 @@ export function createTrackerServer(options: ServerOptions) {
     const chunks: Buffer[] = []
     for await (const chunk of req) chunks.push(chunk as Buffer)
     return new URLSearchParams(Buffer.concat(chunks).toString('utf8'))
+  }
+
+  /** The cookie that remembers whose link this browser opened. */
+  const SESSION_COOKIE = 'mdt_token'
+
+  const cookieOf = (req: IncomingMessage, name: string): string => {
+    for (const part of (req.headers.cookie ?? '').split(';')) {
+      const index = part.indexOf('=')
+      if (index < 0) continue
+      if (part.slice(0, index).trim() !== name) continue
+      return decodeURIComponent(part.slice(index + 1).trim())
+    }
+    return ''
+  }
+
+  /**
+   * Remember the person for this browser.
+   *
+   * The person's link carries their token; opening it once is enough, so the
+   * pages do not have to repeat the token in every address.
+   */
+  const remember = (res: ServerResponse, token: string): void => {
+    res.setHeader(
+      'set-cookie',
+      `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax`,
+    )
   }
 
   // ------------------------------------------------------------- routes
@@ -286,6 +313,10 @@ export function createTrackerServer(options: ServerOptions) {
 
   const reportForm = (req: IncomingMessage, res: ServerResponse, url: URL) => {
     const token = url.searchParams.get('token') ?? ''
+    if (!token) {
+      sendHtml(res, renderWelcome({ departmentName: department().name }))
+      return
+    }
     const person = store.personByToken(token)
     if (!person) {
       sendHtml(
@@ -668,6 +699,10 @@ export function createTrackerServer(options: ServerOptions) {
   /** A person's own task list. */
   const myTasks = (req: IncomingMessage, res: ServerResponse, url: URL) => {
     const token = url.searchParams.get('token') ?? ''
+    if (!token) {
+      sendHtml(res, renderWelcome({ departmentName: department().name }))
+      return
+    }
     const person = store.personByToken(token)
     if (!person) {
       sendText(res, '链接无效', 404)
@@ -1102,12 +1137,68 @@ export function createTrackerServer(options: ServerOptions) {
     const method = req.method ?? 'GET'
 
     try {
-      // The mini program and any other JSON caller read the same data.
+      // A link may be pasted whole; keep only the token out of it.
+      const raw = url.searchParams.get('token') ?? ''
+      const supplied = /([a-f0-9]{32})/i.exec(raw)?.[1] ?? raw.trim()
+      if (supplied && supplied !== raw) url.searchParams.set('token', supplied)
+
+      // The mini program and any other JSON caller read the same data. They
+      // carry the token themselves, so the browser cookie does not apply.
       if (route.startsWith('/api/')) return void api(req, res, url, route, method)
+
+      // Opening a link remembers whose link it is; later pages then work
+      // without repeating the token in every address.
+      const linked = supplied ? store.personByToken(supplied) : undefined
+      if (linked) remember(res, linked.token)
+      const saved = cookieOf(req, SESSION_COOKIE)
+      const remembered = saved ? store.personByToken(saved) : undefined
+      const token = linked?.token ?? remembered?.token ?? ''
+      if (token && !url.searchParams.get('token')) url.searchParams.set('token', token)
+
+      // Somebody who pasted a link in the welcome form goes straight to the
+      // page that fits them: the department for a leader, their own page for
+      // everyone else.
+      if (route === '/enter' && method === 'GET') {
+        // Only what was just pasted counts here; a browser that already
+        // remembered someone else must not be sent on silently.
+        const person = supplied ? store.personByToken(supplied) : undefined
+        if (!person) {
+          sendHtml(
+            res,
+            renderWelcome({
+              departmentName: department().name,
+              error: '这个链接无法识别，请向部门负责人索取最新链接。',
+            }),
+            404,
+          )
+          return
+        }
+        const position = store.positionById(person.positionId)
+        const role = accessOf(person, position, leaderGrants(db.raw))
+        redirect(res, role === 'leader' ? '/' : '/report')
+        return
+      }
+
       // The pages that show the department as a whole are for the leaders.
-      const guarded = ['/', '/collection', '/ledger', '/links', '/tasks']
+      const guarded = ['/', '/collection', '/ledger', '/links', '/tasks', '/person']
       if (guarded.includes(route) && method === 'GET') {
-        const { role } = viewerOf(url.searchParams.get('token'))
+        if (!token) {
+          // No link yet: ask for one rather than turn the visitor away.
+          sendHtml(res, renderWelcome({ departmentName: department().name }))
+          return
+        }
+        const { person, role } = viewerOf(token)
+        if (!person) {
+          sendHtml(
+            res,
+            renderWelcome({
+              departmentName: department().name,
+              error: '这个链接无法识别，请向部门负责人索取最新链接。',
+            }),
+            404,
+          )
+          return
+        }
         if (memberOnly(role, res)) return
       }
       if (route === '/' && method === 'GET') return overview(req, res, url)

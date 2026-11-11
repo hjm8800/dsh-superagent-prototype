@@ -381,6 +381,38 @@ export interface LedgerData {
   tree: PositionView[]
 }
 
+/**
+ * The page a visitor sees before they have a link.
+ *
+ * The platform hands every person their own link, so a bare address has no
+ * identity to work with; rather than turn the visitor away, the page asks for
+ * the link.
+ */
+export function renderWelcome(data: { departmentName: string; error?: string }): string {
+  const body = `
+<div class="page-head"><div>
+  <h1>${escapeHtml(data.departmentName)}工作台</h1>
+  <p class="muted">岗位职责、任务清单与周／月完成情况</p>
+</div></div>
+${data.error ? `<div class="alert is-error">${escapeHtml(data.error)}</div>` : ''}
+<section class="card">
+  <h2>用你的专属链接进入</h2>
+  <p class="muted small">部门负责人会给你一条专属链接。把它粘贴到下面，或者直接点开那条链接。</p>
+  <form class="task-form" method="get" action="/enter">
+    <label class="field"><span>专属链接或口令</span>
+      <input type="text" name="token" placeholder="粘贴完整链接，或链接里 token= 后面那串" autofocus>
+    </label>
+    <div class="form-actions"><button class="btn btn-primary" type="submit">进入</button></div>
+  </form>
+</section>
+<section class="card">
+  <h2>还没有链接？</h2>
+  <p class="muted">找你所在岗位的负责人，或者联系部门负责人要一条。</p>
+</section>
+`
+  return layout({ title: '进入', active: '', body })
+}
+
 export function renderLedger(data: LedgerData): string {
   const renderNode = (node: PositionView): string => {
     // The ledger is by post; nobody is named here.
