@@ -15,6 +15,10 @@ Page({
     person: null,
     position: '',
     periodType: 'week',
+    periodTypes: [
+      { value: 'week', label: '周' },
+      { value: 'month', label: '月' },
+    ],
     periodLabel: '',
     periods: [],
     tasks: [],
@@ -26,21 +30,22 @@ Page({
     this.load()
   },
 
-  async load(periodKey) {
+  async load(periodKey, type) {
     const token = app.globalData.token || wx.getStorageSync('token')
     if (!token) {
       this.setData({ loading: false, tasks: [], error: '' })
       return
     }
-    this.setData({ loading: true, error: '' })
+    const periodType = type || this.data.periodType
+    this.setData({ loading: true, error: '', periodType })
     try {
       if (!app.globalData.person) await app.whoAmI(token)
       const data = await app.request('/api/my-tasks', {
         token,
-        type: this.data.periodType,
+        type: periodType,
         period: periodKey || '',
       })
-      const periods = await app.request('/api/periods', { type: this.data.periodType })
+      const periods = await app.request('/api/periods', { type: periodType })
       const tasks = data.tasks.map((task) => ({
         ...task,
         statusIndex: Math.max(0, STATUS_CHOICES.findIndex((c) => c.value === task.status)),
@@ -67,6 +72,13 @@ Page({
   pickPeriod(event) {
     const key = event.currentTarget.dataset.key
     this.load(key)
+  },
+
+  switchType(event) {
+    const type = event.currentTarget.dataset.type
+    if (!type || type === this.data.periodType) return
+    this.setData({ periodType: type })
+    this.load('', type)
   },
 
   async changeStatus(event) {

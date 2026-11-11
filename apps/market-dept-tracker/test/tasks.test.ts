@@ -668,3 +668,75 @@ test('the api lets a leader give a task, and refuses a member', async () => {
     assert.equal(created.length, post.headcount, 'everyone holding the post got it')
   })
 })
+
+test('the api opens the ledger to a leader and refuses a member', async () => {
+  await withServer(async (base, store) => {
+    const leader = makeLeader(store)
+    const clerk = store.people().find((p) => p.name === '黄美琳')!
+
+    const refused = await fetch(`${base}/api/ledger?token=${clerk.token}`)
+    assert.equal(refused.status, 403, 'a member may not read the department ledger')
+
+    const response = await fetch(`${base}/api/ledger?token=${leader.token}`)
+    assert.equal(response.status, 200)
+    const data = await json<{ ok: boolean; positions: { name: string; duties: unknown[] }[] }>(response)
+    assert.equal(data.ok, true)
+    assert.ok(data.positions.some((p) => p.name === '合同管理业务员'))
+    assert.ok(data.positions.some((p) => p.duties.length > 0))
+    assert.ok(!JSON.stringify(data).includes('黄美琳'), 'the ledger names no person')
+  })
+})
+
+test('the api shows the collected files to a leader and refuses a member', async () => {
+  await withServer(async (base, store) => {
+    const leader = makeLeader(store)
+    const clerk = store.people().find((p) => p.name === '黄美琳')!
+
+    const refused = await fetch(`${base}/api/collection?token=${clerk.token}`)
+    assert.equal(refused.status, 403, 'a member may not read the collection')
+
+    const response = await fetch(`${base}/api/collection?token=${leader.token}&type=week`)
+    assert.equal(response.status, 200)
+    const data = await json<{ ok: boolean; counts: { files: number }; positions: unknown[] }>(response)
+    assert.equal(data.ok, true)
+    assert.equal(data.counts.files, 0)
+    assert.ok(Array.isArray(data.positions))
+  })
+})
+
+test('the api lets a leader set a fixed task, and refuses a member', async () => {
+  await withServer(async (base, store) => {
+    const leader = makeLeader(store)
+    const clerk = store.people().find((p) => p.name === '黄美琳')!
+    const body = (token: string): string =>
+      [
+        `token=${encodeURIComponent(token)}`,
+        `positionId=${encodeURIComponent(clerk.positionId)}`,
+        'cadence=week',
+        `title=${encodeURIComponent('每周交回款台账')}`,
+      ].join('&')
+
+    const refused = await fetch(`${base}/api/tasks/recurring`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: body(clerk.token),
+    })
+    assert.equal(refused.status, 403, 'a member may not set a fixed task')
+
+    const response = await fetch(`${base}/api/tasks/recurring`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: body(leader.token),
+    })
+    assert.equal(response.status, 200)
+    const data = await json<{ ok: boolean; cadence: string }>(response)
+    assert.equal(data.ok, true)
+    assert.equal(data.cadence, 'week')
+
+    // The fixed task shows up in the post's task list for the period.
+    const mine = await json<{ tasks: { title: string }[] }>(
+      await fetch(`${base}/api/my-tasks?token=${clerk.token}&type=week&period=2026-W45`),
+    )
+    assert.ok(mine.tasks.some((t) => t.title === '每周交回款台账'))
+  })
+})

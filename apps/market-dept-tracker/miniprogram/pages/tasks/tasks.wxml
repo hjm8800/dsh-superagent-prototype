@@ -11,6 +11,15 @@
     <view class="card" wx:if="{{person}}">
       <view class="title">{{position}}</view>
       <view class="subtitle">{{periodLabel}}｜{{person.name ? '已进入' : ''}}</view>
+      <view class="seg">
+        <view
+          wx:for="{{periodTypes}}"
+          wx:key="value"
+          class="seg-item {{periodType === item.value ? 'seg-active' : ''}}"
+          data-type="{{item.value}}"
+          bindtap="switchType"
+        >{{item.label}}</view>
+      </view>
       <view class="chips">
         <view
           wx:for="{{periods}}"

@@ -57,6 +57,13 @@ page {
 .tag-assigned { background: #e8f0fe; color: #1f6feb; }
 .tag-recurring { background: #e6f4ec; color: #1a7f4b; }
 
+/* The level of a post, used by the ledger and the overview. */
+.tag-manager { background: #e8f0fe; color: #1f6feb; }
+.tag-deputy_manager { background: #e8f0fe; color: #1f6feb; }
+.tag-specialist { background: #e6f4ec; color: #1a7f4b; }
+.tag-specialist_staff { background: #eef1f4; color: #6b7785; }
+.tag-team { background: #f3f0fa; color: #5b3fc4; }
+
 .status-open { background: #eef1f4; color: #6b7785; }
 .status-in_progress { background: #e8f0fe; color: #1f6feb; }
 .status-done { background: #e6f4ec; color: #1a7f4b; }
@@ -116,6 +123,43 @@ page {
 }
 
 .chip-active { background: #1f6feb; border-color: #1f6feb; color: #ffffff; }
+
+/* 周 / 月 switch. */
+.seg {
+  display: flex;
+  background: #eef1f4;
+  border-radius: 10rpx;
+  padding: 4rpx;
+  margin-bottom: 16rpx;
+}
+
+.seg-item {
+  flex: 1;
+  text-align: center;
+  padding: 10rpx 0;
+  border-radius: 8rpx;
+  font-size: 26rpx;
+  color: #6b7785;
+}
+
+.seg-active { background: #ffffff; color: #1f6feb; font-weight: 600; }
+
+/* A post in the ledger. */
+.post {
+  background: #ffffff;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  margin-bottom: 16rpx;
+}
+
+.post-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6rpx; }
+.post-name { font-size: 30rpx; font-weight: 600; }
+
+/* Several small buttons in a row. */
+.btn-row { display: flex; flex-wrap: wrap; gap: 12rpx; margin-top: 16rpx; }
+
+/* A number input kept short, e.g. the completion percentage. */
+.small-input { width: 120rpx !important; flex: none; }
 
 .bar { height: 12rpx; background: #e9edf1; border-radius: 999rpx; overflow: hidden; margin-top: 8rpx; }
 .bar-fill { height: 100%; background: #1f6feb; }

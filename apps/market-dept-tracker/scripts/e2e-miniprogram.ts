@@ -86,5 +86,52 @@ if (created.length !== post.headcount) {
 }
 console.log(`assigned to ${assignedData.position}: ${created.length} people got it`)
 
+// 6. The ledger, by post, for the leaders.
+const ledger = await (await fetch(`${BASE}/api/ledger?token=${leader.token}`)).json()
+if (!ledger.ok) throw new Error('the leader cannot read the ledger')
+if (!ledger.positions.some((p: { duties: unknown[] }) => p.duties.length > 0)) {
+  throw new Error('the ledger has no duties')
+}
+console.log(`ledger: ${ledger.positions.length} posts`)
+const ledgerDenied = await fetch(`${BASE}/api/ledger?token=${clerk.token}`)
+if (ledgerDenied.status !== 403) throw new Error('a member may not read the ledger')
+console.log('a member is refused the ledger')
+
+// 7. The collection, for the leaders.
+const collection = await (await fetch(`${BASE}/api/collection?token=${leader.token}&type=week`)).json()
+if (!collection.ok) throw new Error('the leader cannot read the collection')
+if (typeof collection.counts.files !== 'number') throw new Error('the collection has no counts')
+console.log(`collection: ${collection.counts.files} files, ${collection.counts.unmatched} unmatched`)
+const collectionDenied = await fetch(`${BASE}/api/collection?token=${clerk.token}`)
+if (collectionDenied.status !== 403) throw new Error('a member may not read the collection')
+console.log('a member is refused the collection')
+
+// 8. A fixed task the leader sets shows up for the post.
+const recurringBody = [
+  `token=${encodeURIComponent(leader.token)}`,
+  `positionId=${encodeURIComponent(clerk.positionId)}`,
+  'cadence=week',
+  `title=${encodeURIComponent('小程序设的固定任务')}`,
+].join('&')
+const recurring = await fetch(`${BASE}/api/tasks/recurring`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/x-www-form-urlencoded' },
+  body: recurringBody,
+})
+const recurringData = await recurring.json()
+if (!recurringData.ok) throw new Error(`the fixed task was not set: ${recurringData.error}`)
+const mine = await (await fetch(`${BASE}/api/my-tasks?token=${clerk.token}&type=week&period=${period}`)).json()
+if (!mine.tasks.some((t: { title: string }) => t.title === '小程序设的固定任务')) {
+  throw new Error('the fixed task did not reach the post')
+}
+console.log('a fixed task set by the leader reaches the post')
+const recurringDenied = await fetch(`${BASE}/api/tasks/recurring`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/x-www-form-urlencoded' },
+  body: recurringBody.replace(encodeURIComponent(leader.token), encodeURIComponent(clerk.token)),
+})
+if (recurringDenied.status !== 403) throw new Error('a member may not set a fixed task')
+console.log('a member is refused setting a fixed task')
+
 console.log('MINI PROGRAM API OK')
 db.close()

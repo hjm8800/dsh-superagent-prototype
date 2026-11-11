@@ -7,6 +7,10 @@ Page({
     forbidden: false,
     periodLabel: '',
     periodType: 'week',
+    periodTypes: [
+      { value: 'week', label: '周' },
+      { value: 'month', label: '月' },
+    ],
     periods: [],
     stats: { peopleCount: 0, reportedCount: 0, unmatchedFiles: 0, taskDone: 0, taskTotal: 0 },
     positions: [],
@@ -16,20 +20,21 @@ Page({
     this.load()
   },
 
-  async load(periodKey) {
+  async load(periodKey, type) {
     const token = app.globalData.token || wx.getStorageSync('token')
     if (!token) {
       this.setData({ loading: false, forbidden: true, error: '' })
       return
     }
-    this.setData({ loading: true, error: '', forbidden: false })
+    const periodType = type || this.data.periodType
+    this.setData({ loading: true, error: '', forbidden: false, periodType })
     try {
       const data = await app.request('/api/overview', {
         token,
-        type: this.data.periodType,
+        type: periodType,
         period: periodKey || '',
       })
-      const periods = await app.request('/api/periods', { type: this.data.periodType })
+      const periods = await app.request('/api/periods', { type: periodType })
       this.setData({
         loading: false,
         periodLabel: data.periodLabel,
@@ -57,12 +62,31 @@ Page({
     this.load(event.currentTarget.dataset.key)
   },
 
+  switchType(event) {
+    const type = event.currentTarget.dataset.type
+    if (!type || type === this.data.periodType) return
+    this.setData({ periodType: type })
+    this.load('', type)
+  },
+
   goLogin() {
     wx.navigateTo({ url: '/pages/login/login' })
   },
 
   goAssign() {
     wx.navigateTo({ url: '/pages/assign/assign' })
+  },
+
+  goRecurring() {
+    wx.navigateTo({ url: '/pages/recurring/recurring' })
+  },
+
+  goCollection() {
+    wx.navigateTo({ url: '/pages/collection/collection' })
+  },
+
+  goLedger() {
+    wx.navigateTo({ url: '/pages/ledger/ledger' })
   },
 
   onPullDownRefresh() {

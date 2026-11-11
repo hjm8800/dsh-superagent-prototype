@@ -9,6 +9,15 @@
     <view class="card">
       <view class="title">部门总览</view>
       <view class="subtitle">{{periodLabel}}</view>
+      <view class="seg">
+        <view
+          wx:for="{{periodTypes}}"
+          wx:key="value"
+          class="seg-item {{periodType === item.value ? 'seg-active' : ''}}"
+          data-type="{{item.value}}"
+          bindtap="switchType"
+        >{{item.label}}</view>
+      </view>
       <view class="chips">
         <view
           wx:for="{{periods}}"
@@ -18,7 +27,12 @@
           bindtap="pickPeriod"
         >{{item.label}}</view>
       </view>
-      <button class="btn btn-ghost small" bindtap="goAssign">下达任务</button>
+      <view class="btn-row">
+        <button class="btn btn-ghost small" bindtap="goAssign">下达任务</button>
+        <button class="btn btn-ghost small" bindtap="goRecurring">设固定任务</button>
+        <button class="btn btn-ghost small" bindtap="goCollection">成果采集</button>
+        <button class="btn btn-ghost small" bindtap="goLedger">岗位职责</button>
+      </view>
     </view>
 
     <view wx:if="{{error}}" class="card" style="color:#b42318;">{{error}}</view>

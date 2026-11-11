@@ -6,6 +6,15 @@
     <view class="card">
       <view class="title">{{position}}</view>
       <view class="subtitle">{{periodLabel}}{{submittedAt ? '｜上次提交于 ' + submittedAt : ''}}</view>
+      <view class="seg">
+        <view
+          wx:for="{{periodTypes}}"
+          wx:key="value"
+          class="seg-item {{periodType === item.value ? 'seg-active' : ''}}"
+          data-type="{{item.value}}"
+          bindtap="switchType"
+        >{{item.label}}</view>
+      </view>
       <view class="chips">
         <view
           wx:for="{{periods}}"
@@ -41,6 +50,26 @@
             <view>{{statusChoices[item.statusIndex].label}}</view>
           </picker>
         </view>
+        <view class="row">
+          <text class="muted small">完成度</text>
+          <input
+            class="input small-input"
+            type="number"
+            placeholder="0-100"
+            value="{{item.percent}}"
+            data-duty="{{index}}"
+            bindinput="inputPercent"
+          />
+          <text class="muted small">%</text>
+        </view>
+        <input
+          class="input"
+          style="margin-top:10rpx;"
+          placeholder="说明（可选）：做了什么 / 卡在哪里"
+          value="{{item.note}}"
+          data-duty="{{index}}"
+          bindinput="inputNote"
+        />
       </view>
 
       <view wx:if="{{duties.length === 0}}" class="empty">这个岗位还没有列出职责条目</view>

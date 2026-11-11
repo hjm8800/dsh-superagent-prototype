@@ -23,7 +23,7 @@ import {
   type TaskPosition,
   type TaskPositionNode,
 } from './task-views.ts'
-import type { PeriodType, TaskStatus, Person, Position, AccessRole } from './types.ts'
+import type { PeriodType, TaskStatus, Person, Position, PositionView, AccessRole } from './types.ts'
 import { accessOf, leaderGrants } from './access.ts'
 import { escapeHtml, layout } from './html.ts'
 import type { Department } from './types.ts'
@@ -950,6 +950,110 @@ export function createTrackerServer(options: ServerOptions) {
       return
     }
 
+    // The department ledger, by post and without names, for the leaders.
+    if (route === '/api/ledger' && method === 'GET') {
+      const { role } = viewerOf(token)
+      if (role !== 'leader') {
+        sendJson(res, { ok: false, error: '只有领导可以查看岗位职责台账' }, 403)
+        return
+      }
+      const positions: {
+        id: string
+        name: string
+        level: string
+        levelLabel: string
+        depth: number
+        peopleCount: number
+        headcountNote: string
+        instructions: string
+        boundary: string
+        note: string
+        duties: { ordinal: number; text: string }[]
+      }[] = []
+      const walk = (nodes: PositionView[], depth: number): void => {
+        for (const node of nodes) {
+          positions.push({
+            id: node.id,
+            name: node.name,
+            level: node.level,
+            levelLabel: LEVEL_LABELS[node.level],
+            depth,
+            peopleCount: node.people.length,
+            headcountNote: node.headcountNote,
+            instructions: node.instructions,
+            boundary: node.boundary,
+            note: node.note,
+            duties: node.duties.map((duty) => ({ ordinal: duty.ordinal, text: duty.text })),
+          })
+          walk(node.children, depth + 1)
+        }
+      }
+      walk(store.tree(dept.id), 0)
+      sendJson(res, { ok: true, departmentName: dept.name, positions })
+      return
+    }
+
+    // The outcome files the collector placed, and the ones it could not, for the
+    // leaders.
+    if (route === '/api/collection' && method === 'GET') {
+      const { role } = viewerOf(token)
+      if (role !== 'leader') {
+        sendJson(res, { ok: false, error: '只有领导可以查看成果采集' }, 403)
+        return
+      }
+      const type = parseType(url.searchParams.get('type'))
+      const period = pickPeriod(type)
+      const positions = store.positions(dept.id)
+      const people = store.people(dept.id)
+      const artifacts = store.artifacts()
+      const files = store.collectedFiles(type, period.key)
+      const artifactById = new Map(artifacts.map((a) => [a.id, a]))
+      const personById = new Map(people.map((p) => [p.id, p]))
+      const positionName = (positionId: string): string =>
+        positions.find((p) => p.id === positionId)?.name ?? ''
+      const views = files.map((file) => {
+        const person = file.personId ? personById.get(file.personId) : undefined
+        const artifact = file.artifactId ? artifactById.get(file.artifactId) : undefined
+        return {
+          id: file.id,
+          name: file.name,
+          positionName: person ? positionName(person.positionId) : '',
+          artifactName: artifact?.artifact ?? '',
+          matchedKeyword: file.matchedKeyword,
+          reason: file.reason,
+          modifiedAt: file.modifiedAt,
+          recognized: Boolean(person && artifact),
+        }
+      })
+      const progress = store.artifactProgress(type, period.key, dept.id)
+      sendJson(res, {
+        ok: true,
+        periodType: type,
+        periodKey: period.key,
+        periodLabel: period.label,
+        collectedAt: files[0]?.modifiedAt ?? '',
+        counts: {
+          files: files.length,
+          recognized: views.filter((v) => v.recognized).length,
+          unmatched: views.filter((v) => !v.recognized).length,
+        },
+        positions: progress
+          .filter((p) => p.total > 0)
+          .map((p) => ({
+            name: p.positionName,
+            level: p.level,
+            levelLabel: LEVEL_LABELS[p.level],
+            reported: p.reported,
+            total: p.total,
+            done: p.done,
+            percent: p.percent,
+          })),
+        files: views.filter((v) => v.recognized).slice(0, 30),
+        unmatched: views.filter((v) => !v.recognized).slice(0, 30),
+      })
+      return
+    }
+
     // The duties of my post, and what I answered for each of them.
     if (route === '/api/my-duties' && method === 'GET') {
       const person = store.personByToken(token)
@@ -1125,6 +1229,47 @@ export function createTrackerServer(options: ServerOptions) {
         })
       }
       sendJson(res, { ok: true, position: post.name, people: post.people.length })
+      return
+    }
+
+    // A leader sets up a fixed task for a post.
+    if (route === '/api/tasks/recurring' && method === 'POST') {
+      const form = await readBody(req)
+      const caller = form.get('token') ?? token
+      const viewer = store.personByToken(caller)
+      if (!viewer) {
+        sendJson(res, { ok: false, error: '链接无效' }, 404)
+        return
+      }
+      const viewerPosition = store.positionById(viewer.positionId)
+      if (accessOf(viewer, viewerPosition, leaderGrants(db.raw)) !== 'leader') {
+        sendJson(res, { ok: false, error: '只有领导可以设固定任务' }, 403)
+        return
+      }
+      const assignable = viewerPosition ? assignablePosts(taskPositions(dept.id), viewerPosition.id) : []
+      const post = assignable.find((p) => p.id === (form.get('positionId') ?? ''))
+      if (!post) {
+        sendJson(res, { ok: false, error: '不能给这个岗位设固定任务' }, 403)
+        return
+      }
+      const title = String(form.get('title') ?? '').trim().slice(0, 200)
+      if (!title) {
+        sendJson(res, { ok: false, error: '任务名称不能为空' }, 400)
+        return
+      }
+      const cadence = parseType(form.get('cadence'))
+      store.createRecurringTask({
+        id: `rec-${post.id}-${Date.now().toString(36)}`,
+        departmentId: dept.id,
+        positionId: post.id,
+        title,
+        detail: String(form.get('detail') ?? '').slice(0, 1000),
+        cadence,
+        dutyId: null,
+        artifactId: null,
+        createdAt: now().toISOString(),
+      })
+      sendJson(res, { ok: true, position: post.name, cadence, people: post.people.length })
       return
     }
 

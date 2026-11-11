@@ -17,6 +17,10 @@ Page({
     instructions: '',
     boundary: '',
     periodType: 'week',
+    periodTypes: [
+      { value: 'week', label: '周' },
+      { value: 'month', label: '月' },
+    ],
     periodKey: '',
     periodLabel: '',
     periods: [],
@@ -33,20 +37,21 @@ Page({
     this.load()
   },
 
-  async load(periodKey) {
+  async load(periodKey, type) {
     const token = app.globalData.token || wx.getStorageSync('token')
     if (!token) {
       this.setData({ loading: false, error: '请先在「我的任务」页粘贴链接进入' })
       return
     }
-    this.setData({ loading: true, error: '' })
+    const periodType = type || this.data.periodType
+    this.setData({ loading: true, error: '', periodType })
     try {
       const data = await app.request('/api/my-duties', {
         token,
-        type: this.data.periodType,
+        type: periodType,
         period: periodKey || '',
       })
-      const periods = await app.request('/api/periods', { type: this.data.periodType })
+      const periods = await app.request('/api/periods', { type: periodType })
       this.setData({
         loading: false,
         position: data.position,
@@ -58,6 +63,8 @@ Page({
         duties: data.duties.map((duty) => ({
           ...duty,
           statusIndex: Math.max(0, STATUS_CHOICES.findIndex((c) => c.value === duty.status)),
+          percent: duty.percent === null || duty.percent === undefined ? '' : String(duty.percent),
+          note: duty.note || '',
         })),
         summary: data.dismissed ? data.dismissed.summary : '',
         blockers: data.dismissed ? data.dismissed.blockers : '',
@@ -73,12 +80,33 @@ Page({
     this.load(event.currentTarget.dataset.key)
   },
 
+  switchType(event) {
+    const type = event.currentTarget.dataset.type
+    if (!type || type === this.data.periodType) return
+    this.setData({ periodType: type })
+    this.load('', type)
+  },
+
   changeStatus(event) {
     const index = Number(event.currentTarget.dataset.index)
     const dutyIndex = Number(event.currentTarget.dataset.duty)
     const duties = this.data.duties.slice()
     duties[dutyIndex].statusIndex = index
     duties[dutyIndex].status = STATUS_CHOICES[index].value
+    this.setData({ duties })
+  },
+
+  inputPercent(event) {
+    const dutyIndex = Number(event.currentTarget.dataset.duty)
+    const duties = this.data.duties.slice()
+    duties[dutyIndex].percent = event.detail.value
+    this.setData({ duties })
+  },
+
+  inputNote(event) {
+    const dutyIndex = Number(event.currentTarget.dataset.duty)
+    const duties = this.data.duties.slice()
+    duties[dutyIndex].note = event.detail.value
     this.setData({ duties })
   },
 
@@ -102,7 +130,10 @@ Page({
       const items = this.data.duties.map((duty) => ({
         id: duty.id,
         status: STATUS_CHOICES[duty.statusIndex].value,
-        percent: duty.percent,
+        percent:
+          duty.percent === '' || duty.percent === null || duty.percent === undefined
+            ? null
+            : Number(duty.percent),
         note: duty.note || '',
       }))
       await new Promise((resolve, reject) => {

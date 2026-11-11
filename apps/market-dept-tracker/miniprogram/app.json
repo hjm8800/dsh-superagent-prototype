@@ -4,6 +4,9 @@
     "pages/duties/duties",
     "pages/overview/overview",
     "pages/assign/assign",
+    "pages/collection/collection",
+    "pages/ledger/ledger",
+    "pages/recurring/recurring",
     "pages/login/login"
   ],
   "window": {

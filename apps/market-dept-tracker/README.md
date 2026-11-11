@@ -34,7 +34,8 @@ node lib/src/cli.js collect --feishu-folder QdoHfTzajlRwxedg2skc8YW3nob --type w
 ## 微信小程序
 
 `miniprogram/` 是微信小程序版，电脑和手机都能用，同事进入一次自己的链接即可。
-它和网页读同一份数据。发起来需要小程序账号、HTTPS 域名和微信审核，步骤见
+它和网页读同一份数据，覆盖我的任务、职责与填报、部门总览、成果采集、岗位职责、下达任务、固定任务；
+发布需要小程序账号、HTTPS 域名和微信审核，步骤见
 [miniprogram/README.md](miniprogram/README.md)。
 
 ## 快速开始
