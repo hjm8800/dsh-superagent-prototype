@@ -24,6 +24,7 @@ body {
   font-family: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 14px;
   line-height: 1.6;
+  overflow-x: hidden;
 }
 
 /* ------------------------------------------------------------- topbar */
@@ -85,7 +86,7 @@ body {
 
 /* --------------------------------------------------------------- page */
 
-.page { max-width: 1180px; margin: 0 auto; padding: 24px; }
+.page { width: 100%; max-width: 1180px; margin: 0 auto; padding: 24px; }
 
 .page-head {
   display: flex;
@@ -213,6 +214,7 @@ body {
 .status-form .btn { padding: 5px 12px; white-space: nowrap; }
 
 /* -------------------------------------------------------------- table */
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .table { width: 100%; border-collapse: collapse; }
 
 .table th,
@@ -422,7 +424,19 @@ input:focus, textarea:focus { outline: 2px solid var(--primary-weak); border-col
 .alert.is-success { background: var(--ok-weak); color: var(--ok); }
 
 @media (max-width: 720px) {
-  .topbar-inner { flex-direction: column; align-items: flex-start; gap: 10px; }
-  .page { padding: 16px; }
-  .table { display: block; overflow-x: auto; }
+  .topbar-inner { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px; }
+  .nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; width: 100%; }
+  .nav-link { text-align: center; padding: 6px 4px; font-size: 13px; white-space: nowrap; }
+  .chips { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
+  .chip { flex: 0 0 auto; }
+  .page { padding: 12px; }
+  .page-head { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .page-actions { flex-wrap: wrap; flex-shrink: 1; }
+  .page-head p { margin: 0; }
+  .stat-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .card { padding: 14px; }
+  .card-head, .position-head { flex-wrap: wrap; }
+  .status-form { flex-wrap: wrap; }
+  .table { min-width: 640px; }
+  .table .link-cell code { white-space: nowrap; word-break: normal; }
 }

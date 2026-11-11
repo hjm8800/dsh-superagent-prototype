@@ -172,10 +172,10 @@ ${pageHead(
   <h2>按岗位统计</h2>
   ${
     postRows
-      ? `<table class="table">
+      ? `<div class="table-wrap"><table class="table">
   <thead><tr><th>岗位</th><th>文件数</th><th>已交/应交</th><th>完成度</th></tr></thead>
   <tbody>${postRows}</tbody>
-</table>`
+</table></div>`
       : empty('还没有采集到成果文件。')
   }
 </section>
@@ -184,10 +184,10 @@ ${pageHead(
   <h2>认出的产出</h2>
   ${
     fileRows
-      ? `<table class="table">
+      ? `<div class="table-wrap"><table class="table">
   <thead><tr><th>文件</th><th>岗位</th><th>对应产出</th><th>命中关键词</th><th>修改时间</th></tr></thead>
   <tbody>${fileRows}</tbody>
-</table>`
+</table></div>`
       : empty('还没有认出的成果文件。')
   }
 </section>
@@ -197,10 +197,10 @@ ${
     ? `<section class="card">
   <h2>认不出的文件</h2>
   <p class="muted small">这些文件没有被算进完成情况。文件名里带上产出名即可自动归位。</p>
-  <table class="table">
+  <div class="table-wrap"><table class="table">
   <thead><tr><th>文件</th><th>原因</th></tr></thead>
   <tbody>${unmatchedRows}</tbody>
-</table>
+</table></div>
 </section>`
     : ''
 }
@@ -208,10 +208,10 @@ ${
 <section class="card">
   <h2>各岗位的预期产出</h2>
   <p class="muted small">文件名里出现任一关键词，就认为这项产出已交。</p>
-  <table class="table">
+  <div class="table-wrap"><table class="table">
   <thead><tr><th>岗位</th><th>预期产出</th><th>识别关键词</th><th>覆盖职责</th></tr></thead>
   <tbody>${artifactRows}</tbody>
-</table>
+</table></div>
 </section>
 `
   return layout({ title: '成果采集', active: 'collection', body })
@@ -317,10 +317,10 @@ ${modeSwitch}
   <h2>按岗位汇总</h2>
   ${
     rows
-      ? `<table class="table">
+      ? `<div class="table-wrap"><table class="table">
   <thead><tr><th>岗位</th><th>层级</th><th>已报/应报</th><th>完成度</th><th>已完成项</th><th>受阻项</th></tr></thead>
   <tbody>${rows}</tbody>
-</table>`
+</table></div>`
       : empty('该周期还没有岗位数据。')
   }
 </section>
@@ -334,7 +334,7 @@ ${
     ${bar(tasks.total === 0 ? 0 : (tasks.done / tasks.total) * 100)}
     <a class="btn" href="/tasks?type=${data.periodType}&period=${encodeURIComponent(data.periodKey)}">查看</a>
   </div>
-  <table class="table">
+  <div class="table-wrap"><table class="table">
   <thead><tr><th>上级下达</th><th>固定任务</th><th>已完成</th><th>受阻</th></tr></thead>
   <tbody><tr>
   <td class="num">${tasks.assigned}</td>
@@ -342,7 +342,7 @@ ${
   <td class="num">${tasks.done}</td>
   <td class="num${tasks.blocked > 0 ? ' is-alert' : ''}">${tasks.blocked}</td>
 </tr></tbody>
-</table>
+</table></div>
 </section>`
     : ''
 }
@@ -353,10 +353,10 @@ ${
   <h2>按岗位统计</h2>
   ${
     fileRows
-      ? `<table class="table">
+      ? `<div class="table-wrap"><table class="table">
   <thead><tr><th>岗位</th><th>成果文件</th><th>已交/应交</th><th>完成度</th></tr></thead>
   <tbody>${fileRows}</tbody>
-</table>`
+</table></div>`
       : empty('该周期还没有采集到成果文件。')
   }
 </section>`
@@ -364,10 +364,10 @@ ${
   <h2>各岗位填报情况</h2>
   ${
     itemRows
-      ? `<table class="table">
+      ? `<div class="table-wrap"><table class="table">
   <thead><tr><th>岗位</th><th>状态</th><th>完成度</th><th>本期小结</th><th>受阻</th></tr></thead>
   <tbody>${itemRows}</tbody>
-</table>`
+</table></div>`
       : empty('该周期还没有人提交填报。')
   }
 </section>`
@@ -568,10 +568,10 @@ ${pageHead(
 <section class="card">
   ${
     rows
-      ? `<table class="table">
+      ? `<div class="table-wrap"><table class="table">
   <thead><tr><th>岗位</th><th>层级</th><th>人数</th><th>填报链接</th><th>任务链接</th></tr></thead>
   <tbody>${rows}</tbody>
-</table>`
+</table></div>`
       : empty('暂无人员。')
   }
 </section>
@@ -630,10 +630,10 @@ ${pageHead(
 </div>
 <section class="card">
   <h2>逐条职责</h2>
-  <table class="table">
+  <div class="table-wrap"><table class="table">
     <thead><tr><th>职责</th><th>状态</th><th>完成度</th><th>说明</th></tr></thead>
     <tbody>${items}</tbody>
-  </table>
+  </table></div>
 </section>
 <section class="card">
   <h2>本期小结</h2>

@@ -103,10 +103,10 @@ export function renderTaskList(data: TaskListData): string {
     <span class="muted small">${done}/${total} 完成</span>
     ${bar(percent)}
   </div>
-  <table class="table">
+  <div class="table-wrap"><table class="table">
   <thead><tr><th>任务</th><th>来源</th><th>说明</th><th>状态</th></tr></thead>
   <tbody>${rows}</tbody>
-</table>
+</table></div>
 </section>`
     })
     .join('')
@@ -196,10 +196,10 @@ ${
   data.position && data.recurring.length > 0
     ? `<section class="card">
   <h2>${escapeHtml(data.position.name)}的固定任务</h2>
-  <table class="table">
+  <div class="table-wrap"><table class="table">
   <thead><tr><th>任务</th><th>频率</th><th>说明</th></tr></thead>
   <tbody>${recurringRows}</tbody>
-</table>
+</table></div>
 </section>`
     : ''
 }
@@ -276,10 +276,10 @@ ${data.error ? `<div class="alert is-error">${escapeHtml(data.error)}</div>` : '
   <h2>任务清单</h2>
   ${
     rows
-      ? `<table class="table">
+      ? `<div class="table-wrap"><table class="table">
   <thead><tr><th>任务</th><th>来源</th><th>说明</th><th>状态</th></tr></thead>
   <tbody>${rows}</tbody>
-</table>`
+</table></div>`
       : empty('这个周期还没有任务。')
   }
 </section>
