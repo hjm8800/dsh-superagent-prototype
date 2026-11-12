@@ -802,15 +802,31 @@ export function createTrackerServer(options: ServerOptions) {
    * manager and the company leaders named by the department head see the whole
    * department.
    */
-  const viewerOf = (token: string | null): { person?: Person; position?: Position; role: AccessRole } => {
+  const viewerOf = (
+    token: string | null,
+  ): { person?: Person; position?: Position; role: AccessRole; account?: Account } => {
     const person = token ? store.personByToken(token) : undefined
-    if (!person) return { role: 'member' }
-    const position = store.positionById(person.positionId)
-    return {
-      person,
-      position,
-      role: accessOf(person, position, leaderGrants(db.raw)),
+    if (person) {
+      const position = store.positionById(person.positionId)
+      return {
+        person,
+        position,
+        role: accessOf(person, position, leaderGrants(db.raw)),
+      }
     }
+    // A post account: the account's post and the first person in it.
+    const account = token ? store.accountByToken(token) : undefined
+    if (account) {
+      const position = store.positionById(account.positionId)
+      const postPerson = store.people().find((p) => p.positionId === account.positionId)
+      return {
+        person: postPerson,
+        position,
+        role: postPerson && position ? accessOf(postPerson, position, leaderGrants(db.raw)) : 'member',
+        account,
+      }
+    }
+    return { role: 'member' }
   }
 
   /** The page a member without the wider access gets. */
@@ -863,6 +879,29 @@ export function createTrackerServer(options: ServerOptions) {
     }
 
     // Who the caller is, and what they may see.
+    // The mini program logs in with a post account and gets its session token.
+    if (route === '/api/login' && method === 'POST') {
+      const form = await readBody(req)
+      const username = (form.get('username') ?? '').toString().trim()
+      const password = (form.get('password') ?? '').toString()
+      const account = username ? store.accountByUsername(username) : undefined
+      if (!account || !verifyPassword(password, account.passwordHash)) {
+        sendJson(res, { ok: false, error: '账户或密码不对' }, 401)
+        return
+      }
+      const position = store.positionById(account.positionId)
+      const person = position ? store.people().find((p) => p.positionId === position.id) : undefined
+      const role = person && position ? accessOf(person, position, leaderGrants(db.raw)) : 'member'
+      sendJson(res, {
+        ok: true,
+        token: account.token,
+        person: person ? { id: person.id, name: person.name } : null,
+        position: position ? { id: position.id, name: position.name, level: position.level } : null,
+        role,
+      })
+      return
+    }
+
     if (route === '/api/me' && method === 'GET') {
       const { person, position, role } = viewerOf(token)
       if (!person) {
@@ -884,9 +923,9 @@ export function createTrackerServer(options: ServerOptions) {
       return
     }
 
-    // A person's own task list.
+    // A person's own task list; a post account sees the whole post's tasks.
     if (route === '/api/my-tasks' && method === 'GET') {
-      const person = store.personByToken(token)
+      const { person, position, account } = viewerOf(token)
       if (!person) {
         sendJson(res, { ok: false, error: '链接无效' }, 404)
         return
@@ -894,10 +933,13 @@ export function createTrackerServer(options: ServerOptions) {
       const type = parseType(url.searchParams.get('type'))
       const period = pickPeriod(type)
       store.materialiseRecurringTasks(dept.id, type, period.key, period.label, now().toISOString())
-      const position = store.positionById(person.positionId)
+      const postPeople =
+        account && position
+          ? store.people().filter((p) => p.positionId === position.id)
+          : [person]
       const tasks = store
         .taskViews(type, period.key, dept.id)
-        .filter((t) => t.personId === person.id)
+        .filter((t) => postPeople.some((p) => p.id === t.personId))
       sendJson(res, {
         ok: true,
         position: position?.name ?? '',
