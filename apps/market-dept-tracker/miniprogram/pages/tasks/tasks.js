@@ -23,6 +23,7 @@ Page({
     periods: [],
     tasks: [],
     stats: { total: 0, done: 0, open: 0, blocked: 0 },
+    canAssign: false,
     statusChoices: STATUS_CHOICES,
   },
 
@@ -46,6 +47,13 @@ Page({
         period: periodKey || '',
       })
       const periods = await app.request('/api/periods', { type: periodType })
+      let canAssign = false
+      try {
+        const assignable = await app.request('/api/assignable', { token })
+        canAssign = (assignable.positions || []).length > 0
+      } catch (error) {
+        canAssign = false
+      }
       const tasks = data.tasks.map((task) => ({
         ...task,
         statusIndex: Math.max(0, STATUS_CHOICES.findIndex((c) => c.value === task.status)),
@@ -57,6 +65,7 @@ Page({
         periodLabel: data.periodLabel,
         periods: periods.periods,
         tasks,
+        canAssign,
         stats: {
           total: tasks.length,
           done: tasks.filter((t) => t.status === 'done').length,
@@ -115,6 +124,14 @@ Page({
 
   goLogin() {
     wx.navigateTo({ url: '/pages/login/login' })
+  },
+
+  goAssign() {
+    wx.navigateTo({ url: '/pages/assign/assign' })
+  },
+
+  goRecurring() {
+    wx.navigateTo({ url: '/pages/recurring/recurring' })
   },
 
   onPullDownRefresh() {

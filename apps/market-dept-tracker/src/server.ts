@@ -511,14 +511,10 @@ export function createTrackerServer(options: ServerOptions) {
     const positionId = url.searchParams.get('position') ?? ''
     const viewer = store.personByToken(url.searchParams.get('token') ?? '')
     const viewerPosition = viewer ? store.positionById(viewer.positionId) : undefined
-    // A superior gives tasks out: the people of their own post and of the
-    // posts under it.
+    // A superior gives tasks out: the posts directly under their own.
     const assignable = viewerPosition ? assignablePosts(tree, viewerPosition.id) : []
-    // Only the leaders give tasks out.
-    const viewerCanAssign =
-      viewerPosition && accessOf(viewer, viewerPosition, leaderGrants(db.raw)) === 'leader'
-        ? assignable.length > 0
-        : false
+    // Anyone with people directly under them gives tasks out.
+    const viewerCanAssign = viewerPosition ? assignable.length > 0 : false
 
     const wanted = positionId
       ? store.positionById(positionId)
@@ -594,12 +590,6 @@ export function createTrackerServer(options: ServerOptions) {
     }
     const dept = department()
     const viewerPosition = store.positionById(viewer.positionId)
-    // Only the manager, the deputy manager and the company leaders give tasks
-    // out; the members only work through the ones they were given.
-    if (accessOf(viewer, viewerPosition, leaderGrants(db.raw)) !== 'leader') {
-      sendText(res, '只有经理、副经理和公司领导可以下达任务', 403)
-      return
-    }
     const tree = taskPositions(dept.id)
     const assignable = viewerPosition ? assignablePosts(tree, viewerPosition.id) : []
     // The task is given to a post, not to a person; everyone holding it gets it.
@@ -651,7 +641,10 @@ export function createTrackerServer(options: ServerOptions) {
       })
     }
 
-    redirect(res, `/tasks?type=${periodType}&period=${encodeURIComponent(period.key)}&token=${encodeURIComponent(viewer.token)}`)
+    const target = accessOf(viewer, viewerPosition, leaderGrants(db.raw)) === 'leader'
+      ? `/tasks?type=${periodType}&period=${encodeURIComponent(period.key)}&token=${encodeURIComponent(viewer.token)}`
+      : `/my-tasks?type=${periodType}&period=${encodeURIComponent(period.key)}&token=${encodeURIComponent(viewer.token)}`
+    redirect(res, target)
   }
 
   /** Set up a fixed task for a post. */
@@ -665,11 +658,6 @@ export function createTrackerServer(options: ServerOptions) {
     const dept = department()
     const tree = taskPositions(dept.id)
     const viewerPosition = store.positionById(viewer.positionId)
-    // Setting a fixed task for a post is for the leaders too.
-    if (accessOf(viewer, viewerPosition, leaderGrants(db.raw)) !== 'leader') {
-      sendText(res, '只有经理、副经理和公司领导可以设固定任务', 403)
-      return
-    }
     const assignable = viewerPosition ? assignablePosts(tree, viewerPosition.id) : []
     const positionId = form.get('positionId') ?? ''
     if (!assignable.some((post) => post.id === positionId)) {
@@ -693,7 +681,10 @@ export function createTrackerServer(options: ServerOptions) {
       artifactId: null,
       createdAt: now().toISOString(),
     })
-    redirect(res, `/tasks?type=${cadence}&position=${encodeURIComponent(positionId)}&token=${encodeURIComponent(viewer.token)}`)
+    const target = accessOf(viewer, viewerPosition, leaderGrants(db.raw)) === 'leader'
+      ? `/tasks?type=${cadence}&position=${encodeURIComponent(positionId)}&token=${encodeURIComponent(viewer.token)}`
+      : `/my-tasks?type=${cadence}&token=${encodeURIComponent(viewer.token)}`
+    redirect(res, target)
   }
 
   /** A person's own task list. */
@@ -717,6 +708,7 @@ export function createTrackerServer(options: ServerOptions) {
     const periodLabel = periods.find((p) => p.key === periodKey)?.label ?? current.label
     store.materialiseRecurringTasks(dept.id, periodType, periodKey, periodLabel, now().toISOString())
     const position = store.positionById(person.positionId)
+    const assignable = position ? assignablePosts(taskPositions(dept.id), position.id) : []
     sendHtml(
       res,
       renderMyTasks({
@@ -726,6 +718,8 @@ export function createTrackerServer(options: ServerOptions) {
         periodLabel,
         periods,
         tasks: store.taskViews(periodType, periodKey, dept.id).filter((t) => t.personId === person.id),
+        assignablePositions: assignable,
+        viewerToken: person.token,
       }),
     )
   }
@@ -1149,18 +1143,18 @@ export function createTrackerServer(options: ServerOptions) {
       return
     }
 
-    // The posts a leader may give a task to.
+    // The posts a person may give a task to: the ones directly under their own.
     if (route === '/api/assignable' && method === 'GET') {
       const { person, position } = viewerOf(token)
       if (!person || !position) {
         sendJson(res, { ok: false, error: '链接无效' }, 404)
         return
       }
-      if (accessOf(person, position, leaderGrants(db.raw)) !== 'leader') {
-        sendJson(res, { ok: false, error: '只有领导可以下达任务' }, 403)
+      const assignable = assignablePosts(taskPositions(dept.id), position.id)
+      if (assignable.length === 0) {
+        sendJson(res, { ok: false, error: '没有可以下达任务的岗位' }, 403)
         return
       }
-      const assignable = assignablePosts(taskPositions(dept.id), position.id)
       sendJson(res, {
         ok: true,
         positions: assignable.map((post) => ({
@@ -1180,10 +1174,6 @@ export function createTrackerServer(options: ServerOptions) {
       const viewerPosition = viewer ? store.positionById(viewer.positionId) : undefined
       if (!viewer || !viewerPosition) {
         sendJson(res, { ok: false, error: '链接无效' }, 404)
-        return
-      }
-      if (accessOf(viewer, viewerPosition, leaderGrants(db.raw)) !== 'leader') {
-        sendJson(res, { ok: false, error: '只有领导可以下达任务' }, 403)
         return
       }
       const post = assignablePosts(taskPositions(dept.id), viewerPosition.id).find(
@@ -1242,10 +1232,6 @@ export function createTrackerServer(options: ServerOptions) {
         return
       }
       const viewerPosition = store.positionById(viewer.positionId)
-      if (accessOf(viewer, viewerPosition, leaderGrants(db.raw)) !== 'leader') {
-        sendJson(res, { ok: false, error: '只有领导可以设固定任务' }, 403)
-        return
-      }
       const assignable = viewerPosition ? assignablePosts(taskPositions(dept.id), viewerPosition.id) : []
       const post = assignable.find((p) => p.id === (form.get('positionId') ?? ''))
       if (!post) {

@@ -150,16 +150,23 @@ export function renderTaskList(data: TaskListData): string {
 </section>`
     : ''
 
-  const recurringForm = data.viewerCanAssign && data.position
+  const recurringForm = data.viewerCanAssign
     ? `<section class="card">
   <h2>设一个固定任务</h2>
   <p class="muted small">固定任务每周或每月自动出现在这个岗位每个人的清单里。</p>
   <form class="task-form" method="post" action="/tasks/recurring">
     <input type="hidden" name="token" value="${escapeHtml(data.viewerToken ?? '')}">
-    <input type="hidden" name="positionId" value="${escapeHtml(data.position.id)}">
     <label class="field"><span>任务</span><input type="text" name="title" placeholder="每周期都要做的事" required></label>
     <label class="field"><span>说明</span><input type="text" name="detail" placeholder="补充要求（可选）"></label>
     <div class="form-row">
+      <label class="field"><span>交给哪个岗位</span><select name="positionId" required>
+        ${data.assignablePositions
+          .map(
+            (p) =>
+              `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}（${p.people.length} 人）</option>`,
+          )
+          .join('')}
+      </select></label>
       <label class="field"><span>频率</span><select name="cadence">
         <option value="week">每周</option>
         <option value="month">每月</option>
@@ -226,6 +233,10 @@ export function renderMyTasks(data: {
   periodLabel: string
   periods: { key: string; label: string }[]
   tasks: TaskView[]
+  /** The posts this person may give tasks to. */
+  assignablePositions?: TaskPosition[]
+  /** The token of the person looking at the list. */
+  viewerToken?: string
   error?: string
 }): string {
   const periodOptions = join(
@@ -259,6 +270,51 @@ export function renderMyTasks(data: {
 
   const done = data.tasks.filter((t) => t.status === 'done').length
 
+  const assignForm =
+    data.assignablePositions && data.assignablePositions.length > 0
+      ? `<section class="card">
+  <h2>给下属下达任务</h2>
+  <form class="task-form" method="post" action="/tasks/assign">
+    <input type="hidden" name="token" value="${escapeHtml(data.viewerToken ?? '')}">
+    <input type="hidden" name="periodType" value="${escapeHtml(data.periodType)}">
+    <input type="hidden" name="periodKey" value="${escapeHtml(data.periodKey)}">
+    <label class="field"><span>任务</span><input type="text" name="title" placeholder="要下属做什么" required></label>
+    <label class="field"><span>说明</span><input type="text" name="detail" placeholder="补充要求（可选）"></label>
+    <label class="field"><span>交给哪个岗位</span><select name="positionId" required>
+      ${data.assignablePositions
+        .map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}（${p.people.length} 人）</option>`)
+        .join('')}
+    </select></label>
+    <div class="form-actions"><button class="btn btn-primary" type="submit">下达</button></div>
+  </form>
+</section>`
+      : ''
+
+  const fixedForm =
+    data.assignablePositions && data.assignablePositions.length > 0
+      ? `<section class="card">
+  <h2>给下属设固定任务</h2>
+  <p class="muted small">固定任务每周或每月自动出现在这个岗位每个人的清单里。</p>
+  <form class="task-form" method="post" action="/tasks/recurring">
+    <input type="hidden" name="token" value="${escapeHtml(data.viewerToken ?? '')}">
+    <label class="field"><span>任务</span><input type="text" name="title" placeholder="每周期都要做的事" required></label>
+    <label class="field"><span>说明</span><input type="text" name="detail" placeholder="补充要求（可选）"></label>
+    <div class="form-row">
+      <label class="field"><span>交给哪个岗位</span><select name="positionId" required>
+        ${data.assignablePositions
+          .map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}（${p.people.length} 人）</option>`)
+          .join('')}
+      </select></label>
+      <label class="field"><span>频率</span><select name="cadence">
+        <option value="week">每周</option>
+        <option value="month">每月</option>
+      </select></label>
+    </div>
+    <div class="form-actions"><button class="btn btn-primary" type="submit">设为固定任务</button></div>
+  </form>
+</section>`
+      : ''
+
   const body = `
 ${pageHead(
   `${data.positionName} · 我的任务`,
@@ -283,41 +339,38 @@ ${data.error ? `<div class="alert is-error">${escapeHtml(data.error)}</div>` : '
       : empty('这个周期还没有任务。')
   }
 </section>
+${assignForm}
+${fixedForm}
 `
   return layout({ title: '我的任务', active: 'tasks', body })
 }
 
 /**
- * The posts a person may give tasks to: their own post and the ones under it.
+ * The posts a person may give tasks to: the posts directly under their own.
  *
- * A superior reaches their own people and the people of the posts below
- * them, so the whole branch under their post is collected.
+ * The chain is 副总经理 → 经理/副经理 → 其管辖的专责 → 其业务员. Each step
+ * reaches only the posts directly below it, so a manager talks to their
+ * specialists and a specialist talks to their own staff, not further.
  */
 export function assignablePosts(
   tree: TaskPositionNode[],
   viewerPositionId: string,
 ): TaskPosition[] {
-  const found: TaskPosition[] = []
-  const collect = (node: TaskPositionNode): void => {
-    found.push({
-      id: node.id,
-      name: node.name,
-      level: node.level,
-      headcount: node.headcount,
-      people: node.people,
-    })
-    for (const child of node.children) collect(child)
-  }
-  const walk = (nodes: TaskPositionNode[]): boolean => {
+  const toTaskPosition = (node: TaskPositionNode): TaskPosition => ({
+    id: node.id,
+    name: node.name,
+    level: node.level,
+    headcount: node.headcount,
+    people: node.people,
+  })
+  const find = (nodes: TaskPositionNode[]): TaskPositionNode | undefined => {
     for (const node of nodes) {
-      if (node.id === viewerPositionId) {
-        collect(node)
-        return true
-      }
-      if (walk(node.children)) return true
+      if (node.id === viewerPositionId) return node
+      const found = find(node.children)
+      if (found) return found
     }
-    return false
+    return undefined
   }
-  walk(tree)
-  return found
+  const viewer = find(tree)
+  return viewer ? viewer.children.map(toTaskPosition) : []
 }

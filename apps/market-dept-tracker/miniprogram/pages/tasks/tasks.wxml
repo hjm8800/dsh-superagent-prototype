@@ -55,7 +55,12 @@
 
     <view wx:if="{{loading}}" class="empty">正在加载…</view>
 
-    <block wx:elif="{{person}}">
+    <view wx:elif="{{person}}">
+      <view wx:if="{{canAssign}}" class="btn-row">
+        <button class="btn" bindtap="goAssign">下达任务</button>
+        <button class="btn" bindtap="goRecurring">设固定任务</button>
+      </view>
+
       <view wx:if="{{tasks.length === 0}}" class="empty">这个周期还没有任务</view>
 
       <view class="task" wx:for="{{tasks}}" wx:key="id">
@@ -78,6 +83,6 @@
           </picker>
         </view>
       </view>
-    </block>
+    </view>
   </block>
 </view>

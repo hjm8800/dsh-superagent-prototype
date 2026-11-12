@@ -44,7 +44,7 @@ Page({
       this.setData({ loading: false, positions: data.positions, positionIndex: index })
     } catch (error) {
       const message = error.message || '加载失败'
-      this.setData({ loading: false, error: message, forbidden: message.indexOf('领导') >= 0 })
+      this.setData({ loading: false, error: message, forbidden: message.indexOf('没有可以下达任务的岗位') >= 0 })
     }
   },
 

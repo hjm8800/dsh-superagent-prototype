@@ -7,6 +7,8 @@ import { openDatabase, seedArtifacts, seedDatabase } from '../src/db.ts'
 import { grantLeaderAccess } from '../src/access.ts'
 import { Store } from '../src/store.ts'
 import { createTrackerServer } from '../src/server.ts'
+import { assignablePosts } from '../src/task-views.ts'
+import type { TaskPositionNode } from '../src/task-views.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SEED = join(HERE, '..', 'seed', 'market-department.json')
@@ -40,6 +42,28 @@ function makeLeader(store: Store): { id: string; name: string; token: string } {
 }
 
 // ------------------------------------------------------------- the model
+
+test('each post reaches only the posts directly below it', () => {
+  const postNode = (id: string, level: string, children: TaskPositionNode[] = []): TaskPositionNode => ({
+    id,
+    name: id,
+    level,
+    headcount: '',
+    people: [],
+    children,
+  })
+  const tree = [
+    postNode('vp', 'manager', [
+      postNode('mgr', 'manager', [postNode('spec', 'specialist', [postNode('staff', 'specialist_staff')])]),
+      postNode('dep', 'deputy_manager', [postNode('spec2', 'specialist', [postNode('staff2', 'specialist_staff')])]),
+    ]),
+  ]
+  assert.deepEqual(assignablePosts(tree, 'vp').map((p) => p.id), ['mgr', 'dep'])
+  assert.deepEqual(assignablePosts(tree, 'mgr').map((p) => p.id), ['spec'])
+  assert.deepEqual(assignablePosts(tree, 'dep').map((p) => p.id), ['spec2'])
+  assert.deepEqual(assignablePosts(tree, 'spec').map((p) => p.id), ['staff'])
+  assert.deepEqual(assignablePosts(tree, 'staff').map((p) => p.id), [])
+})
 
 test('a superior gives a task to a subordinate', () => {
   const { store } = freshStore()
@@ -285,6 +309,69 @@ test('a superior can give a task over the page', async () => {
     assert.equal(tasks[0]?.title, '把上周的合同台账补齐')
     assert.equal(tasks[0]?.personId, clerk.id)
     assert.equal(tasks[0]?.assignedById, manager.id)
+  })
+})
+
+test('a specialist gives a task to their own staff, without a leader grant', async () => {
+  await withServer(async (base, store) => {
+    const specialist = store.people().find((p) => p.name === '黎嘉良')!
+    const staff = store.people().find((p) => p.name === '黄美琳')!
+    // No grantLeaderAccess: the chain itself lets a specialist give tasks to
+    // the staff directly under their post.
+    const list = await json<{ ok: boolean; positions: { id: string }[] }>(
+      await fetch(`${base}/api/assignable?token=${specialist.token}`),
+    )
+    assert.equal(list.ok, true)
+    assert.ok(list.positions.some((p) => p.id === staff.positionId))
+    assert.ok(!list.positions.some((p) => p.id === store.people().find((p) => p.name === '潘清河')!.positionId))
+
+    const response = await fetch(`${base}/api/tasks/assign`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: [
+        `token=${encodeURIComponent(specialist.token)}`,
+        `positionId=${encodeURIComponent(staff.positionId)}`,
+        'periodType=week',
+        'periodKey=2026-W45',
+        `title=${encodeURIComponent('专责下达的任务')}`,
+      ].join('&'),
+    })
+    assert.equal(response.status, 200)
+    const created = store.tasks('week', '2026-W45').filter((t) => t.title === '专责下达的任务')
+    assert.equal(created.length, 1)
+    assert.equal(created[0]?.personId, staff.id)
+  })
+})
+
+test('a specialist cannot give a task to another team', async () => {
+  await withServer(async (base, store) => {
+    const specialist = store.people().find((p) => p.name === '黎嘉良')!
+    const other = store.people().find((p) => p.name === '潘清河')!
+    const response = await fetch(`${base}/api/tasks/assign`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: [
+        `token=${encodeURIComponent(specialist.token)}`,
+        `positionId=${encodeURIComponent(other.positionId)}`,
+        'periodType=week',
+        'periodKey=2026-W45',
+        `title=${encodeURIComponent('越级下达')}`,
+      ].join('&'),
+    })
+    assert.equal(response.status, 403)
+    assert.equal(store.tasks('week', '2026-W45').length, 0)
+  })
+})
+
+test('a specialist sees the assign form on their own page, a staff member does not', async () => {
+  await withServer(async (base, store) => {
+    const specialist = store.people().find((p) => p.name === '黎嘉良')!
+    const staff = store.people().find((p) => p.name === '黄美琳')!
+    const html = await (await fetch(`${base}/my-tasks?token=${specialist.token}&type=week&period=2026-W45`)).text()
+    assert.ok(html.includes('给下属下达任务'))
+    assert.ok(html.includes(staff.positionId))
+    const staffHtml = await (await fetch(`${base}/my-tasks?token=${staff.token}&type=week&period=2026-W45`)).text()
+    assert.ok(!staffHtml.includes('给下属下达任务'))
   })
 })
 

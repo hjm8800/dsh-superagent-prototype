@@ -1,7 +1,7 @@
 <view class="container">
   <view wx:if="{{forbidden && !loading}}" class="card">
-    <view class="title">只有领导可以下达任务</view>
-    <view class="subtitle">这一页对经理、副经理和公司领导开放。</view>
+    <view class="title">没有可以下达任务的岗位</view>
+    <view class="subtitle">这一页给有下属岗位的人使用。</view>
   </view>
 
   <block wx:else>
