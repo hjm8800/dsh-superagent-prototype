@@ -48,8 +48,10 @@ Both presets run with `danger-full-access` as the operator's OS user and read me
 
 ### Feishu bot (optional)
 
-1. Create a self-built app with the bot capability. Grant it the permissions to receive message events, read and send chat messages, and read chat members, then publish the app version.
-2. Give the bot its own `lark-cli` configuration, restricted to the bot identity, and a wrapper:
+1. Create a self-built app with the bot capability.
+2. Grant its permissions in one paste. On the app's **Permissions** page, choose **Batch import/export scopes**, open **Import** and paste [examples/feishu-app-permissions.json](../examples/feishu-app-permissions.json); use [examples/feishu-app-permissions-minimal.json](../examples/feishu-app-permissions-minimal.json) instead for a bot that only reads and answers messages. The recommended file carries the messaging, chat, reaction and contact scopes a Feishu bot needs, including `im:message.group_msg` for chats set to **All**; add document, Base, Wiki or task scopes when the bot needs those skills too. Request the scopes. To copy another app's exact permission set instead, use **Batch import/export scopes** → **Export** on that app and import the exported JSON here.
+3. On **Events and callbacks**, choose the long-connection (WebSocket) subscription mode and add the `im.message.receive_v1` event, which the Feishu Source consumes. Then publish the app version, approve the scope request as a tenant administrator where required, and add the people who may talk to the bot to its availability scope.
+4. Give the bot its own `lark-cli` configuration, restricted to the bot identity, and a wrapper:
 
    ```sh
    LARKSUITE_CLI_CONFIG_DIR="$HOME/.lark-cli-dsh-superagent" lark-cli config init --app-id <cli_…> --app-secret-stdin
