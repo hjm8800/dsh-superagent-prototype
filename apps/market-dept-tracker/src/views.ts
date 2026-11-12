@@ -561,7 +561,7 @@ export function renderLinks(data: LinksData): string {
   const body = `
 ${pageHead(
   `${data.departmentName} · 岗位账户`,
-  '每个岗位一个账户，同岗位的人共用。把岗位、账户和初始密码发给对应同事，他们打开平台登录即可填报周报／月报、查看任务。',
+  '专责以上一人一个账户（账户名就是姓名）；业务员和班组整岗共用一个账户。把岗位、账户和初始密码发给对应同事，他们登录平台后即可填报周报／月报、查看任务。',
   `<button class="btn" type="button" id="copy-all">复制全部账户</button>`,
 )}
 <section class="card">
