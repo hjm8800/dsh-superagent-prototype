@@ -1,6 +1,6 @@
 import { escapeHtml, join, layout, pageHead, stat, bar, empty } from './html.ts'
 import { LEVEL_LABELS, PERIOD_LABELS, TASK_KIND_LABELS, TASK_STATUS_LABELS } from './types.ts'
-import type { PeriodType, TaskStatus, TaskView } from './types.ts'
+import type { PeriodType, TaskStatus, TaskView, TaskPhoto } from './types.ts'
 
 /** The task list pages. */
 
@@ -46,6 +46,8 @@ export interface TaskListData {
   viewerCanAssign?: boolean
   /** The posts the viewer may give tasks to. */
   assignablePositions: TaskPosition[]
+  /** The photos of each task, by task id. */
+  photos?: Record<string, TaskPhoto[]>
   error?: string
 }
 
@@ -94,6 +96,9 @@ export function renderTaskList(data: TaskListData): string {
   <td><span class="tag tag-kind-${t.kind}">${escapeHtml(TASK_KIND_LABELS[t.kind])}</span></td>
   <td class="note-cell">${escapeHtml(t.detail || t.dutyText || t.artifactName || '—')}</td>
   <td><span class="status status-${t.status}">${escapeHtml(TASK_STATUS_LABELS[t.status])}</span></td>
+  <td class="photo-cell">${(data.photos?.[t.id] ?? [])
+    .map((p) => `<a href="/photos/${p.id}" target="_blank"><img class="thumb" src="/photos/${p.id}" alt="照片"></a>`)
+    .join('')}</td>
 </tr>`,
         )
         .join('')
@@ -104,7 +109,7 @@ export function renderTaskList(data: TaskListData): string {
     ${bar(percent)}
   </div>
   <div class="table-wrap"><table class="table">
-  <thead><tr><th>任务</th><th>来源</th><th>说明</th><th>状态</th></tr></thead>
+  <thead><tr><th>任务</th><th>来源</th><th>说明</th><th>状态</th><th>照片</th></tr></thead>
   <tbody>${rows}</tbody>
 </table></div>
 </section>`
@@ -235,6 +240,8 @@ export function renderMyTasks(data: {
   tasks: TaskView[]
   /** The posts this person may give tasks to. */
   assignablePositions?: TaskPosition[]
+  /** The photos of each task, by task id. */
+  photos?: Record<string, TaskPhoto[]>
   /** The token of the person looking at the list. */
   viewerToken?: string
   error?: string
@@ -245,6 +252,14 @@ export function renderMyTasks(data: {
         `<a class="chip${p.key === data.periodKey ? ' is-active' : ''}" href="/my-tasks?type=${data.periodType}&period=${encodeURIComponent(p.key)}">${escapeHtml(p.label)}</a>`,
     ),
   )
+
+  const photoBlock = (taskId: string): string => {
+    const photos = data.photos?.[taskId] ?? []
+    if (photos.length === 0) return ''
+    return `<div class="photo-row">${photos
+      .map((p) => `<a href="/photos/${p.id}" target="_blank"><img class="thumb" src="/photos/${p.id}" alt="照片"></a>`)
+      .join('')}</div>`
+  }
 
   const rows = data.tasks
     .map(
@@ -262,6 +277,15 @@ export function renderMyTasks(data: {
       </select>
       <input type="text" name="note" value="${escapeHtml(t.note)}" placeholder="说明">
       <button class="btn" type="submit">保存</button>
+    </form>
+    ${photoBlock(t.id)}
+    <form class="photo-form" method="post" action="/my-tasks/photos" enctype="multipart/form-data">
+      <input type="hidden" name="taskId" value="${escapeHtml(t.id)}">
+      <input type="hidden" name="token" value="${escapeHtml(data.viewerToken ?? '')}">
+      <input type="hidden" name="periodType" value="${escapeHtml(data.periodType)}">
+      <input type="hidden" name="periodKey" value="${escapeHtml(data.periodKey)}">
+      <input type="file" name="photos" accept="image/*" multiple>
+      <button class="btn" type="submit">上传照片</button>
     </form>
   </td>
 </tr>`,

@@ -16,6 +16,7 @@ import type {
   ReportItem,
   Task,
   TaskKind,
+  TaskPhoto,
   TaskStatus,
   TaskView,
 } from './types.ts'
@@ -159,6 +160,9 @@ export class Store {
   }) => void
   declare updateTask: (id: string, status: TaskStatus, note: string, updatedAt: string) => void
   declare task: (id: string) => Task | undefined
+  declare taskPhotos: (taskId: string) => TaskPhoto[]
+  declare photoById: (id: string) => TaskPhoto | undefined
+  declare createTaskPhoto: (photo: TaskPhoto) => void
   declare materialiseRecurringTasks: (
     departmentId: string,
     periodType: PeriodType,

@@ -274,7 +274,7 @@ const port = Number(options['port'] ?? process.env['PORT'] ?? 3000)
 const host = options['host'] ?? process.env['HOST'] ?? '127.0.0.1'
 const baseUrl = options['base'] ?? `http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`
 
-const server = createTrackerServer({ store, db, baseUrl })
+const server = createTrackerServer({ store, db, baseUrl, dataDir: dirname(dataFile) })
 server.listen(port, host, () => {
   console.log(`市场部工作台已启动：${baseUrl}`)
   console.log(`数据文件：${dataFile}`)

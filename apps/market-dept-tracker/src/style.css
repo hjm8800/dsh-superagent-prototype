@@ -424,6 +424,14 @@ input:focus, textarea:focus { outline: 2px solid var(--primary-weak); border-col
 .alert.is-error { background: var(--alert-weak); color: var(--alert); }
 .alert.is-success { background: var(--ok-weak); color: var(--ok); }
 
+/* The photos attached to a task. */
+.photo-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.photo-cell { display: flex; flex-wrap: wrap; gap: 6px; }
+.thumb { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); display: block; }
+.photo-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
+.photo-form input[type='file'] { font-size: 13px; max-width: 220px; }
+.photo-form .btn { padding: 4px 10px; font-size: 13px; }
+
 @media (max-width: 720px) {
   .topbar-inner { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px; }
   .nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; width: 100%; }

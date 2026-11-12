@@ -4,6 +4,7 @@ import type {
   RecurringTask,
   Task,
   TaskKind,
+  TaskPhoto,
   TaskStatus,
   TaskView,
 } from './types.ts'
@@ -55,6 +56,9 @@ interface TaskStore {
   }): void
   updateTask(id: string, status: TaskStatus, note: string, updatedAt: string): void
   task(id: string): Task | undefined
+  taskPhotos(taskId: string): TaskPhoto[]
+  photoById(id: string): TaskPhoto | undefined
+  createTaskPhoto(photo: TaskPhoto): void
   materialiseRecurringTasks(
     departmentId: string,
     periodType: PeriodType,
@@ -97,6 +101,16 @@ interface TaskRow {
   created_at: string
   updated_at: string
   note: string
+}
+
+interface TaskPhotoRow {
+  id: string
+  task_id: string
+  person_id: string
+  filename: string
+  mime: string
+  size: number
+  created_at: string
 }
 
 /** The task list operations, mixed into the store. */
@@ -272,6 +286,49 @@ export const taskStore = {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       note: row.note,
+    }
+  },
+
+  /** The photos attached to a task. */
+  taskPhotos(this: TaskStore, taskId: string): TaskPhoto[] {
+    const rows = this.db.raw
+      .prepare(
+        'SELECT id, task_id, person_id, filename, mime, size, created_at FROM task_photos WHERE task_id = ? ORDER BY created_at, id',
+      )
+      .all(taskId) as unknown as TaskPhotoRow[]
+    return rows.map((row) => ({
+      id: row.id,
+      taskId: row.task_id,
+      personId: row.person_id,
+      filename: row.filename,
+      mime: row.mime,
+      size: row.size,
+      createdAt: row.created_at,
+    }))
+  },
+
+  createTaskPhoto(this: TaskStore, photo: TaskPhoto): void {
+    this.db.raw
+      .prepare(
+        'INSERT INTO task_photos (id, task_id, person_id, filename, mime, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(photo.id, photo.taskId, photo.personId, photo.filename, photo.mime, photo.size, photo.createdAt)
+  },
+
+  /** One photo, by id, for serving the file. */
+  photoById(this: TaskStore, id: string): TaskPhoto | undefined {
+    const row = this.db.raw
+      .prepare('SELECT id, task_id, person_id, filename, mime, size, created_at FROM task_photos WHERE id = ?')
+      .get(id) as unknown as TaskPhotoRow | undefined
+    if (!row) return undefined
+    return {
+      id: row.id,
+      taskId: row.task_id,
+      personId: row.person_id,
+      filename: row.filename,
+      mime: row.mime,
+      size: row.size,
+      createdAt: row.created_at,
     }
   },
 

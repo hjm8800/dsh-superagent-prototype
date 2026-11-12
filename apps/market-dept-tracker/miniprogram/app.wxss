@@ -213,3 +213,17 @@ textarea.input {
   font-size: 26rpx;
   background: #ffffff;
 }
+
+.task-photos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+  margin: 16rpx 0 8rpx;
+}
+
+.task-photo {
+  width: 132rpx;
+  height: 132rpx;
+  border-radius: 10rpx;
+  background: #eef1f4;
+}

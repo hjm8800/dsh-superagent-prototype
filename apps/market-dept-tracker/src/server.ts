@@ -1,5 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { Store } from './store.ts'
@@ -38,15 +40,65 @@ export interface ServerOptions {
   db: Database
   /** Public base URL, used to build the links handed to employees. */
   baseUrl: string
+  /** The data directory; the task photos live under it. */
+  dataDir?: string
   /** Fixed "now", so tests are deterministic. */
   now?: () => Date
 }
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
+/** Read a multipart body, keeping the text fields and the uploaded files. */
+async function readMultipart(
+  req: IncomingMessage,
+  limit: number,
+): Promise<{ fields: Map<string, string>; files: { field: string; filename: string; contentType: string; data: Buffer }[] }> {
+  const contentType = req.headers['content-type'] ?? ''
+  const match = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(contentType)
+  const boundary = (match?.[1] ?? match?.[2] ?? '').trim()
+  const fields = new Map<string, string>()
+  const files: { field: string; filename: string; contentType: string; data: Buffer }[] = []
+  if (!boundary) return { fields, files }
+  const chunks: Buffer[] = []
+  let total = 0
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array)
+    total += buffer.length
+    if (total > limit) throw new Error('照片太大')
+    chunks.push(buffer)
+  }
+  const body = Buffer.concat(chunks)
+  const delimiter = Buffer.from(`--${boundary}`)
+  const headerBreak = Buffer.from('\r\n\r\n')
+  let index = body.indexOf(delimiter)
+  if (index < 0) return { fields, files }
+  index += delimiter.length
+  while (index < body.length) {
+    if (body[index] === 13 && body[index + 1] === 10) index += 2
+    if (body[index] === 45 && body[index + 1] === 45) break
+    const headerEnd = body.indexOf(headerBreak, index)
+    if (headerEnd < 0) break
+    const headerText = body.subarray(index, headerEnd).toString('utf8')
+    const dataStart = headerEnd + headerBreak.length
+    const next = body.indexOf(delimiter, dataStart)
+    if (next < 0) break
+    const dataEnd = next >= 2 && body[next - 2] === 13 && body[next - 1] === 10 ? next - 2 : next
+    const data = body.subarray(dataStart, dataEnd)
+    const field = /name="([^"]*)"/i.exec(headerText)?.[1] ?? ''
+    const filename = /filename="([^"]*)"/i.exec(headerText)?.[1] ?? ''
+    const fileType = /content-type:\s*([^\r\n]+)/i.exec(headerText)?.[1]?.trim() ?? ''
+    if (filename) files.push({ field, filename, contentType: fileType, data })
+    else fields.set(field, data.toString('utf8'))
+    index = next + delimiter.length
+  }
+  return { fields, files }
+}
+
 export function createTrackerServer(options: ServerOptions) {
   const { store, db } = options
   const now = options.now ?? (() => new Date())
+  const photosDir = options.dataDir ? join(options.dataDir, 'photos') : ''
+  if (photosDir) mkdirSync(photosDir, { recursive: true })
 
   /** The department this tracker covers. The seed always creates exactly one. */
   const department = (): Department => {
@@ -613,6 +665,7 @@ export function createTrackerServer(options: ServerOptions) {
           people: p.people,
         })),
         tasks,
+        photos: Object.fromEntries(tasks.map((t) => [t.id, store.taskPhotos(t.id)])),
         recurring,
         viewerPositionName: viewerPosition?.name,
         viewerToken: viewer?.token,
@@ -757,6 +810,10 @@ export function createTrackerServer(options: ServerOptions) {
       account && account.positionId === person.positionId
         ? store.people(dept.id).filter((p) => p.positionId === person.positionId)
         : [person]
+    const tasks = store
+      .taskViews(periodType, periodKey, dept.id)
+      .filter((t) => postPeople.some((p) => p.id === t.personId))
+    const photos = Object.fromEntries(tasks.map((t) => [t.id, store.taskPhotos(t.id)]))
     sendHtml(
       res,
       renderMyTasks({
@@ -765,10 +822,9 @@ export function createTrackerServer(options: ServerOptions) {
         periodKey,
         periodLabel,
         periods,
-        tasks: store
-          .taskViews(periodType, periodKey, dept.id)
-          .filter((t) => postPeople.some((p) => p.id === t.personId)),
+        tasks,
         assignablePositions: assignable,
+        photos,
         viewerToken: person.token,
       }),
     )
@@ -791,6 +847,109 @@ export function createTrackerServer(options: ServerOptions) {
       now().toISOString(),
     )
     redirect(res, `/my-tasks?type=${task.periodType}&period=${encodeURIComponent(task.periodKey)}`)
+  }
+
+  /** Add photos to a task; the files live under the data directory. */
+  const uploadPhotos = async (req: IncomingMessage, res: ServerResponse, json: boolean) => {
+    if (!photosDir) {
+      if (json) sendJson(res, { ok: false, error: '没有照片目录' }, 500)
+      else sendText(res, '没有照片目录', 500)
+      return
+    }
+    let parsed: Awaited<ReturnType<typeof readMultipart>>
+    try {
+      parsed = await readMultipart(req, 40 * 1024 * 1024)
+    } catch {
+      if (json) sendJson(res, { ok: false, error: '照片太大' }, 413)
+      else sendText(res, '照片太大', 413)
+      return
+    }
+    const taskId = parsed.fields.get('taskId') ?? ''
+    const task = store.task(taskId)
+    const viewer = viewerOf(parsed.fields.get('token') ?? '')
+    if (!task) {
+      if (json) sendJson(res, { ok: false, error: '任务不存在' }, 404)
+      else sendText(res, '任务不存在', 404)
+      return
+    }
+    const owner = Boolean(viewer.person && viewer.person.id === task.personId)
+    const post = Boolean(viewer.person && viewer.person.positionId === task.positionId)
+    const leader = viewer.role === 'leader'
+    if (!owner && !post && !leader) {
+      if (json) sendJson(res, { ok: false, error: '不能给这个任务上传照片' }, 403)
+      else sendText(res, '不能给这个任务上传照片', 403)
+      return
+    }
+    const allowed = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
+    let count = 0
+    for (const file of parsed.files) {
+      if (file.field !== 'photos' || !file.filename) continue
+      if (!allowed.has(file.contentType)) continue
+      if (file.data.length === 0 || file.data.length > 10 * 1024 * 1024) continue
+      const ext =
+        file.contentType === 'image/png'
+          ? 'png'
+          : file.contentType === 'image/webp'
+            ? 'webp'
+            : file.contentType === 'image/gif'
+              ? 'gif'
+              : 'jpg'
+      const filename = `${randomUUID()}.${ext}`
+      writeFileSync(join(photosDir, filename), file.data)
+      store.createTaskPhoto({
+        id: `photo-${randomUUID()}`,
+        taskId,
+        personId: task.personId,
+        filename,
+        mime: file.contentType,
+        size: file.data.length,
+        createdAt: now().toISOString(),
+      })
+      count++
+    }
+    if (json) {
+      sendJson(res, { ok: true, count })
+      return
+    }
+    const type = parseType(parsed.fields.get('periodType') ?? null)
+    const period = parsed.fields.get('periodKey') ?? ''
+    redirect(
+      res,
+      `/my-tasks?type=${type}&period=${encodeURIComponent(period)}&token=${encodeURIComponent(viewer.person?.token ?? '')}`,
+    )
+  }
+
+  /** Serve one task photo to the people who may see the task. */
+  const photoFile = (req: IncomingMessage, res: ServerResponse, url: URL) => {
+    if (!photosDir) {
+      sendText(res, '没有照片', 404)
+      return
+    }
+    const id = url.pathname.replace(/^\/photos\//, '').split('/')[0] ?? ''
+    const photo = store.photoById(id)
+    if (!photo) {
+      sendText(res, '照片不存在', 404)
+      return
+    }
+    const task = store.task(photo.taskId)
+    const token = url.searchParams.get('token') ?? cookieOf(req, SESSION_COOKIE)
+    const viewer = viewerOf(token)
+    const allowed =
+      viewer.role === 'leader' ||
+      Boolean(
+        task && viewer.person && (viewer.person.positionId === task.positionId || viewer.person.id === task.personId),
+      )
+    if (!allowed) {
+      sendText(res, '没有权限', 403)
+      return
+    }
+    const file = readFileSync(join(photosDir, photo.filename))
+    res.writeHead(200, {
+      'Content-Type': photo.mime,
+      'Content-Length': file.length,
+      'Cache-Control': 'private, max-age=86400',
+    })
+    res.end(file)
   }
 
   // ------------------------------------------------------------- access
@@ -955,6 +1114,7 @@ export function createTrackerServer(options: ServerOptions) {
           status: t.status,
           statusLabel: TASK_STATUS_LABELS[t.status],
           note: t.note,
+          photos: store.taskPhotos(t.id).map((p) => ({ id: p.id })),
         })),
       })
       return
@@ -1314,6 +1474,11 @@ export function createTrackerServer(options: ServerOptions) {
       return
     }
 
+    if (route === '/api/tasks/photos' && method === 'POST') {
+      await uploadPhotos(req, res, true)
+      return
+    }
+
     // A leader sets up a fixed task for a post.
     if (route === '/api/tasks/recurring' && method === 'POST') {
       const form = await readBody(req)
@@ -1440,6 +1605,8 @@ export function createTrackerServer(options: ServerOptions) {
       if (route === '/tasks/recurring' && method === 'POST') return void createRecurring(req, res)
       if (route === '/my-tasks' && method === 'GET') return myTasks(req, res, url)
       if (route === '/my-tasks/status' && method === 'POST') return void updateMyTask(req, res)
+      if (route === '/my-tasks/photos' && method === 'POST') return void uploadPhotos(req, res, false)
+      if (route.startsWith('/photos/') && method === 'GET') return photoFile(req, res, url)
       if (route === '/style.css' && method === 'GET') return void styleSheet(req, res)
       if (route === '/healthz' && method === 'GET') return sendText(res, 'ok')
       sendHtml(res, layout({ title: '404', active: '', body: '<h1>404 页面不存在</h1>' }), 404)

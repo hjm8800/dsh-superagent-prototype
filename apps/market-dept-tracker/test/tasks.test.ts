@@ -1,6 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { openDatabase, seedArtifacts, seedDatabase } from '../src/db.ts'
@@ -199,10 +201,13 @@ test('the task views name the people and the posts', () => {
 
 async function withServer<T>(run: (base: string, store: Store) => Promise<T>): Promise<T> {
   const { db, store } = freshStore()
+  const dataDir = join(tmpdir(), `mdt-test-${randomUUID()}`)
+  mkdirSync(dataDir, { recursive: true })
   const server = createTrackerServer({
     store,
     db,
     baseUrl: 'http://127.0.0.1:0',
+    dataDir,
     now: () => new Date('2026-11-05T00:00:00Z'),
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -214,8 +219,54 @@ async function withServer<T>(run: (base: string, store: Store) => Promise<T>): P
     server.closeAllConnections()
     await new Promise<void>((resolve) => server.close(() => resolve()))
     db.close()
+    rmSync(dataDir, { recursive: true, force: true })
   }
 }
+
+test('a person attaches several photos to a task, and only the post may see them', async () => {
+  await withServer(async (base, store) => {
+    const person = store.people().find((p) => p.name === '黄美琳')!
+    store.createTask({
+      id: 'photo-task',
+      departmentId: 'mkt',
+      kind: 'assigned',
+      title: '拍照任务',
+      detail: '',
+      personId: person.id,
+      positionId: person.positionId,
+      periodType: 'week',
+      periodKey: '2026-W45',
+      periodLabel: '2026年第45周',
+      assignedById: null,
+      recurringTaskId: null,
+      dutyId: null,
+      artifactId: null,
+      createdAt: NOW,
+    })
+    const form = new FormData()
+    form.set('taskId', 'photo-task')
+    form.set('token', person.token)
+    form.set('periodType', 'week')
+    form.set('periodKey', '2026-W45')
+    form.append('photos', new Blob([Buffer.from('89504e470d0a1a0a', 'hex')], { type: 'image/png' }), 'a.png')
+    form.append('photos', new Blob([Buffer.from('89504e470d0a1a0a', 'hex')], { type: 'image/png' }), 'b.png')
+    const response = await fetch(`${base}/my-tasks/photos`, { method: 'POST', body: form, redirect: 'manual' })
+    assert.equal(response.status, 302)
+    const photos = store.taskPhotos('photo-task')
+    assert.equal(photos.length, 2, 'both photos are kept')
+
+    const mine = await fetch(`${base}/photos/${photos[0]!.id}`, { headers: { cookie: `mdt_token=${person.token}` } })
+    assert.equal(mine.status, 200)
+    assert.equal(mine.headers.get('content-type'), 'image/png')
+
+    const stranger = store.people().find((p) => p.positionId !== person.positionId)!
+    const denied = await fetch(`${base}/photos/${photos[0]!.id}?token=${stranger.token}`)
+    assert.equal(denied.status, 403, 'a stranger cannot see the photo')
+
+    const page = await (await fetch(`${base}/my-tasks?type=week&period=2026-W45&token=${person.token}`)).text()
+    assert.ok(page.includes('上传照片'))
+  })
+})
 
 test('the task list page shows the tasks of a period', async () => {
   await withServer(async (base, store) => {

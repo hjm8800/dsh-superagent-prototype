@@ -82,6 +82,19 @@
             <view>{{statusChoices[item.statusIndex].label}}</view>
           </picker>
         </view>
+        <view class="task-photos" wx:if="{{item.photos.length > 0}}">
+          <image
+            wx:for="{{item.photos}}"
+            wx:key="id"
+            class="task-photo"
+            src="{{item.url}}"
+            mode="aspectFill"
+            data-task="{{item.id}}"
+            data-url="{{item.url}}"
+            bindtap="previewPhoto"
+          />
+        </view>
+        <button class="btn btn-ghost small" data-id="{{item.id}}" bindtap="choosePhotos">拍照上传</button>
       </view>
     </view>
   </block>

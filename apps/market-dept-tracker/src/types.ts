@@ -262,6 +262,19 @@ export interface TaskView extends Task {
   artifactName: string
 }
 
+/** A photo attached to a task as evidence. */
+export interface TaskPhoto {
+  id: string
+  taskId: string
+  /** The person whose task it is. */
+  personId: string
+  /** The file under the photos directory. */
+  filename: string
+  mime: string
+  size: number
+  createdAt: string
+}
+
 /**
  * A deliverable a post is expected to produce.
  *

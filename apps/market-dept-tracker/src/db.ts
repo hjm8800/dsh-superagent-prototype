@@ -159,6 +159,17 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_duties_position ON duties(position_id);
+
+-- Photos a person attaches to a task as evidence.
+CREATE TABLE IF NOT EXISTS task_photos (
+  id          TEXT PRIMARY KEY,
+  task_id     TEXT NOT NULL REFERENCES tasks(id),
+  person_id   TEXT NOT NULL REFERENCES people(id),
+  filename    TEXT NOT NULL,
+  mime        TEXT NOT NULL,
+  size        INTEGER NOT NULL,
+  created_at  TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_people_position ON people(position_id);
 CREATE INDEX IF NOT EXISTS idx_reports_period ON reports(period_type, period_key);
 CREATE INDEX IF NOT EXISTS idx_report_items_report ON report_items(report_id);

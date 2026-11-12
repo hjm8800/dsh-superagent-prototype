@@ -57,6 +57,10 @@ Page({
       const tasks = data.tasks.map((task) => ({
         ...task,
         statusIndex: Math.max(0, STATUS_CHOICES.findIndex((c) => c.value === task.status)),
+        photos: (task.photos || []).map((photo) => ({
+          id: photo.id,
+          url: `${app.globalData.baseUrl}/photos/${photo.id}?token=${encodeURIComponent(token)}`,
+        })),
       }))
       this.setData({
         loading: false,
@@ -120,6 +124,42 @@ Page({
   currentPeriodKey() {
     const found = this.data.periods.find((p) => p.label === this.data.periodLabel)
     return found ? found.key : ''
+  },
+
+  /** Take or pick several photos and attach them to a task. */
+  async choosePhotos(event) {
+    const taskId = event.currentTarget.dataset.id
+    const media = await new Promise((resolve) => {
+      wx.chooseMedia({
+        count: 9,
+        mediaType: ['image'],
+        sourceType: ['camera', 'album'],
+        success: resolve,
+        fail: () => resolve(null),
+      })
+    })
+    if (!media || !media.tempFiles || media.tempFiles.length === 0) return
+    wx.showLoading({ title: '上传中' })
+    try {
+      await app.uploadPhotos(
+        taskId,
+        media.tempFiles.map((file) => file.tempFilePath),
+      )
+      wx.hideLoading()
+      wx.showToast({ title: '已上传', icon: 'success' })
+      this.load(this.currentPeriodKey())
+    } catch (error) {
+      wx.hideLoading()
+      wx.showToast({ title: error.message || '上传失败', icon: 'none' })
+    }
+  },
+
+  /** Look at a task's photos full size. */
+  previewPhoto(event) {
+    const taskId = event.currentTarget.dataset.task
+    const task = this.data.tasks.find((t) => t.id === taskId)
+    if (!task || task.photos.length === 0) return
+    wx.previewImage({ current: event.currentTarget.dataset.url, urls: task.photos.map((p) => p.url) })
   },
 
   goLogin() {

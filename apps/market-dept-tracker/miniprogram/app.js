@@ -86,6 +86,38 @@ App({
     })
   },
 
+  /** Add photos to a task; the platform keeps them. */
+  uploadPhotos(taskId, filePaths) {
+    const token = this.globalData.token
+    return Promise.all(
+      filePaths.map(
+        (filePath) =>
+          new Promise((resolve, reject) => {
+            wx.uploadFile({
+              url: `${BASE_URL}/api/tasks/photos`,
+              filePath,
+              name: 'photos',
+              formData: { taskId, token },
+              timeout: 30000,
+              success(response) {
+                let data = response.data
+                try {
+                  data = JSON.parse(data)
+                } catch {
+                  // A failed reply may be plain text.
+                }
+                if (response.statusCode === 200 && data && data.ok) resolve(data)
+                else reject(new Error((data && data.error) || '上传失败'))
+              },
+              fail(error) {
+                reject(new Error(error.errMsg || '连不上服务器'))
+              },
+            })
+          }),
+      ),
+    )
+  },
+
   /** One call to the platform. */
   request(path, query) {
     const parts = []
