@@ -396,21 +396,20 @@ export function renderWelcome(data: { departmentName: string; error?: string }):
 </div></div>
 ${data.error ? `<div class="alert is-error">${escapeHtml(data.error)}</div>` : ''}
 <section class="card">
-  <h2>用你的专属链接进入</h2>
-  <p class="muted small">部门负责人会给你一条专属链接。把它粘贴到下面，或者直接点开那条链接。</p>
-  <form class="task-form" method="get" action="/enter">
-    <label class="field"><span>专属链接或口令</span>
-      <input type="text" name="token" placeholder="粘贴完整链接，或链接里 token= 后面那串" autofocus>
+  <h2>用岗位账户登录</h2>
+  <p class="muted small">每个岗位一个账户，向部门负责人索取账户和初始密码。</p>
+  <form class="task-form" method="post" action="/login">
+    <label class="field"><span>岗位账户</span>
+      <input type="text" name="username" autocomplete="username" required autofocus>
     </label>
-    <div class="form-actions"><button class="btn btn-primary" type="submit">进入</button></div>
+    <label class="field"><span>密码</span>
+      <input type="password" name="password" autocomplete="current-password" required>
+    </label>
+    <div class="form-actions"><button class="btn btn-primary" type="submit">登录</button></div>
   </form>
 </section>
-<section class="card">
-  <h2>还没有链接？</h2>
-  <p class="muted">找你所在岗位的负责人，或者联系部门负责人要一条。</p>
-</section>
 `
-  return layout({ title: '进入', active: '', body })
+  return layout({ title: '登录', active: '', body })
 }
 
 export function renderLedger(data: LedgerData): string {
@@ -534,14 +533,14 @@ ${data.saved ? `<div class="alert is-success">已提交${escapeHtml(PERIOD_LABEL
 
 export interface LinksData {
   departmentName: string
-  /** The links of each post; nobody is named. */
+  /** The login of each post; nobody is named. */
   posts: {
-    id: string
     name: string
     level: string
     headcount: number
-    /** The links of the people in the post. */
-    links: { link: string; taskLink: string }[]
+    /** The account everyone in the post logs in with. */
+    username: string
+    password: string
   }[]
 }
 
@@ -552,39 +551,36 @@ export function renderLinks(data: LinksData): string {
   <td>${escapeHtml(p.name)}</td>
   <td><span class="tag tag-${p.level}">${escapeHtml(LEVEL_LABELS[p.level as keyof typeof LEVEL_LABELS])}</span></td>
   <td class="num">${p.headcount}</td>
-  <td class="link-cell">${p.links.map((l) => `<code>${escapeHtml(l.link)}</code>`).join('<br>')}</td>
-  <td class="link-cell">${p.links.map((l) => `<code>${escapeHtml(l.taskLink)}</code>`).join('<br>')}</td>
+  <td><code>${escapeHtml(p.username)}</code></td>
+  <td class="link-cell"><code>${escapeHtml(p.password || '—')}</code></td>
 </tr>`,
     )
     .join('')
 
+  const accounts = data.posts.map((p) => `${p.name}\t${p.username}\t${p.password}`)
   const body = `
 ${pageHead(
-  `${data.departmentName} · 填报链接`,
-  '把下面的链接发给对应同事，他们打开链接即可填报自己的周报／月报、查看自己的任务，无需登录。',
-  `<button class="btn" type="button" id="copy-all">复制全部填报链接</button>
-   <button class="btn" type="button" id="copy-tasks">复制全部任务链接</button>`,
+  `${data.departmentName} · 岗位账户`,
+  '每个岗位一个账户，同岗位的人共用。把岗位、账户和初始密码发给对应同事，他们打开平台登录即可填报周报／月报、查看任务。',
+  `<button class="btn" type="button" id="copy-all">复制全部账户</button>`,
 )}
 <section class="card">
   ${
     rows
       ? `<div class="table-wrap"><table class="table">
-  <thead><tr><th>岗位</th><th>层级</th><th>人数</th><th>填报链接</th><th>任务链接</th></tr></thead>
+  <thead><tr><th>岗位</th><th>层级</th><th>人数</th><th>账户</th><th>初始密码</th></tr></thead>
   <tbody>${rows}</tbody>
 </table></div>`
-      : empty('暂无人员。')
+      : empty('还没有岗位账户。')
   }
 </section>
 `
-  const allLinks = data.posts.flatMap((p) => p.links.map((l) => l.link))
-  const allTaskLinks = data.posts.flatMap((p) => p.links.map((l) => l.taskLink))
   return layout({
-    title: '填报链接',
+    title: '岗位账户',
     active: 'links',
     body,
     script: `
-const copy = async (links, id, label) => {
-  const text = links.join('\\n');
+const copy = async (text, id, label) => {
   try {
     await navigator.clipboard.writeText(text);
     const btn = document.getElementById(id);
@@ -594,8 +590,7 @@ const copy = async (links, id, label) => {
     alert('复制失败，请手动选中复制。');
   }
 };
-document.getElementById('copy-all')?.addEventListener('click', () => copy(${JSON.stringify(allLinks)}, 'copy-all', '复制全部填报链接'));
-document.getElementById('copy-tasks')?.addEventListener('click', () => copy(${JSON.stringify(allTaskLinks)}, 'copy-tasks', '复制全部任务链接'));`,
+document.getElementById('copy-all')?.addEventListener('click', () => copy(${JSON.stringify(accounts.join('\n'))}, 'copy-all', '复制全部账户'));`,
   })
 }
 

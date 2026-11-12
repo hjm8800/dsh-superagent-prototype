@@ -1,6 +1,7 @@
 import type { Database } from './db.ts'
 import { taskStore } from './tasks.ts'
 import type {
+  Account,
   ArtifactGroup,
   Department,
   Duty,
@@ -104,6 +105,16 @@ interface PersonRow {
   token: string
   pending: number
   note: string
+}
+
+interface AccountRow {
+  id: string
+  position_id: string
+  username: string
+  password_hash: string
+  password_plain: string
+  token: string
+  created_at: string
 }
 
 /** Read and write operations over the tracker's tables. */
@@ -255,6 +266,80 @@ export class Store {
     if (!found) return undefined
     found.duties = this.duties(id)
     return found
+  }
+
+  /** The login of every post. */
+  accounts(): Account[] {
+    const rows = this.db.raw
+      .prepare(
+        'SELECT id, position_id, username, password_hash, password_plain, token, created_at FROM accounts ORDER BY username',
+      )
+      .all() as unknown as AccountRow[]
+    return rows.map((row) => this.accountFromRow(row))
+  }
+
+  accountByUsername(username: string): Account | undefined {
+    const row = this.db.raw
+      .prepare(
+        'SELECT id, position_id, username, password_hash, password_plain, token, created_at FROM accounts WHERE username = ?',
+      )
+      .get(username) as unknown as AccountRow | undefined
+    return row ? this.accountFromRow(row) : undefined
+  }
+
+  accountByToken(token: string): Account | undefined {
+    const row = this.db.raw
+      .prepare(
+        'SELECT id, position_id, username, password_hash, password_plain, token, created_at FROM accounts WHERE token = ?',
+      )
+      .get(token) as unknown as AccountRow | undefined
+    return row ? this.accountFromRow(row) : undefined
+  }
+
+  accountForPosition(positionId: string): Account | undefined {
+    const row = this.db.raw
+      .prepare(
+        'SELECT id, position_id, username, password_hash, password_plain, token, created_at FROM accounts WHERE position_id = ?',
+      )
+      .get(positionId) as unknown as AccountRow | undefined
+    return row ? this.accountFromRow(row) : undefined
+  }
+
+  createAccount(account: Account): void {
+    this.db.raw
+      .prepare(
+        `INSERT INTO accounts (id, position_id, username, password_hash, password_plain, token, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        account.id,
+        account.positionId,
+        account.username,
+        account.passwordHash,
+        account.passwordPlain,
+        account.token,
+        account.createdAt,
+      )
+  }
+
+  setAccountPassword(id: string, passwordHash: string, passwordPlain: string): void {
+    this.db.raw.prepare('UPDATE accounts SET password_hash = ?, password_plain = ? WHERE id = ?').run(
+      passwordHash,
+      passwordPlain,
+      id,
+    )
+  }
+
+  private accountFromRow(row: AccountRow): Account {
+    return {
+      id: row.id,
+      positionId: row.position_id,
+      username: row.username,
+      passwordHash: row.password_hash,
+      passwordPlain: row.password_plain,
+      token: row.token,
+      createdAt: row.created_at,
+    }
   }
 
   /** The position tree of a department, each position carrying its people. */

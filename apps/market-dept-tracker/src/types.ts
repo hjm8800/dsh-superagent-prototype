@@ -128,6 +128,21 @@ export interface Person {
   note: string
 }
 
+/** A post's login: one account per post, shared by everyone in it. */
+export interface Account {
+  id: string
+  /** The post the account belongs to. */
+  positionId: string
+  username: string
+  /** The scrypt hash the login checks. */
+  passwordHash: string
+  /** The password as first generated, for the leader's account list. */
+  passwordPlain: string
+  /** The session token the login hands out. */
+  token: string
+  createdAt: string
+}
+
 /** One person's answer for one responsibility item in one period. */
 export interface ReportItem {
   dutyId: string

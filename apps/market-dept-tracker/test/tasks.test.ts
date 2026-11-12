@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { openDatabase, seedArtifacts, seedDatabase } from '../src/db.ts'
 import { grantLeaderAccess } from '../src/access.ts'
+import { hashPassword } from '../src/accounts.ts'
 import { Store } from '../src/store.ts'
 import { createTrackerServer } from '../src/server.ts'
 import { assignablePosts } from '../src/task-views.ts'
@@ -372,6 +373,62 @@ test('a specialist sees the assign form on their own page, a staff member does n
     assert.ok(html.includes(staff.positionId))
     const staffHtml = await (await fetch(`${base}/my-tasks?token=${staff.token}&type=week&period=2026-W45`)).text()
     assert.ok(!staffHtml.includes('给下属下达任务'))
+  })
+})
+
+test('a post account logs in and sees the tasks of its post', async () => {
+  await withServer(async (base, store) => {
+    const post = store.positions().find((p) => p.name === '市场营销和合同管理专责')!
+    const person = store.people().find((p) => p.positionId === post.id)!
+    store.createAccount({
+      id: 'acct-test',
+      positionId: post.id,
+      username: '市场营销和合同管理专责',
+      passwordHash: hashPassword('abc12345'),
+      passwordPlain: 'abc12345',
+      token: 'a'.repeat(32),
+      createdAt: NOW,
+    })
+    store.createTask({
+      id: 'acct-task',
+      departmentId: 'mkt',
+      kind: 'assigned',
+      title: '账户任务',
+      detail: '',
+      personId: person.id,
+      positionId: person.positionId,
+      periodType: 'week',
+      periodKey: '2026-W45',
+      periodLabel: '2026年第45周',
+      assignedById: null,
+      recurringTaskId: null,
+      dutyId: null,
+      artifactId: null,
+      createdAt: NOW,
+    })
+
+    const wrong = await fetch(`${base}/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ username: '市场营销和合同管理专责', password: 'nope' }).toString(),
+      redirect: 'manual',
+    })
+    assert.equal(wrong.status, 401, 'a wrong password is refused')
+
+    const response = await fetch(`${base}/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ username: '市场营销和合同管理专责', password: 'abc12345' }).toString(),
+      redirect: 'manual',
+    })
+    assert.equal(response.status, 302)
+    const cookies = response.headers.getSetCookie()
+    assert.ok(cookies.some((c) => c.startsWith('mdt_account=')), 'the account cookie is set')
+    const cookie = cookies.map((c) => c.split(';')[0]).join('; ')
+
+    const page = await (await fetch(`${base}/my-tasks?type=week&period=2026-W45`, { headers: { cookie } })).text()
+    assert.ok(page.includes('市场营销和合同管理专责 · 我的任务'))
+    assert.ok(page.includes('账户任务'))
   })
 })
 

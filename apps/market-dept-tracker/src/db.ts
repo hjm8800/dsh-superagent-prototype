@@ -53,6 +53,17 @@ CREATE TABLE IF NOT EXISTS people (
   note           TEXT NOT NULL DEFAULT ''
 );
 
+-- One login per post. Everyone in the post shares the same account.
+CREATE TABLE IF NOT EXISTS accounts (
+  id             TEXT PRIMARY KEY,
+  position_id    TEXT NOT NULL REFERENCES positions(id),
+  username       TEXT NOT NULL UNIQUE,
+  password_hash  TEXT NOT NULL,
+  password_plain TEXT NOT NULL DEFAULT '',
+  token          TEXT NOT NULL UNIQUE,
+  created_at     TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS reports (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   person_id      TEXT NOT NULL REFERENCES people(id),

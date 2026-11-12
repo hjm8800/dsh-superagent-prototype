@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { openDatabase, seedArtifacts, seedDatabase, seedFixedTasks, seedLeaders, slugify } from './db.ts'
 import { grantLeaderAccess, leaderGrants, revokeLeaderAccess } from './access.ts'
+import { hashPassword, newSessionToken, randomPassword } from './accounts.ts'
 import { Store } from './store.ts'
 import { createTrackerServer } from './server.ts'
 import { collect } from './collection.ts'
@@ -198,6 +199,46 @@ if (command === 'leaders') {
   } else {
     console.error('用法：--action list | add | remove')
     process.exit(1)
+  }
+  db.close()
+  process.exit(0)
+}
+
+if (command === 'accounts') {
+  // One login per post; everyone in the post shares it. The first run
+  // generates the passwords; the list is what the leader hands out.
+  const action = options['action'] ?? 'generate'
+  if (action !== 'generate' && action !== 'list') {
+    console.error('用法：--action generate | list')
+    process.exit(1)
+  }
+  const department = store.departments()[0]
+  const positions = department ? store.positions(department.id) : []
+  const people = store.people()
+  const existing = new Set(store.accounts().map((account) => account.positionId))
+  if (action === 'generate') {
+    let created = 0
+    for (const position of positions) {
+      if (existing.has(position.id)) continue
+      // A post nobody holds yet gets its account once someone is in it.
+      if (!people.some((person) => person.positionId === position.id)) continue
+      const password = randomPassword(10)
+      store.createAccount({
+        id: `acct-${position.id}`,
+        positionId: position.id,
+        username: position.name,
+        passwordHash: hashPassword(password),
+        passwordPlain: password,
+        token: newSessionToken(),
+        createdAt: new Date().toISOString(),
+      })
+      created++
+    }
+    console.log(`已生成 ${created} 个岗位账户。`)
+  }
+  for (const account of store.accounts()) {
+    const position = store.positionById(account.positionId)
+    console.log(`${position?.name ?? account.positionId}\t${account.username}\t${account.passwordPlain}`)
   }
   db.close()
   process.exit(0)

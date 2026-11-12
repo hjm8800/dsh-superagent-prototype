@@ -23,8 +23,9 @@ import {
   type TaskPosition,
   type TaskPositionNode,
 } from './task-views.ts'
-import type { PeriodType, TaskStatus, Person, Position, PositionView, AccessRole } from './types.ts'
+import type { PeriodType, TaskStatus, Person, Position, PositionView, AccessRole, Account } from './types.ts'
 import { accessOf, leaderGrants } from './access.ts'
+import { verifyPassword } from './accounts.ts'
 import { escapeHtml, layout } from './html.ts'
 import type { Department } from './types.ts'
 import type { Database } from './db.ts'
@@ -127,6 +128,51 @@ export function createTrackerServer(options: ServerOptions) {
       'set-cookie',
       `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax`,
     )
+  }
+
+  const ACCOUNT_COOKIE = 'mdt_account'
+
+  /** The post account this browser is logged in with, if any. */
+  const accountOf = (req: IncomingMessage): Account | undefined => {
+    const token = cookieOf(req, ACCOUNT_COOKIE)
+    return token ? store.accountByToken(token) : undefined
+  }
+
+  /** Log in with a post's account; the whole post shares it. */
+  const login = async (req: IncomingMessage, res: ServerResponse) => {
+    const form = await readBody(req)
+    const username = (form.get('username') ?? '').toString().trim()
+    const password = (form.get('password') ?? '').toString()
+    const account = username ? store.accountByUsername(username) : undefined
+    if (!account || !verifyPassword(password, account.passwordHash)) {
+      sendHtml(
+        res,
+        renderWelcome({ departmentName: department().name, error: '账户或密码不对，请向部门负责人确认。' }),
+        401,
+      )
+      return
+    }
+    const position = store.positionById(account.positionId)
+    const person = position ? store.people().find((p) => p.positionId === position.id) : undefined
+    const cookies = [
+      `${ACCOUNT_COOKIE}=${encodeURIComponent(account.token)}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax`,
+    ]
+    if (person) {
+      cookies.push(
+        `${SESSION_COOKIE}=${encodeURIComponent(person.token)}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax`,
+      )
+    }
+    res.setHeader('set-cookie', cookies)
+    const role = person && position ? accessOf(person, position, leaderGrants(db.raw)) : 'member'
+    redirect(res, role === 'leader' ? '/' : '/report')
+  }
+
+  const logout = (_req: IncomingMessage, res: ServerResponse) => {
+    res.setHeader('set-cookie', [
+      `${ACCOUNT_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`,
+      `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`,
+    ])
+    redirect(res, '/')
   }
 
   // ------------------------------------------------------------- routes
@@ -292,22 +338,18 @@ export function createTrackerServer(options: ServerOptions) {
     const dept = department()
     const positions = store.positions(dept.id)
     const people = store.people(dept.id)
-    // The links are listed by post; nobody is named.
-    const posts = positions
-      .map((position) => {
-        const members = people.filter((person) => person.positionId === position.id)
-        return {
-          id: position.id,
-          name: position.name,
-          level: position.level,
-          headcount: members.length,
-          links: members.map((person) => ({
-            link: `${options.baseUrl}/report?token=${person.token}`,
-            taskLink: `${options.baseUrl}/my-tasks?token=${person.token}`,
-          })),
-        }
-      })
-      .filter((post) => post.links.length > 0)
+    const accounts = new Map(store.accounts().map((account) => [account.positionId, account]))
+    // The logins are listed by post; nobody is named.
+    const posts = positions.map((position) => {
+      const account = accounts.get(position.id)
+      return {
+        name: position.name,
+        level: position.level,
+        headcount: people.filter((person) => person.positionId === position.id).length,
+        username: account?.username ?? '（待生成）',
+        password: account?.passwordPlain ?? '',
+      }
+    })
     sendHtml(res, renderLinks({ departmentName: dept.name, posts }))
   }
 
@@ -709,6 +751,12 @@ export function createTrackerServer(options: ServerOptions) {
     store.materialiseRecurringTasks(dept.id, periodType, periodKey, periodLabel, now().toISOString())
     const position = store.positionById(person.positionId)
     const assignable = position ? assignablePosts(taskPositions(dept.id), position.id) : []
+    // A post account sees the tasks of everyone in the post.
+    const account = accountOf(req)
+    const postPeople =
+      account && account.positionId === person.positionId
+        ? store.people(dept.id).filter((p) => p.positionId === person.positionId)
+        : [person]
     sendHtml(
       res,
       renderMyTasks({
@@ -717,7 +765,9 @@ export function createTrackerServer(options: ServerOptions) {
         periodKey,
         periodLabel,
         periods,
-        tasks: store.taskViews(periodType, periodKey, dept.id).filter((t) => t.personId === person.id),
+        tasks: store
+          .taskViews(periodType, periodKey, dept.id)
+          .filter((t) => postPeople.some((p) => p.id === t.personId)),
         assignablePositions: assignable,
         viewerToken: person.token,
       }),
@@ -1276,6 +1326,10 @@ export function createTrackerServer(options: ServerOptions) {
       // The mini program and any other JSON caller read the same data. They
       // carry the token themselves, so the browser cookie does not apply.
       if (route.startsWith('/api/')) return void api(req, res, url, route, method)
+
+      // The post accounts: log in, log out.
+      if (route === '/login' && method === 'POST') return void login(req, res)
+      if (route === '/logout' && method === 'GET') return logout(req, res)
 
       // Opening a link remembers whose link it is; later pages then work
       // without repeating the token in every address.
