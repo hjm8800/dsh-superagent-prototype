@@ -10,7 +10,7 @@ import type { AccessRole, LeaderGrant, Person, Position } from './types.ts'
  */
 
 /** The posts that always see the whole department. */
-const LEADER_LEVELS = new Set(['manager', 'deputy_manager'])
+const LEADER_LEVELS = new Set(['leadership', 'manager', 'deputy_manager'])
 
 /** The people who may see the whole department beyond the two leaders. */
 export function leaderGrants(db: DatabaseSync): LeaderGrant[] {

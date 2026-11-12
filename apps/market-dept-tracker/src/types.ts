@@ -36,6 +36,7 @@ export const PERIOD_LABELS: Record<PeriodType, string> = {
 
 /** Where a position sits in the department's chain of command. */
 export type PositionLevel =
+  | 'leadership'
   | 'manager'
   | 'deputy_manager'
   | 'specialist'
@@ -43,6 +44,7 @@ export type PositionLevel =
   | 'team'
 
 export const LEVEL_LABELS: Record<PositionLevel, string> = {
+  leadership: '领导班子',
   manager: '经理',
   deputy_manager: '副经理',
   specialist: '专责',

@@ -273,6 +273,7 @@ td.is-alert { color: var(--alert); font-weight: 600; }
 }
 
 .tag-manager { background: var(--primary-weak); color: var(--primary); }
+.tag-leadership { background: #e8eef9; color: #1d4ed8; }
 .tag-deputy_manager { background: #ece9fb; color: #5b3fc4; }
 .tag-specialist { background: var(--ok-weak); color: var(--ok); }
 .tag-specialist_staff { background: #eef1f4; color: var(--muted); }
