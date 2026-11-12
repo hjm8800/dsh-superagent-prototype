@@ -397,7 +397,7 @@ export function renderWelcome(data: { departmentName: string; error?: string }):
 ${data.error ? `<div class="alert is-error">${escapeHtml(data.error)}</div>` : ''}
 <section class="card">
   <h2>用岗位账户登录</h2>
-  <p class="muted small">每个岗位一个账户，向部门负责人索取账户和初始密码。</p>
+  <p class="muted small">专责以上一人一个账户（账户名就是姓名）；业务员和班组整岗共用一个账户。账户和初始密码向部门负责人索取。</p>
   <form class="task-form" method="post" action="/login">
     <label class="field"><span>岗位账户</span>
       <input type="text" name="username" autocomplete="username" required autofocus>
