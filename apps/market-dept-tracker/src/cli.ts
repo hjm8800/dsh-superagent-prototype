@@ -215,30 +215,39 @@ if (command === 'accounts') {
   const department = store.departments()[0]
   const positions = department ? store.positions(department.id) : []
   const people = store.people()
-  const existing = new Set(store.accounts().map((account) => account.positionId))
+  const existing = new Set(store.accounts().map((account) => account.id))
   if (action === 'generate') {
+    // The 专责 above get an account each; the 业务员 and teams share the post's.
+    const ownLevels = new Set(['leadership', 'manager', 'deputy_manager', 'specialist'])
     let created = 0
     for (const position of positions) {
-      if (existing.has(position.id)) continue
-      // A post nobody holds yet gets its account once someone is in it.
-      if (!people.some((person) => person.positionId === position.id)) continue
-      const password = randomPassword(10)
-      store.createAccount({
-        id: `acct-${position.id}`,
-        positionId: position.id,
-        username: position.name,
-        passwordHash: hashPassword(password),
-        passwordPlain: password,
-        token: newSessionToken(),
-        createdAt: new Date().toISOString(),
-      })
-      created++
+      const members = people.filter((person) => person.positionId === position.id)
+      if (members.length === 0) continue
+      const entries = ownLevels.has(position.level)
+        ? members.map((person) => ({ id: `acct-${person.id}`, person, username: person.name }))
+        : [{ id: `acct-${position.id}`, person: null, username: position.name }]
+      for (const entry of entries) {
+        if (existing.has(entry.id)) continue
+        const password = randomPassword(10)
+        store.createAccount({
+          id: entry.id,
+          positionId: position.id,
+          personId: entry.person ? entry.person.id : null,
+          username: entry.username,
+          passwordHash: hashPassword(password),
+          passwordPlain: password,
+          token: newSessionToken(),
+          createdAt: new Date().toISOString(),
+        })
+        created++
+      }
     }
     console.log(`已生成 ${created} 个岗位账户。`)
   }
   for (const account of store.accounts()) {
     const position = store.positionById(account.positionId)
-    console.log(`${position?.name ?? account.positionId}\t${account.username}\t${account.passwordPlain}`)
+    const person = account.personId ? store.personById(account.personId) : undefined
+    console.log(`${position?.name ?? account.positionId}\t${person?.name ?? account.username}\t${account.username}\t${account.passwordPlain}`)
   }
   db.close()
   process.exit(0)

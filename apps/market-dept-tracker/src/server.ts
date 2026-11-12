@@ -205,7 +205,11 @@ export function createTrackerServer(options: ServerOptions) {
       return
     }
     const position = store.positionById(account.positionId)
-    const person = position ? store.people().find((p) => p.positionId === position.id) : undefined
+    const person = account.personId
+      ? store.personById(account.personId)
+      : position
+        ? store.people().find((p) => p.positionId === position.id)
+        : undefined
     const cookies = [
       `${ACCOUNT_COOKIE}=${encodeURIComponent(account.token)}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax`,
     ]
@@ -390,18 +394,35 @@ export function createTrackerServer(options: ServerOptions) {
     const dept = department()
     const positions = store.positions(dept.id)
     const people = store.people(dept.id)
-    const accounts = new Map(store.accounts().map((account) => [account.positionId, account]))
-    // The logins are listed by post; nobody is named.
-    const posts = positions.map((position) => {
-      const account = accounts.get(position.id)
-      return {
-        name: position.name,
-        level: position.level,
-        headcount: people.filter((person) => person.positionId === position.id).length,
-        username: account?.username ?? '（待生成）',
-        password: account?.passwordPlain ?? '',
-      }
-    })
+    const allAccounts = store.accounts()
+    // The logins are listed by post; nobody is named. A post with its own
+    // accounts (one per person) shows one row for each of them.
+    const posts = positions
+      .map((position) => {
+        const own = allAccounts.filter((account) => account.positionId === position.id && account.personId)
+        const shared = allAccounts.find((account) => account.positionId === position.id && !account.personId)
+        return [
+          ...(shared
+            ? [
+                {
+                  name: position.name,
+                  level: position.level,
+                  headcount: people.filter((person) => person.positionId === position.id).length,
+                  username: shared.username,
+                  password: shared.passwordPlain,
+                },
+              ]
+            : []),
+          ...own.map((account) => ({
+            name: position.name,
+            level: position.level,
+            headcount: 1,
+            username: account.username,
+            password: account.passwordPlain,
+          })),
+        ]
+      })
+      .flat()
     sendHtml(res, renderLinks({ departmentName: dept.name, posts }))
   }
 
@@ -808,7 +829,9 @@ export function createTrackerServer(options: ServerOptions) {
     const account = accountOf(req)
     const postPeople =
       account && account.positionId === person.positionId
-        ? store.people(dept.id).filter((p) => p.positionId === person.positionId)
+        ? account.personId
+          ? [store.personById(account.personId) ?? person]
+          : store.people(dept.id).filter((p) => p.positionId === person.positionId)
         : [person]
     const tasks = store
       .taskViews(periodType, periodKey, dept.id)
@@ -977,7 +1000,9 @@ export function createTrackerServer(options: ServerOptions) {
     const account = token ? store.accountByToken(token) : undefined
     if (account) {
       const position = store.positionById(account.positionId)
-      const postPerson = store.people().find((p) => p.positionId === account.positionId)
+      const postPerson = account.personId
+        ? store.personById(account.personId)
+        : store.people().find((p) => p.positionId === account.positionId)
       return {
         person: postPerson,
         position,
@@ -1094,7 +1119,9 @@ export function createTrackerServer(options: ServerOptions) {
       store.materialiseRecurringTasks(dept.id, type, period.key, period.label, now().toISOString())
       const postPeople =
         account && position
-          ? store.people().filter((p) => p.positionId === position.id)
+          ? account.personId
+            ? [store.personById(account.personId) ?? person]
+            : store.people().filter((p) => p.positionId === position.id)
           : [person]
       const tasks = store
         .taskViews(type, period.key, dept.id)

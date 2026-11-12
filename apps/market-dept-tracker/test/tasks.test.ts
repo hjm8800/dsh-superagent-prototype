@@ -434,6 +434,7 @@ test('a post account logs in and sees the tasks of its post', async () => {
     store.createAccount({
       id: 'acct-test',
       positionId: post.id,
+      personId: null,
       username: '市场营销和合同管理专责',
       passwordHash: hashPassword('abc12345'),
       passwordPlain: 'abc12345',
@@ -480,6 +481,55 @@ test('a post account logs in and sees the tasks of its post', async () => {
     const page = await (await fetch(`${base}/my-tasks?type=week&period=2026-W45`, { headers: { cookie } })).text()
     assert.ok(page.includes('市场营销和合同管理专责 · 我的任务'))
     assert.ok(page.includes('账户任务'))
+  })
+})
+
+test('a person account sees its own tasks, a post account the whole post’s', async () => {
+  await withServer(async (base, store) => {
+    const post = store.positions().find((p) => p.name === '市场营销和合同管理专责')!
+    const person = store.people().find((p) => p.positionId === post.id)!
+    store.createTask({
+      id: 'own-task',
+      departmentId: 'mkt',
+      kind: 'assigned',
+      title: '个人任务',
+      detail: '',
+      personId: person.id,
+      positionId: person.positionId,
+      periodType: 'week',
+      periodKey: '2026-W45',
+      periodLabel: '2026年第45周',
+      assignedById: null,
+      recurringTaskId: null,
+      dutyId: null,
+      artifactId: null,
+      createdAt: NOW,
+    })
+    // A post without its own accounts shares one; a person account belongs
+    // to that person alone.
+    store.createAccount({
+      id: 'acct-person',
+      positionId: post.id,
+      personId: person.id,
+      username: person.name,
+      passwordHash: hashPassword('abc12345'),
+      passwordPlain: 'abc12345',
+      token: 'b'.repeat(32),
+      createdAt: NOW,
+    })
+    const response = await fetch(`${base}/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ username: person.name, password: 'abc12345' }).toString(),
+      redirect: 'manual',
+    })
+    assert.equal(response.status, 302)
+    const cookie = response.headers
+      .getSetCookie()
+      .map((c) => c.split(';')[0])
+      .join('; ')
+    const page = await (await fetch(`${base}/my-tasks?type=week&period=2026-W45`, { headers: { cookie } })).text()
+    assert.ok(page.includes('个人任务'))
   })
 })
 

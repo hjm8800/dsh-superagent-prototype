@@ -53,10 +53,12 @@ CREATE TABLE IF NOT EXISTS people (
   note           TEXT NOT NULL DEFAULT ''
 );
 
--- One login per post. Everyone in the post shares the same account.
+-- One login per post. Everyone in the post shares the same account. A post
+-- that also names a person gets an account for that person alone.
 CREATE TABLE IF NOT EXISTS accounts (
   id             TEXT PRIMARY KEY,
   position_id    TEXT NOT NULL REFERENCES positions(id),
+  person_id      TEXT REFERENCES people(id),
   username       TEXT NOT NULL UNIQUE,
   password_hash  TEXT NOT NULL,
   password_plain TEXT NOT NULL DEFAULT '',
@@ -187,6 +189,12 @@ export function openDatabase(file: string): Database {
   raw.exec('PRAGMA journal_mode = WAL')
   raw.exec('PRAGMA foreign_keys = ON')
   raw.exec(SCHEMA)
+  // Databases created before the person accounts keep their rows; add the
+  // column the newer schema has.
+  const accountColumns = raw.prepare('PRAGMA table_info(accounts)').all() as unknown as Array<{ name: string }>
+  if (!accountColumns.some((column) => column.name === 'person_id')) {
+    raw.exec('ALTER TABLE accounts ADD COLUMN person_id TEXT REFERENCES people(id)')
+  }
   return { raw, close: () => raw.close() }
 }
 

@@ -133,6 +133,8 @@ export interface Account {
   id: string
   /** The post the account belongs to. */
   positionId: string
+  /** The person, when the account is that person's own; empty for a shared one. */
+  personId: string | null
   username: string
   /** The scrypt hash the login checks. */
   passwordHash: string
