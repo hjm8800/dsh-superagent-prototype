@@ -88,7 +88,7 @@ a:hover{text-decoration:underline}
 .upload-form{display:grid;grid-template-columns:1.4fr 1fr .8fr auto;gap:10px;align-items:end}
 .form{display:flex;flex-direction:column;gap:10px}
 .form label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#374151}
-input,select{border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;font:inherit;background:#fff;color:var(--ink);min-width:0}
+input,select,textarea{border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;font:inherit;background:#fff;color:var(--ink);min-width:0}
 input:focus,select:focus{outline:2px solid #bfdbfe;border-color:var(--blue)}
 .inline{display:flex;gap:6px;align-items:center}
 .tiny{width:78px;padding:5px 6px}

@@ -23,6 +23,8 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
 from itsdangerous import BadSignature, URLSafeSerializer
 
 from parsers import parse_file
@@ -121,6 +123,65 @@ def doc_counts(conn, pid):
     d = {r["status"]: r["c"] for r in rows}
     d["total"] = sum(d.values())
     return d
+
+
+def upsert_profile(conn, pid, key, value):
+    if value is None or value == "":
+        return
+    conn.execute("INSERT OR REPLACE INTO profiles (project_id, key, value) VALUES (?,?,?)", (pid, key, str(value)))
+
+
+def apply_parse(conn, pid, doc_name, category, parsed):
+    data = parsed.get("data") or {}
+    changed = {}
+    mats = data.get("materials") or []
+    if mats:
+        conn.execute("DELETE FROM materials WHERE project_id=?", (pid,))
+        for m in mats:
+            conn.execute(
+                "INSERT INTO materials (project_id, supply, code, name, spec, unit, qty, source) VALUES (?,?,?,?,?,?,?,?)",
+                (pid, m.get("supply"), m.get("code"), m.get("name"), m.get("spec"), m.get("unit"), m.get("qty"), f"导入：{doc_name}"),
+            )
+        changed["materials"] = len(mats)
+        a = sum(1 for m in mats if m.get("supply") == "甲供")
+        b = sum(1 for m in mats if m.get("supply") == "乙供")
+        upsert_profile(conn, pid, "甲供材料", f"{a} 条")
+        upsert_profile(conn, pid, "乙供材料", f"{b} 条")
+    boq = data.get("boq") or []
+    if boq:
+        conn.execute("DELETE FROM boq WHERE project_id=?", (pid,))
+        for b in boq:
+            conn.execute(
+                "INSERT INTO boq (project_id, code, name, unit, qty, part) VALUES (?,?,?,?,?,?)",
+                (pid, b.get("code"), b.get("name"), b.get("unit"), b.get("qty"), b.get("part")),
+            )
+        changed["boq"] = len(boq)
+        upsert_profile(conn, pid, "工程量清单", f"{len(boq)} 条")
+    budget = data.get("budget_items") or []
+    summary = data.get("budget_summary")
+    if budget:
+        conn.execute("DELETE FROM budget_items WHERE project_id=?", (pid,))
+        for b in budget:
+            conn.execute("INSERT INTO budget_items (project_id, name, amount, category) VALUES (?,?,?,?)", (pid, b.get("name"), b.get("amount"), b.get("category")))
+        total = sum(float(b.get("amount") or 0) for b in budget)
+        conn.execute("UPDATE projects SET budget_total=? WHERE id=?", (total, pid))
+        upsert_profile(conn, pid, "预算", f"{total/10000:.2f} 万元（导入：{doc_name}）")
+        changed["budget"] = total
+    profile = data.get("profile") or {}
+    for k, v in profile.items():
+        if k in ("项目名称",) and not v:
+            continue
+        upsert_profile(conn, pid, k, v)
+    if category == "设计说明书" or doc_name.lower().endswith(".docx"):
+        upsert_profile(conn, pid, "设计说明", f"{doc_name} 已解析")
+    if changed:
+        upsert_profile(conn, pid, "最近导入", f"{doc_name}：材料{changed.get('materials',0)}条、工程量{changed.get('boq',0)}条、预算{changed.get('budget',0):.0f}元" if changed.get('budget') else f"{doc_name}：材料{changed.get('materials',0)}条、工程量{changed.get('boq',0)}条")
+    conn.commit()
+    return changed
+
+
+def can_manage(user):
+    return user and user["role"] in ("admin", "manager")
 
 
 def generate_draft(conn, project, scene):
@@ -241,8 +302,74 @@ def dashboard(request: Request, user=Depends(current_user), conn=Depends(get_db)
     }
     return templates.TemplateResponse(
         request, "dashboard.html",
-        {"user": user, "projects": projects, "alerts": alerts, "tasks": tasks, "stats": stats, "active": "dashboard"},
+        {"user": user, "projects": projects, "alerts": alerts, "tasks": tasks, "stats": stats, "active": "dashboard", "can_manage": can_manage(user)},
     )
+
+
+@app.get("/projects/new", response_class=HTMLResponse)
+def project_new(request: Request, user=Depends(current_user)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if not can_manage(user):
+        raise HTTPException(403, "只有管理员/项目经理可以新建项目")
+    return templates.TemplateResponse(request, "project_form.html", {"user": user, "mode": "new", "p": None, "active": "project"})
+
+
+@app.post("/projects")
+def project_create(
+    request: Request, code: str = Form(...), name: str = Form(...), ptype: str = Form("台区改造"),
+    stage: str = Form("资料解析"), t0: str = Form(""), owner: str = Form(""), location: str = Form(""),
+    note: str = Form(""), user=Depends(current_user), conn=Depends(get_db),
+):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if not can_manage(user):
+        raise HTTPException(403, "只有管理员/项目经理可以新建项目")
+    try:
+        cur = conn.execute(
+            "INSERT INTO projects (code, name, ptype, stage, t0, owner, location, budget_total, note) VALUES (?,?,?,?,?,?,?,0,?)",
+            (code.strip(), name.strip(), ptype, stage, t0, owner or user["name"], location, note),
+        )
+        pid = cur.lastrowid
+        conn.execute("INSERT INTO members (user_id, project_id) VALUES (?,?)", (user["id"], pid))
+        conn.commit()
+        audit(conn, pid, user, "create_project", f"{code} {name}")
+        return RedirectResponse(f"/projects/{pid}?tab=docs&msg=项目已创建，请上传设计资料包", status_code=303)
+    except sqlite3.IntegrityError:
+        return RedirectResponse("/projects/new?msg=项目编码已存在", status_code=303)
+
+
+@app.get("/projects/{pid}/edit", response_class=HTMLResponse)
+def project_edit_page(pid: int, request: Request, user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if not can_manage(user):
+        raise HTTPException(403, "只有管理员/项目经理可以编辑项目")
+    project = get_project(conn, pid, user)
+    return templates.TemplateResponse(request, "project_form.html", {"user": user, "mode": "edit", "p": project, "active": "project"})
+
+
+@app.post("/projects/{pid}/edit")
+def project_edit(
+    pid: int, request: Request, code: str = Form(...), name: str = Form(...), ptype: str = Form(...),
+    stage: str = Form(...), t0: str = Form(""), owner: str = Form(""), location: str = Form(""),
+    note: str = Form(""), user=Depends(current_user), conn=Depends(get_db),
+):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if not can_manage(user):
+        raise HTTPException(403, "只有管理员/项目经理可以编辑项目")
+    project = get_project(conn, pid, user)
+    try:
+        conn.execute(
+            "UPDATE projects SET code=?, name=?, ptype=?, stage=?, t0=?, owner=?, location=?, note=? WHERE id=?",
+            (code.strip(), name.strip(), ptype, stage, t0, owner or project["owner"], location, note, pid),
+        )
+        conn.commit()
+        audit(conn, pid, user, "edit_project", f"{code} {name}")
+        return RedirectResponse(f"/projects/{pid}?tab=overview&msg=项目信息已更新", status_code=303)
+    except sqlite3.IntegrityError:
+        return RedirectResponse(f"/projects/{pid}/edit?msg=项目编码已存在", status_code=303)
 
 
 @app.get("/projects/{pid}", response_class=HTMLResponse)
@@ -266,33 +393,44 @@ def project_page(pid: int, request: Request, tab: str = "overview", user=Depends
             "user": user, "p": project, "tab": tab, "profile": profile,
             "docs": docs, "materials": materials, "boq": boq, "budget": budget,
             "compares": compares, "tasks": tasks, "alerts": alerts, "ai_outputs": ai_outputs,
-            "reviews": reviews, "doccounts": doc_counts(conn, pid), "active": "project",
+            "reviews": reviews, "doccounts": doc_counts(conn, pid), "active": "project", "can_manage": can_manage(user),
         },
     )
 
 
 @app.post("/projects/{pid}/documents")
 def upload_document(
-    pid: int, request: Request, file: UploadFile = File(...), name: str = Form(""), category: str = Form("其他"),
+    pid: int, request: Request, file: list[UploadFile] = File(...), name: str = Form(""), category: str = Form("其他"),
     user=Depends(current_user), conn=Depends(get_db),
 ):
     if not user:
         return RedirectResponse("/login", status_code=303)
-    project = get_project(conn, pid, user)
-    raw = file.file.read()
-    safe = re.sub(r"[^\w\u4e00-\u9fff.\-]+", "_", file.filename or "upload")
-    dest_dir = UPLOAD_DIR / f"project_{pid}"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / f"{uuid.uuid4().hex[:8]}_{safe}"
-    dest.write_bytes(raw)
-    parsed = parse_file(str(dest), file.filename)
-    conn.execute(
-        "INSERT INTO documents (project_id, name, category, filename, path, size, status, summary, parsed_json, uploaded_by, uploaded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        (pid, name or (file.filename or safe), category, file.filename, str(dest), len(raw), parsed["status"], parsed["summary"], json.dumps(parsed, ensure_ascii=False), user["id"], now()),
-    )
-    conn.commit()
-    audit(conn, pid, user, "upload", f"上传 {file.filename}，状态 {parsed['status']}")
-    return RedirectResponse(f"/projects/{pid}?tab=docs&msg=上传完成：{parsed['status']}", status_code=303)
+    get_project(conn, pid, user)
+    results = []
+    for f in file:
+        raw = f.file.read()
+        safe = re.sub(r"[^\w\u4e00-\u9fff.\-]+", "_", f.filename or "upload")
+        dest_dir = UPLOAD_DIR / f"project_{pid}"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / f"{uuid.uuid4().hex[:8]}_{safe}"
+        dest.write_bytes(raw)
+        parsed = parse_file(str(dest), f.filename)
+        doc_name = (name if len(file) == 1 and name else f.filename) or safe
+        cur = conn.execute(
+            "INSERT INTO documents (project_id, name, category, filename, path, size, status, summary, parsed_json, uploaded_by, uploaded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (pid, doc_name, category, f.filename, str(dest), len(raw), parsed["status"], parsed["summary"], json.dumps(parsed, ensure_ascii=False), user["id"], now()),
+        )
+        conn.commit()
+        changed = apply_parse(conn, pid, doc_name, category, parsed)
+        audit(conn, pid, user, "upload", f"上传 {f.filename}，状态 {parsed['status']}，导入 {changed}")
+        results.append((parsed["status"], changed))
+    ok = sum(1 for r in results if r[0] == "parsed")
+    plugin = sum(1 for r in results if r[0] == "needs_plugin")
+    err = sum(1 for r in results if r[0] == "error")
+    msg = f"上传 {len(file)} 个文件：已解析 {ok}，需插件 {plugin}，失败 {err}"
+    if any(r[1] for r in results):
+        msg += "；结构化数据已导入"
+    return RedirectResponse(f"/projects/{pid}?tab=docs&msg={msg}", status_code=303)
 
 
 @app.post("/documents/{did}/parse")
@@ -377,3 +515,42 @@ def export_csv(pid: int, kind: str, request: Request, user=Depends(current_user)
         writer.writerow([r[k] for k in r.keys()])
     data = "\ufeff" + buf.getvalue()
     return StreamingResponse(iter([data]), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f"attachment; filename={kind}-{pid}.csv"})
+
+@app.get("/export/{pid}/xlsx/{kind}")
+def export_xlsx(pid: int, kind: str, request: Request, user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    get_project(conn, pid, user)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = {"materials": "材料清册", "boq": "工程量", "compare": "三算对比", "budget": "预算"}.get(kind, kind)
+    if kind == "materials":
+        headers = ["供应", "物资编码", "名称", "规格", "单位", "数量", "来源"]
+        rows = conn.execute("SELECT supply, code, name, spec, unit, qty, source FROM materials WHERE project_id=?", (pid,)).fetchall()
+    elif kind == "boq":
+        headers = ["编号", "名称", "单位", "数量", "部位"]
+        rows = conn.execute("SELECT code, name, unit, qty, part FROM boq WHERE project_id=?", (pid,)).fetchall()
+    elif kind == "compare":
+        headers = ["项目", "单位", "设计量", "预算量", "结算量", "差异原因", "依据", "状态"]
+        rows = conn.execute("SELECT item, unit, design_qty, budget_qty, settle_qty, reason, evidence, status FROM compare_items WHERE project_id=?", (pid,)).fetchall()
+    elif kind == "budget":
+        headers = ["项目", "金额（元）", "类别"]
+        rows = conn.execute("SELECT name, amount, category FROM budget_items WHERE project_id=?", (pid,)).fetchall()
+    else:
+        raise HTTPException(404)
+    ws.append(headers)
+    for c in ws[1]:
+        c.font = Font(bold=True)
+        c.fill = PatternFill("solid", fgColor="E8F0FE")
+    for r in rows:
+        ws.append([r[k] for k in r.keys()])
+    for i, h in enumerate(headers, 1):
+        ws.column_dimensions[chr(64 + i)].width = max(12, min(28, len(h) * 3 + 8))
+    bio = io.BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return StreamingResponse(
+        bio,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={kind}-{pid}.xlsx"},
+    )

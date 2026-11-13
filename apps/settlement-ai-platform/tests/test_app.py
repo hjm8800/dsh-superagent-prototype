@@ -84,3 +84,71 @@ def test_upload_docx(tmp_path):
     r = client.get("/projects/1?tab=docs")
     assert "测试设计说明书" in r.text
     assert "parsed" in r.text
+
+def test_create_project_and_edit():
+    login("admin", "admin123")
+    code = "DEMO-TEST-CREATE"
+    r = client.post(
+        "/projects",
+        data={"code": code, "name": "项目D·某新建台区", "ptype": "台区改造", "stage": "资料解析", "t0": "2026-12-31", "owner": "资料员", "location": "某供电所", "note": "测试"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    loc = r.headers["location"]
+    pid = int(loc.split("/projects/")[1].split("?")[0])
+    r = client.get(f"/projects/{pid}?tab=docs")
+    assert r.status_code == 200
+    assert code in r.text
+    r = client.post(
+        f"/projects/{pid}/edit",
+        data={"code": code, "name": "项目D·某新建台区（改）", "ptype": "台区改造", "stage": "资料移交", "t0": "2026-12-31", "owner": "资料员", "location": "某供电所", "note": "改"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    r = client.get(f"/projects/{pid}?tab=overview")
+    assert "项目D·某新建台区（改）" in r.text
+
+
+def _make_xlsx(path):
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "甲供材料"
+    ws.append(["序号", "物资编码", "物资名称", "规格型号", "单位", "数量"])
+    ws.append([1, "TEST-001", "测试电缆", "YJV-1×240", "千米", 0.12])
+    ws2 = wb.create_sheet("工程量清单")
+    ws2.append(["序号", "工程量名称", "单位", "数量"])
+    ws2.append([1, "10kV线路架设", "千米", 0.2])
+    ws3 = wb.create_sheet("施工图预算费用明细表")
+    ws3.append(["序号", "工程名称", "工程编号", "预算总额", "建筑工程费", "设备购置费", "安装工程费", "其他费用"])
+    ws3.append([1, "测试工程", "DEMO-TEST", 123456, 0, 10000, 100000, 13456])
+    wb.save(path)
+
+
+def test_upload_xlsx_import_and_excel_export(tmp_path):
+    login("admin", "admin123")
+    # create a fresh project
+    code = "DEMO-TEST-IMPORT"
+    r = client.post("/projects", data={"code": code, "name": "项目E·导入测试", "ptype": "业扩配套", "stage": "资料解析", "t0": "", "owner": "资料员", "location": "某供电所", "note": ""}, follow_redirects=False)
+    pid = int(r.headers["location"].split("/projects/")[1].split("?")[0])
+    p = tmp_path / "materials.xlsx"
+    _make_xlsx(p)
+    with open(p, "rb") as fh:
+        r = client.post(
+            f"/projects/{pid}/documents",
+            data={"name": "测试材料清册", "category": "材料清册"},
+            files={"file": ("materials.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+            follow_redirects=False,
+        )
+    assert r.status_code == 303
+    r = client.get(f"/projects/{pid}?tab=materials")
+    assert "测试电缆" in r.text
+    assert "TEST-001" in r.text
+    r = client.get(f"/projects/{pid}?tab=boq")
+    assert "10kV线路架设" in r.text
+    r = client.get(f"/projects/{pid}?tab=budget")
+    assert "123,456" in r.text or "123456" in r.text
+    r = client.get(f"/export/{pid}/xlsx/materials")
+    assert r.status_code == 200
+    assert "spreadsheetml" in r.headers["content-type"]
+

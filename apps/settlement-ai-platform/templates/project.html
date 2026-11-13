@@ -8,7 +8,8 @@
     <p class="sub">{{ p.ptype }} · 阶段：{{ p.stage }} · 投产日：{{ p.t0 }} · 负责人：{{ p.owner }}</p>
   </div>
   <div class="head-actions">
-    <a class="btn" href="/export/{{ p.id }}/compare">导出差异</a>
+    {% if can_manage %}<a class="btn" href="/projects/{{ p.id }}/edit">编辑项目</a>{% endif %}
+    <a class="btn" href="/export/{{ p.id }}/xlsx/compare">导出差异 Excel</a>
     <a class="btn primary" href="/projects/{{ p.id }}?tab=ai">AI操作台</a>
   </div>
 </div>
@@ -64,7 +65,7 @@
 <section class="card">
   <div class="card-head"><h2>上传资料</h2><span class="muted">支持 DOCX/XLSX/XLS/PDF/XML/ZIP/DWG/DOC/图片；DWG 自动调 ODA，DOC 自动调 LibreOffice</span></div>
   <form class="upload-form" method="post" action="/projects/{{ p.id }}/documents" enctype="multipart/form-data">
-    <label>文件<input type="file" name="file" required></label>
+    <label>文件（可多选）<input type="file" name="file" multiple required></label>
     <label>资料名称<input name="name" placeholder="留空使用文件名"></label>
     <label>类别
       <select name="category">
@@ -99,7 +100,7 @@
 
 {% elif tab == 'materials' %}
 <section class="card">
-  <div class="card-head"><h2>材料清册</h2><a class="link" href="/export/{{ p.id }}/materials">导出 CSV</a></div>
+  <div class="card-head"><h2>材料清册</h2><span><a class="link" href="/export/{{ p.id }}/xlsx/materials">导出 Excel</a> · <a class="link" href="/export/{{ p.id }}/materials">CSV</a></span></div>
   <div class="table-wrap">
     <table class="table">
       <thead><tr><th>供应</th><th>物资编码</th><th>名称</th><th>规格</th><th>单位</th><th>数量</th><th>来源</th></tr></thead>
@@ -114,7 +115,7 @@
 
 {% elif tab == 'boq' %}
 <section class="card">
-  <div class="card-head"><h2>工程量清单</h2><a class="link" href="/export/{{ p.id }}/boq">导出 CSV</a></div>
+  <div class="card-head"><h2>工程量清单</h2><span><a class="link" href="/export/{{ p.id }}/xlsx/boq">导出 Excel</a> · <a class="link" href="/export/{{ p.id }}/boq">CSV</a></span></div>
   <div class="table-wrap">
     <table class="table">
       <thead><tr><th>编号</th><th>名称</th><th>单位</th><th>数量</th><th>部位</th></tr></thead>
@@ -132,7 +133,7 @@
   {% endfor %}
 </section>
 <section class="card">
-  <div class="card-head"><h2>预算构成</h2><span class="badge info">XLSX/XML 解析</span></div>
+  <div class="card-head"><h2>预算构成</h2><span><span class="badge info">XLSX/XML 解析</span> <a class="link" href="/export/{{ p.id }}/xlsx/budget">导出 Excel</a></span></div>
   <div class="table-wrap">
     <table class="table">
       <thead><tr><th>项目</th><th>金额（元）</th><th>类别</th></tr></thead>
@@ -146,7 +147,7 @@
 
 {% elif tab == 'compare' %}
 <section class="card">
-  <div class="card-head"><h2>三算对比</h2><a class="link" href="/export/{{ p.id }}/compare">导出 CSV</a></div>
+  <div class="card-head"><h2>三算对比</h2><span><a class="link" href="/export/{{ p.id }}/xlsx/compare">导出 Excel</a> · <a class="link" href="/export/{{ p.id }}/compare">CSV</a></span></div>
   <div class="table-wrap">
     <table class="table">
       <thead><tr><th>项目</th><th>单位</th><th>设计量</th><th>预算量</th><th>结算量</th><th>原因</th><th>依据</th><th>状态</th><th>更新结算量</th></tr></thead>
