@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% block title %}{{ p.name }} · 结算AI工作台{% endblock %}
+{% block content %}
+<div class="page-head project-head">
+  <div>
+    <div class="crumb">项目库 / {{ p.code }}</div>
+    <h1>{{ p.name }}</h1>
+    <p class="sub">{{ p.ptype }} · 阶段：{{ p.stage }} · 投产日：{{ p.t0 }} · 负责人：{{ p.owner }}</p>
+  </div>
+  <div class="head-actions">
+    <a class="btn" href="/export/{{ p.id }}/compare">导出差异</a>
+    <a class="btn primary" href="/projects/{{ p.id }}?tab=ai">AI操作台</a>
+  </div>
+</div>
+
+<div class="tabs">
+  {% for key, label in [('overview','概览'),('docs','资料包'),('materials','材料清册'),('boq','工程量'),('budget','预算'),('compare','三算对比'),('ai','AI操作台'),('reviews','复核记录')] %}
+    <a class="{{ 'active' if tab == key else '' }}" href="/projects/{{ p.id }}?tab={{ key }}">{{ label }}</a>
+  {% endfor %}
+</div>
+
+{% if tab == 'overview' %}
+<section class="grid-2">
+  <div class="card">
+    <div class="card-head"><h2>项目画像</h2><span class="badge ok">自动提取</span></div>
+    <div class="profile-grid">
+      {% for k, v in profile.items() %}
+        <div class="profile-item"><div class="muted">{{ k }}</div><div class="strong">{{ v }}</div></div>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><h2>资料与预算</h2></div>
+    <div class="stat-row"><span>预算总额</span><strong>{{ p.budget_total|money }} 元</strong></div>
+    <div class="stat-row"><span>资料</span><strong>{{ doccounts.total }} 项 / 已解析 {{ doccounts.get('parsed', 0) }}</strong></div>
+    <div class="stat-row"><span>材料</span><strong>甲供 {{ profile.get('甲供材料','—') }} / 乙供 {{ profile.get('乙供材料','—') }}</strong></div>
+    <div class="stat-row"><span>三算差异</span><strong>{{ compares|length }} 项</strong></div>
+    <div class="bar"><div style="width:{{ (doccounts.get('parsed',0) / (doccounts.total or 1) * 100)|round(0) }}%"></div></div>
+    <div class="muted small">解析进度：{{ (doccounts.get('parsed',0) / (doccounts.total or 1) * 100)|round(0) }}%</div>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>节点与风险</h2></div>
+  <div class="grid-2">
+    <div>
+      {% for t in tasks %}<div class="task-row"><div><div class="strong">{{ t.name }}</div><div class="muted">{{ t.owner }} · {{ t.due }}</div></div><span class="badge info">{{ t.status }}</span></div>{% endfor %}
+    </div>
+    <div>
+      {% for a in alerts %}<div class="alert-row"><span class="badge {{ 'danger' if a.level == '高' else 'warn' }}">{{ a.level }}</span><div><div class="strong">{{ a.title }}</div><div class="muted">{{ a.detail }}</div></div></div>{% endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>最近AI初稿</h2><a class="link" href="/projects/{{ p.id }}?tab=ai">全部</a></div>
+  {% for a in ai_outputs[:3] %}
+    <div class="ai-item"><div class="strong">{{ a.scene }} <span class="badge info">{{ a.engine }}</span> <span class="badge warn">{{ a.status }}</span></div><pre class="pre">{{ a.output }}</pre></div>
+  {% endfor %}
+  {% if not ai_outputs %}<div class="muted">暂无AI初稿。</div>{% endif %}
+</section>
+
+{% elif tab == 'docs' %}
+<section class="card">
+  <div class="card-head"><h2>上传资料</h2><span class="muted">支持 DOCX/XLSX/XLS/PDF/XML/ZIP/DWG/DOC/图片；DWG 自动调 ODA，DOC 自动调 LibreOffice</span></div>
+  <form class="upload-form" method="post" action="/projects/{{ p.id }}/documents" enctype="multipart/form-data">
+    <label>文件<input type="file" name="file" required></label>
+    <label>资料名称<input name="name" placeholder="留空使用文件名"></label>
+    <label>类别
+      <select name="category">
+        <option>设计说明书</option><option>勘察</option><option>图纸</option><option>材料清册</option>
+        <option>预算</option><option>评价</option><option>其他</option>
+      </select>
+    </label>
+    <button class="btn primary" type="submit">上传并解析</button>
+  </form>
+</section>
+<section class="card">
+  <div class="card-head"><h2>资料包</h2><span class="muted">{{ docs|length }} 项</span></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>资料</th><th>类别</th><th>状态</th><th>解析摘要</th><th>操作</th></tr></thead>
+      <tbody>
+      {% for d in docs %}
+        <tr>
+          <td><div class="strong">{{ d.name }}</div><div class="muted">{{ d.filename or '演示数据' }}</div></td>
+          <td>{{ d.category }}</td>
+          <td><span class="badge {{ 'ok' if d.status == 'parsed' else ('warn' if d.status in ('pending','needs_plugin') else 'danger') }}">{{ d.status }}</span></td>
+          <td class="muted">{{ d.summary }}</td>
+          <td>
+            <form method="post" action="/documents/{{ d.id }}/parse"><button class="btn small" type="submit">重新解析</button></form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% elif tab == 'materials' %}
+<section class="card">
+  <div class="card-head"><h2>材料清册</h2><a class="link" href="/export/{{ p.id }}/materials">导出 CSV</a></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>供应</th><th>物资编码</th><th>名称</th><th>规格</th><th>单位</th><th>数量</th><th>来源</th></tr></thead>
+      <tbody>
+      {% for m in materials %}
+        <tr><td><span class="badge info">{{ m.supply }}</span></td><td>{{ m.code }}</td><td>{{ m.name }}</td><td>{{ m.spec }}</td><td>{{ m.unit }}</td><td>{{ m.qty }}</td><td class="muted">{{ m.source }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% elif tab == 'boq' %}
+<section class="card">
+  <div class="card-head"><h2>工程量清单</h2><a class="link" href="/export/{{ p.id }}/boq">导出 CSV</a></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>编号</th><th>名称</th><th>单位</th><th>数量</th><th>部位</th></tr></thead>
+      <tbody>
+      {% for b in boq %}<tr><td>{{ b.code }}</td><td>{{ b.name }}</td><td>{{ b.unit }}</td><td>{{ b.qty }}</td><td class="muted">{{ b.part }}</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% elif tab == 'budget' %}
+<section class="grid-3">
+  {% for b in budget %}
+    <div class="kpi"><div class="kpi-label">{{ b.category }}</div><div class="kpi-value">{{ b.amount|money }}</div><div class="kpi-sub">{{ b.name }}</div></div>
+  {% endfor %}
+</section>
+<section class="card">
+  <div class="card-head"><h2>预算构成</h2><span class="badge info">XLSX/XML 解析</span></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>项目</th><th>金额（元）</th><th>类别</th></tr></thead>
+      <tbody>
+      {% for b in budget %}<tr><td>{{ b.name }}</td><td>{{ b.amount|money }}</td><td>{{ b.category }}</td></tr>{% endfor %}
+      <tr class="total"><td>合计</td><td>{{ p.budget_total|money }}</td><td></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% elif tab == 'compare' %}
+<section class="card">
+  <div class="card-head"><h2>三算对比</h2><a class="link" href="/export/{{ p.id }}/compare">导出 CSV</a></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>项目</th><th>单位</th><th>设计量</th><th>预算量</th><th>结算量</th><th>原因</th><th>依据</th><th>状态</th><th>更新结算量</th></tr></thead>
+      <tbody>
+      {% for c in compares %}
+        <tr>
+          <td class="strong">{{ c.item }}</td><td>{{ c.unit }}</td><td>{{ c.design_qty }}</td><td>{{ c.budget_qty }}</td><td>{{ c.settle_qty }}</td>
+          <td class="muted">{{ c.reason }}</td><td class="muted">{{ c.evidence }}</td>
+          <td><span class="badge {{ 'ok' if c.status == '通过' else 'warn' }}">{{ c.status }}</span></td>
+          <td>
+            <form class="inline" method="post" action="/projects/{{ p.id }}/compare/{{ c.id }}">
+              <input class="tiny" name="settle_qty" value="{{ c.settle_qty }}">
+              <button class="btn small" type="submit">保存</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">AI只列差异；调整由人按依据确认。导线材料量约为路径长的3倍时，需按三相和预留解释，不能直接判错。</p>
+</section>
+
+{% elif tab == 'ai' %}
+<section class="grid-2">
+  <div class="card">
+    <div class="card-head"><h2>生成AI初稿</h2><span class="badge info">人机协同</span></div>
+    <form method="post" action="/projects/{{ p.id }}/ai" class="form">
+      <label>场景
+        <select name="scene">
+          <option>资料完整性检查</option><option>设计资料解析</option><option>三算对比</option><option>结算书初稿</option><option>对数问答</option>
+        </select>
+      </label>
+      <button class="btn primary" type="submit">生成初稿</button>
+    </form>
+    <p class="muted small">未配置私有化LLM时使用规则初稿；配置 LLM_BASE_URL/LLM_API_KEY 后可接公司模型。AI输出必须人工复核。</p>
+  </div>
+  <div class="card">
+    <div class="card-head"><h2>复核清单</h2></div>
+    <ul class="checklist">
+      <li>输入资料版本正确</li><li>项目名称/编号一致</li><li>工程量与清册勾稽</li>
+      <li>预算/结算金额复算</li><li>缺项与插件缺口列明</li><li>AI初稿已标识</li>
+    </ul>
+  </div>
+</section>
+<section class="card">
+  <div class="card-head"><h2>AI输出记录</h2></div>
+  {% for a in ai_outputs %}
+    <div class="ai-item">
+      <div class="ai-head"><div><span class="strong">{{ a.scene }}</span> <span class="badge info">{{ a.engine }}</span> <span class="badge {{ 'ok' if a.status == '已复核' else 'warn' }}">{{ a.status }}</span></div><div class="muted">{{ a.created_at }}</div></div>
+      <pre class="pre">{{ a.output }}</pre>
+      <form class="inline" method="post" action="/ai/{{ a.id }}/review">
+        <button class="btn small ok" name="result" value="通过" type="submit">复核通过</button>
+        <button class="btn small danger" name="result" value="退回" type="submit">退回修改</button>
+      </form>
+    </div>
+  {% endfor %}
+  {% if not ai_outputs %}<div class="muted">暂无记录。</div>{% endif %}
+</section>
+
+{% elif tab == 'reviews' %}
+<section class="card">
+  <div class="card-head"><h2>复核记录</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>AI记录</th><th>复核项</th><th>结论</th><th>复核人</th><th>时间</th></tr></thead>
+      <tbody>
+      {% for r in reviews %}<tr><td>#{{ r.ai_output_id }}</td><td>{{ r.item }}</td><td><span class="badge {{ 'ok' if r.result == '通过' else 'danger' }}">{{ r.result }}</span></td><td>{{ r.reviewer }}</td><td>{{ r.reviewed_at }}</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

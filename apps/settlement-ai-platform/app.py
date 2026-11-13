@@ -1,0 +1,379 @@
+"""Settlement AI Workbench MVP — FastAPI application.
+
+Run:
+  pip install -r requirements.txt
+  python -m uvicorn app:app --port 8090
+Demo login (PLATFORM_DEMO=1, default): append ?as=ziliao / jiesuan / wuzi / jingli / admin
+Normal login: admin/admin123, ziliao/123456, jiesuan/123456, wuzi/123456, jingli/123456
+"""
+from __future__ import annotations
+
+import csv
+import io
+import json
+import os
+import re
+import shutil
+import sqlite3
+import uuid
+from datetime import datetime
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from itsdangerous import BadSignature, URLSafeSerializer
+
+from parsers import parse_file
+from seed import check_pw, connect, init_db, now
+
+BASE = Path(__file__).resolve().parent
+DATA_DIR = Path(os.environ.get("PLATFORM_DATA_DIR", str(BASE / "data"))).resolve()
+UPLOAD_DIR = DATA_DIR / "uploads"
+DB_PATH = DATA_DIR / "platform.db"
+SECRET = os.environ.get("PLATFORM_SECRET", "settlement-mvp-demo-secret")
+DEMO = os.environ.get("PLATFORM_DEMO", "1") == "1"
+serializer = URLSafeSerializer(SECRET, salt="platform-session")
+
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+init_db(str(DB_PATH))
+
+app = FastAPI(title="结算AI工作台 MVP")
+app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
+templates = Jinja2Templates(directory=str(BASE / "templates"))
+
+
+def money(v):
+    try:
+        return f"{float(v or 0):,.0f}"
+    except Exception:
+        return str(v)
+
+
+templates.env.filters["money"] = money
+
+
+def get_db():
+    conn = connect(str(DB_PATH))
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def current_user(request: Request, conn=Depends(get_db)):
+    raw = request.cookies.get("session")
+    uid = None
+    if raw:
+        try:
+            uid = serializer.loads(raw, max_age=86400 * 7)
+        except BadSignature:
+            uid = None
+    if uid:
+        row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+        if row:
+            return row
+    if DEMO:
+        username = request.query_params.get("as")
+        if username:
+            row = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+            if row:
+                return row
+    return None
+
+
+def require_user(user):
+    if not user:
+        raise HTTPException(status_code=303, headers={"Location": "/login"})
+
+
+def project_ids(user, conn):
+    if user["role"] in ("admin", "manager"):
+        return [r["id"] for r in conn.execute("SELECT id FROM projects ORDER BY id")]
+    rows = conn.execute(
+        "SELECT p.id FROM projects p JOIN members m ON m.project_id=p.id WHERE m.user_id=? ORDER BY p.id",
+        (user["id"],),
+    ).fetchall()
+    return [r["id"] for r in rows]
+
+
+def get_project(conn, pid, user):
+    ids = project_ids(user, conn)
+    if pid not in ids:
+        raise HTTPException(status_code=403, detail="无权访问该项目")
+    return conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+
+
+def audit(conn, pid, user, action, detail=""):
+    conn.execute(
+        "INSERT INTO audit (project_id, user_id, action, detail, created_at) VALUES (?,?,?,?,?)",
+        (pid, user["id"] if user else None, action, detail, now()),
+    )
+    conn.commit()
+
+
+def doc_counts(conn, pid):
+    rows = conn.execute(
+        "SELECT status, COUNT(*) c FROM documents WHERE project_id=? GROUP BY status", (pid,)
+    ).fetchall()
+    d = {r["status"]: r["c"] for r in rows}
+    d["total"] = sum(d.values())
+    return d
+
+
+def generate_draft(conn, project, scene):
+    profile = {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM profiles WHERE project_id=?", (project["id"],))}
+    docs = conn.execute("SELECT name, status, summary FROM documents WHERE project_id=? ORDER BY id", (project["id"],)).fetchall()
+    compares = conn.execute("SELECT * FROM compare_items WHERE project_id=? ORDER BY id", (project["id"],)).fetchall()
+    pending_docs = [d["name"] for d in docs if d["status"] not in ("parsed",)]
+    diff = [c for c in compares if c["status"] != "通过"]
+    prompt = (
+        f"项目：{project['name']}（{project['code']}），阶段：{project['stage']}，投产日：{project['t0']}。\n"
+        f"项目画像：{json.dumps(profile, ensure_ascii=False)}\n"
+        f"资料状态：{[(d['name'], d['status']) for d in docs]}\n"
+        f"三算差异：{[(c['item'], c['design_qty'], c['budget_qty'], c['settle_qty'], c['reason']) for c in compares]}"
+    )
+    engine = "规则初稿"
+    output = ""
+    base_url = os.environ.get("LLM_BASE_URL", "").rstrip("/")
+    api_key = os.environ.get("LLM_API_KEY", "")
+    if base_url and api_key:
+        try:
+            import httpx
+
+            resp = httpx.post(
+                f"{base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={
+                    "model": os.environ.get("LLM_MODEL", "default"),
+                    "messages": [
+                        {"role": "system", "content": "你是配电网结算资料审查助手。只使用用户提供的项目数据，不臆造数量或条款；输出中文，分条列明。"},
+                        {"role": "user", "content": prompt + f"\n请按场景“{scene}”生成初稿。"},
+                    ],
+                    "temperature": 0.2,
+                },
+                timeout=30,
+            )
+            resp.raise_for_status()
+            output = resp.json()["choices"][0]["message"]["content"].strip()
+            engine = "私有化LLM"
+        except Exception as e:
+            output = ""
+            engine = f"规则初稿（LLM调用失败：{e}）"
+    if not output:
+        lines = [f"【{scene}】{project['name']}（{project['code']}）", ""]
+        if scene == "资料完整性检查":
+            lines.append(f"资料共 {len(docs)} 项，已解析 {len(docs)-len(pending_docs)} 项，待处理/需插件 {len(pending_docs)} 项。")
+            if pending_docs:
+                lines.append("待处理：" + "、".join(pending_docs))
+            lines.append("建议：先补齐附件3/附件5的插件解析，再提交复核。")
+        elif scene == "设计资料解析":
+            lines.append("项目画像：" + "；".join(f"{k}={v}" for k, v in profile.items()))
+            lines.append(f"预算总额：{money(project['budget_total'])} 元。")
+            lines.append("建议：核对项目编码、建设规模、材料清册与预算口径。")
+        elif scene == "三算对比":
+            lines.append(f"共 {len(compares)} 项对比，其中 {len(diff)} 项需人工确认。")
+            for c in diff:
+                lines.append(f"- {c['item']}：设计 {c['design_qty']}，预算 {c['budget_qty']}，结算 {c['settle_qty']}；原因：{c['reason']}；证据：{c['evidence']}")
+            lines.append("说明：AI只列差异，调整由人按依据确认。")
+        else:
+            lines.append("已读取项目资料与对比数据，请按操作卡逐项复核。")
+        output = "\n".join(lines)
+    return prompt, output, engine
+
+
+@app.get("/health")
+def health():
+    return {"ok": True, "app": "settlement-ai-platform", "demo": DEMO}
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request, user=Depends(current_user)):
+    if user:
+        return RedirectResponse("/", status_code=303)
+    return templates.TemplateResponse(request, "login.html", {"msg": request.query_params.get("msg", "")})
+
+
+@app.post("/login")
+def login(request: Request, username: str = Form(...), password: str = Form(...), conn=Depends(get_db)):
+    row = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+    if not row or not check_pw(password, row["password"]):
+        return RedirectResponse("/login?msg=用户名或密码错误", status_code=303)
+    resp = RedirectResponse("/", status_code=303)
+    resp.set_cookie("session", serializer.dumps(row["id"]), httponly=True, samesite="lax", max_age=86400 * 7)
+    audit(conn, None, row, "login", "登录")
+    return resp
+
+
+@app.get("/logout")
+def logout():
+    resp = RedirectResponse("/login", status_code=303)
+    resp.delete_cookie("session")
+    return resp
+
+
+@app.get("/", response_class=HTMLResponse)
+def dashboard(request: Request, user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    ids = project_ids(user, conn)
+    projects = conn.execute(
+        "SELECT * FROM projects WHERE id IN (%s) ORDER BY id" % ",".join("?" * len(ids)),
+        ids,
+    ).fetchall() if ids else []
+    alerts = conn.execute(
+        "SELECT a.*, p.name pname FROM alerts a JOIN projects p ON p.id=a.project_id WHERE a.project_id IN (%s) AND a.status='待处理' ORDER BY CASE a.level WHEN '高' THEN 0 WHEN '中' THEN 1 ELSE 2 END"
+        % ",".join("?" * len(ids)),
+        ids,
+    ).fetchall() if ids else []
+    tasks = conn.execute(
+        "SELECT t.*, p.name pname FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.project_id IN (%s) AND t.status!='完成' ORDER BY t.due"
+        % ",".join("?" * len(ids)),
+        ids,
+    ).fetchall() if ids else []
+    stats = {
+        "projects": len(projects),
+        "docs_pending": sum(doc_counts(conn, p["id"]).get("pending", 0) + doc_counts(conn, p["id"]).get("needs_plugin", 0) for p in projects),
+        "risk": len(alerts),
+        "drafts": conn.execute("SELECT COUNT(*) c FROM ai_outputs WHERE status='初稿'").fetchone()["c"],
+    }
+    return templates.TemplateResponse(
+        request, "dashboard.html",
+        {"user": user, "projects": projects, "alerts": alerts, "tasks": tasks, "stats": stats, "active": "dashboard"},
+    )
+
+
+@app.get("/projects/{pid}", response_class=HTMLResponse)
+def project_page(pid: int, request: Request, tab: str = "overview", user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    project = get_project(conn, pid, user)
+    profile = {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM profiles WHERE project_id=?", (pid,))}
+    docs = conn.execute("SELECT * FROM documents WHERE project_id=? ORDER BY id", (pid,)).fetchall()
+    materials = conn.execute("SELECT * FROM materials WHERE project_id=? ORDER BY id", (pid,)).fetchall()
+    boq = conn.execute("SELECT * FROM boq WHERE project_id=? ORDER BY id", (pid,)).fetchall()
+    budget = conn.execute("SELECT * FROM budget_items WHERE project_id=? ORDER BY id", (pid,)).fetchall()
+    compares = conn.execute("SELECT * FROM compare_items WHERE project_id=? ORDER BY id", (pid,)).fetchall()
+    tasks = conn.execute("SELECT * FROM tasks WHERE project_id=? ORDER BY id", (pid,)).fetchall()
+    alerts = conn.execute("SELECT * FROM alerts WHERE project_id=? ORDER BY id", (pid,)).fetchall()
+    ai_outputs = conn.execute("SELECT * FROM ai_outputs WHERE project_id=? ORDER BY id DESC", (pid,)).fetchall()
+    reviews = conn.execute("SELECT * FROM reviews WHERE project_id=? ORDER BY id DESC", (pid,)).fetchall()
+    return templates.TemplateResponse(
+        request, "project.html",
+        {
+            "user": user, "p": project, "tab": tab, "profile": profile,
+            "docs": docs, "materials": materials, "boq": boq, "budget": budget,
+            "compares": compares, "tasks": tasks, "alerts": alerts, "ai_outputs": ai_outputs,
+            "reviews": reviews, "doccounts": doc_counts(conn, pid), "active": "project",
+        },
+    )
+
+
+@app.post("/projects/{pid}/documents")
+def upload_document(
+    pid: int, request: Request, file: UploadFile = File(...), name: str = Form(""), category: str = Form("其他"),
+    user=Depends(current_user), conn=Depends(get_db),
+):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    project = get_project(conn, pid, user)
+    raw = file.file.read()
+    safe = re.sub(r"[^\w\u4e00-\u9fff.\-]+", "_", file.filename or "upload")
+    dest_dir = UPLOAD_DIR / f"project_{pid}"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / f"{uuid.uuid4().hex[:8]}_{safe}"
+    dest.write_bytes(raw)
+    parsed = parse_file(str(dest), file.filename)
+    conn.execute(
+        "INSERT INTO documents (project_id, name, category, filename, path, size, status, summary, parsed_json, uploaded_by, uploaded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (pid, name or (file.filename or safe), category, file.filename, str(dest), len(raw), parsed["status"], parsed["summary"], json.dumps(parsed, ensure_ascii=False), user["id"], now()),
+    )
+    conn.commit()
+    audit(conn, pid, user, "upload", f"上传 {file.filename}，状态 {parsed['status']}")
+    return RedirectResponse(f"/projects/{pid}?tab=docs&msg=上传完成：{parsed['status']}", status_code=303)
+
+
+@app.post("/documents/{did}/parse")
+def reparse_document(did: int, request: Request, user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    doc = conn.execute("SELECT * FROM documents WHERE id=?", (did,)).fetchone()
+    if not doc:
+        raise HTTPException(404)
+    project = get_project(conn, doc["project_id"], user)
+    if not doc["path"] or not Path(doc["path"]).exists():
+        parsed = {"status": "pending", "summary": "演示数据无原始文件，请上传文件后解析", "data": {}, "text": ""}
+    else:
+        parsed = parse_file(doc["path"], doc["filename"])
+    conn.execute("UPDATE documents SET status=?, summary=?, parsed_json=? WHERE id=?", (parsed["status"], parsed["summary"], json.dumps(parsed, ensure_ascii=False), did))
+    conn.commit()
+    audit(conn, doc["project_id"], user, "parse", f"{doc['name']} -> {parsed['status']}")
+    return RedirectResponse(f"/projects/{doc['project_id']}?tab=docs&msg=解析完成：{parsed['status']}", status_code=303)
+
+
+@app.post("/projects/{pid}/compare/{cid}")
+def update_compare(pid: int, cid: int, request: Request, settle_qty: str = Form(""), user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    get_project(conn, pid, user)
+    conn.execute("UPDATE compare_items SET settle_qty=?, status='待确认' WHERE id=? AND project_id=?", (settle_qty, cid, pid))
+    conn.commit()
+    audit(conn, pid, user, "compare", f"更新 {cid} 结算量={settle_qty}")
+    return RedirectResponse(f"/projects/{pid}?tab=compare&msg=已更新，请复核", status_code=303)
+
+
+@app.post("/projects/{pid}/ai")
+def create_ai(pid: int, request: Request, scene: str = Form("设计资料解析"), user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    project = get_project(conn, pid, user)
+    prompt, output, engine = generate_draft(conn, project, scene)
+    conn.execute(
+        "INSERT INTO ai_outputs (project_id, scene, prompt, output, engine, status, created_by, created_at) VALUES (?,?,?,?,?,?,?,?)",
+        (pid, scene, prompt, output, engine, "初稿", user["id"], now()),
+    )
+    conn.commit()
+    audit(conn, pid, user, "ai_generate", f"{scene} / {engine}")
+    return RedirectResponse(f"/projects/{pid}?tab=ai&msg=已生成初稿，请复核", status_code=303)
+
+
+@app.post("/ai/{aid}/review")
+def review_ai(aid: int, request: Request, result: str = Form("通过"), user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    out = conn.execute("SELECT * FROM ai_outputs WHERE id=?", (aid,)).fetchone()
+    if not out:
+        raise HTTPException(404)
+    get_project(conn, out["project_id"], user)
+    conn.execute("INSERT INTO reviews (ai_output_id, project_id, item, result, reviewer, reviewed_at) VALUES (?,?,?,?,?,?)", (aid, out["project_id"], "AI输出复核", result, user["name"], now()))
+    conn.execute("UPDATE ai_outputs SET status=? WHERE id=?", ("已复核" if result == "通过" else "退回", aid))
+    conn.commit()
+    audit(conn, out["project_id"], user, "review", f"AI #{aid} {result}")
+    return RedirectResponse(f"/projects/{out['project_id']}?tab=ai&msg=复核已记录", status_code=303)
+
+
+@app.get("/export/{pid}/{kind}")
+def export_csv(pid: int, kind: str, request: Request, user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    get_project(conn, pid, user)
+    if kind == "materials":
+        rows = conn.execute("SELECT supply, code, name, spec, unit, qty, source FROM materials WHERE project_id=?", (pid,)).fetchall()
+        headers = ["供应", "物资编码", "名称", "规格", "单位", "数量", "来源"]
+    elif kind == "boq":
+        rows = conn.execute("SELECT code, name, unit, qty, part FROM boq WHERE project_id=?", (pid,)).fetchall()
+        headers = ["编号", "名称", "单位", "数量", "部位"]
+    elif kind == "compare":
+        rows = conn.execute("SELECT item, unit, design_qty, budget_qty, settle_qty, reason, evidence, status FROM compare_items WHERE project_id=?", (pid,)).fetchall()
+        headers = ["项目", "单位", "设计量", "预算量", "结算量", "差异原因", "依据", "状态"]
+    else:
+        raise HTTPException(404)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(headers)
+    for r in rows:
+        writer.writerow([r[k] for k in r.keys()])
+    data = "\ufeff" + buf.getvalue()
+    return StreamingResponse(iter([data]), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f"attachment; filename={kind}-{pid}.csv"})

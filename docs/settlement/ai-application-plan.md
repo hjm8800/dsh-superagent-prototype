@@ -954,12 +954,12 @@ AI只是工具，不承担权责。使用AI不改变原有的业务主责：谁�
 | PDF | PyMuPDF、pdfplumber、OCR | 文本、表格、图号、扫描件 | 内置加OCR | 一期 |
 | XML | lxml | 总算表、分部分项、甲供/乙供汇总 | 内置 | 一期 |
 | ZIP | zipfile | 预算XML、PDF、Excel | 内置 | 一期 |
-| DWG | ODA File Converter转DXF或PDF | 图号、图框、杆塔明细（需校对） | ODA插件 | 二期 |
-| BDY3 | 预算软件插件或导出 | 预算明细、清单 | 厂商插件 | 二期 |
-| DOC | 格式转换或OCR | 报告正文 | 转换插件 | 二期 |
-| JPG/PNG | 视觉模型、OCR | 现场照片分类、水印识别、缺拍检查 | 视觉/OCR | 二期 |
+| DWG | ODA File Converter转DXF，ezdxf提取文字 | 图号、图框、杆塔明细（需校对） | ODA插件（已安装验证） | 一期 |
+| BDY3 | 预算软件插件或导出 | 预算明细、清单 | 厂商插件（未安装）；用XLSX/XML替代 | 二期 |
+| DOC | LibreOffice转TXT | 报告正文 | LibreOffice（已安装验证） | 一期 |
+| JPG/PNG | Pillow编目；视觉/OCR二期 | 尺寸、EXIF、照片分类 | Pillow；视觉/OCR二期 | 一期编目 |
 
-说明：一期先解析DOCX、XLSX、XLS、PDF、XML、ZIP，满足项目画像、材料/工程量提取和三算对比；DWG、BDY3、DOC、照片作为附件挂接，二期接插件。不得因为插件缺失跳过人工校对或臆造数据。
+说明：本次已用 ODA File Converter 将 15 个 DWG（同名去重后 14 个）转 DXF，提取 7,217 条文字；用 LibreOffice 将 DOC 转 TXT，提取 8,412 字；47 张现场照片已完成尺寸/EXIF 编目。BDY3 原生格式仍需预算软件厂商插件，已用同目录 XLSX/XML 预算替代解析。不得因为插件缺失跳过人工校对或臆造数据。
 
 ## 七、实施计划
 
