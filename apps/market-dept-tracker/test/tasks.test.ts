@@ -199,8 +199,71 @@ test('the task views name the people and the posts', () => {
 
 // -------------------------------------------------------------- the pages
 
+// -------------------------------------------------------------- sessions
+
+/**
+ * The tests open pages as a person by sending the session cookie, and call
+ * the JSON API with the token /api/login would have handed out. A person's
+ * link token alone is no longer a session.
+ */
+let currentStore: Store | undefined
+
+function accountForPerson(
+  store: Store,
+  person: { id: string; name: string; positionId: string },
+): string {
+  const existing = store.accountByPerson(person.id)
+  if (existing) return existing.token
+  const token = randomUUID().replace(/-/g, '')
+  store.createAccount({
+    id: `acct-api-${person.id}`,
+    positionId: person.positionId,
+    personId: person.id,
+    username: `api-${person.id}`,
+    passwordHash: 'x',
+    passwordPlain: 'x',
+    token,
+    createdAt: '2026-11-05T00:00:00.000Z',
+  })
+  return token
+}
+
+const realFetch = fetch
+
+const sessionFetch = async (input: string | URL, init: RequestInit = {}): Promise<Response> => {
+  const url = new URL(String(input))
+  const headers = new Headers(init.headers)
+  const linkToken = url.searchParams.get('token')
+  if (linkToken && currentStore) {
+    const person = currentStore.personByToken(linkToken)
+    if (person) {
+      if (url.pathname.startsWith('/api/')) {
+        url.searchParams.set('token', accountForPerson(currentStore, person))
+      } else if (!headers.has('cookie')) {
+        headers.set('cookie', `mdt_token=${person.token}`)
+      }
+    }
+  }
+  let body = init.body
+  if (typeof body === 'string' && body.includes('token=') && currentStore) {
+    const params = new URLSearchParams(body)
+    const bodyToken = params.get('token')
+    const person = bodyToken ? currentStore.personByToken(bodyToken) : undefined
+    if (person) {
+      if (url.pathname.startsWith('/api/')) {
+        params.set('token', accountForPerson(currentStore, person))
+        body = params.toString()
+      } else if (!headers.has('cookie')) {
+        headers.set('cookie', `mdt_token=${person.token}`)
+      }
+    }
+  }
+  return realFetch(url, { ...init, headers, body })
+}
+
 async function withServer<T>(run: (base: string, store: Store) => Promise<T>): Promise<T> {
   const { db, store } = freshStore()
+  currentStore = store
   const dataDir = join(tmpdir(), `mdt-test-${randomUUID()}`)
   mkdirSync(dataDir, { recursive: true })
   const server = createTrackerServer({
@@ -216,6 +279,7 @@ async function withServer<T>(run: (base: string, store: Store) => Promise<T>): P
   try {
     return await run(`http://127.0.0.1:${port}`, store)
   } finally {
+    currentStore = undefined
     server.closeAllConnections()
     await new Promise<void>((resolve) => server.close(() => resolve()))
     db.close()
@@ -245,26 +309,43 @@ test('a person attaches several photos to a task, and only the post may see them
     })
     const form = new FormData()
     form.set('taskId', 'photo-task')
-    form.set('token', person.token)
+    form.set('token', accountForPerson(store, person))
     form.set('periodType', 'week')
     form.set('periodKey', '2026-W45')
     form.append('photos', new Blob([Buffer.from('89504e470d0a1a0a', 'hex')], { type: 'image/png' }), 'a.png')
     form.append('photos', new Blob([Buffer.from('89504e470d0a1a0a', 'hex')], { type: 'image/png' }), 'b.png')
-    const response = await fetch(`${base}/my-tasks/photos`, { method: 'POST', body: form, redirect: 'manual' })
+    const response = await sessionFetch(`${base}/my-tasks/photos`, {
+      method: 'POST',
+      body: form,
+      redirect: 'manual',
+      headers: { cookie: `mdt_token=${person.token}` },
+    })
     assert.equal(response.status, 302)
     const photos = store.taskPhotos('photo-task')
     assert.equal(photos.length, 2, 'both photos are kept')
 
-    const mine = await fetch(`${base}/photos/${photos[0]!.id}`, { headers: { cookie: `mdt_token=${person.token}` } })
+    const mine = await sessionFetch(`${base}/photos/${photos[0]!.id}`, { headers: { cookie: `mdt_token=${person.token}` } })
     assert.equal(mine.status, 200)
     assert.equal(mine.headers.get('content-type'), 'image/png')
 
     const stranger = store.people().find((p) => p.positionId !== person.positionId)!
-    const denied = await fetch(`${base}/photos/${photos[0]!.id}?token=${stranger.token}`)
+    const denied = await sessionFetch(`${base}/photos/${photos[0]!.id}?token=${stranger.token}`)
     assert.equal(denied.status, 403, 'a stranger cannot see the photo')
 
-    const page = await (await fetch(`${base}/my-tasks?type=week&period=2026-W45&token=${person.token}`)).text()
+    const page = await (await sessionFetch(`${base}/my-tasks?type=week&period=2026-W45&token=${person.token}`)).text()
     assert.ok(page.includes('上传照片'))
+  })
+})
+
+test('a link token alone opens neither a page nor the api', async () => {
+  await withServer(async (base, store) => {
+    const person = store.people().find((p) => p.name === '黄美琳')!
+    const page = await realFetch(`${base}/my-tasks?token=${person.token}`)
+    const html = await page.text()
+    assert.ok(html.includes('用岗位账户登录'), 'a bare link token must show the login form')
+
+    const api = await realFetch(`${base}/api/my-tasks?token=${person.token}`)
+    assert.equal(api.status, 404, 'the api refuses a link token')
   })
 })
 
@@ -291,7 +372,7 @@ test('the task list page shows the tasks of a period', async () => {
     })
     const leader = store.people().find((p) => p.name === '黎嘉良')!
     const html = await (
-      await fetch(`${base}/tasks?type=week&period=2026-W45&token=${leader.token}`)
+      await sessionFetch(`${base}/tasks?type=week&period=2026-W45&token=${leader.token}`)
     ).text()
     assert.ok(html.includes('任务清单'), 'the page must be the task list')
     assert.ok(html.includes('整理回款凭证'), 'the task must be shown')
@@ -325,7 +406,11 @@ test('no page names a person', async () => {
 
     const pages = ['/tasks?type=week&period=2026-W45', '/ledger', '/links', '/collection?type=week&period=2026-W45']
     for (const path of pages) {
-      const html = await (await fetch(`http://127.0.0.1:${portFor(base)}${path}`)).text()
+      const html = await (
+        await sessionFetch(`http://127.0.0.1:${portFor(base)}${path}`, {
+          headers: { cookie: `mdt_token=${manager.token}` },
+        })
+      ).text()
       assert.ok(!html.includes('黄美琳'), `${path} names a person`)
       assert.ok(!html.includes('黎嘉良'), `${path} names a person`)
     }
@@ -349,7 +434,7 @@ test('a superior can give a task over the page', async () => {
     form.set('title', '把上周的合同台账补齐')
     form.set('positionId', clerk.positionId)
 
-    const response = await fetch(`${base}/tasks/assign`, {
+    const response = await sessionFetch(`${base}/tasks/assign`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: form.toString(),
@@ -371,13 +456,13 @@ test('a specialist gives a task to their own staff, without a leader grant', asy
     // No grantLeaderAccess: the chain itself lets a specialist give tasks to
     // the staff directly under their post.
     const list = await json<{ ok: boolean; positions: { id: string }[] }>(
-      await fetch(`${base}/api/assignable?token=${specialist.token}`),
+      await sessionFetch(`${base}/api/assignable?token=${specialist.token}`),
     )
     assert.equal(list.ok, true)
     assert.ok(list.positions.some((p) => p.id === staff.positionId))
     assert.ok(!list.positions.some((p) => p.id === store.people().find((p) => p.name === '潘清河')!.positionId))
 
-    const response = await fetch(`${base}/api/tasks/assign`, {
+    const response = await sessionFetch(`${base}/api/tasks/assign`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: [
@@ -399,7 +484,7 @@ test('a specialist cannot give a task to another team', async () => {
   await withServer(async (base, store) => {
     const specialist = store.people().find((p) => p.name === '黎嘉良')!
     const other = store.people().find((p) => p.name === '潘清河')!
-    const response = await fetch(`${base}/api/tasks/assign`, {
+    const response = await sessionFetch(`${base}/api/tasks/assign`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: [
@@ -419,10 +504,10 @@ test('a specialist sees the assign form on their own page, a staff member does n
   await withServer(async (base, store) => {
     const specialist = store.people().find((p) => p.name === '黎嘉良')!
     const staff = store.people().find((p) => p.name === '黄美琳')!
-    const html = await (await fetch(`${base}/my-tasks?token=${specialist.token}&type=week&period=2026-W45`)).text()
+    const html = await (await sessionFetch(`${base}/my-tasks?token=${specialist.token}&type=week&period=2026-W45`)).text()
     assert.ok(html.includes('给下属下达任务'))
     assert.ok(html.includes(staff.positionId))
-    const staffHtml = await (await fetch(`${base}/my-tasks?token=${staff.token}&type=week&period=2026-W45`)).text()
+    const staffHtml = await (await sessionFetch(`${base}/my-tasks?token=${staff.token}&type=week&period=2026-W45`)).text()
     assert.ok(!staffHtml.includes('给下属下达任务'))
   })
 })
@@ -459,7 +544,7 @@ test('a post account logs in and sees the tasks of its post', async () => {
       createdAt: NOW,
     })
 
-    const wrong = await fetch(`${base}/login`, {
+    const wrong = await sessionFetch(`${base}/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ username: '市场营销和合同管理专责', password: 'nope' }).toString(),
@@ -467,7 +552,7 @@ test('a post account logs in and sees the tasks of its post', async () => {
     })
     assert.equal(wrong.status, 401, 'a wrong password is refused')
 
-    const response = await fetch(`${base}/login`, {
+    const response = await sessionFetch(`${base}/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ username: '市场营销和合同管理专责', password: 'abc12345' }).toString(),
@@ -478,7 +563,7 @@ test('a post account logs in and sees the tasks of its post', async () => {
     assert.ok(cookies.some((c) => c.startsWith('mdt_account=')), 'the account cookie is set')
     const cookie = cookies.map((c) => c.split(';')[0]).join('; ')
 
-    const page = await (await fetch(`${base}/my-tasks?type=week&period=2026-W45`, { headers: { cookie } })).text()
+    const page = await (await sessionFetch(`${base}/my-tasks?type=week&period=2026-W45`, { headers: { cookie } })).text()
     assert.ok(page.includes('市场营销和合同管理专责 · 我的任务'))
     assert.ok(page.includes('账户任务'))
   })
@@ -517,7 +602,7 @@ test('a person account sees its own tasks, a post account the whole post’s', a
       token: 'b'.repeat(32),
       createdAt: NOW,
     })
-    const response = await fetch(`${base}/login`, {
+    const response = await sessionFetch(`${base}/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ username: person.name, password: 'abc12345' }).toString(),
@@ -528,7 +613,7 @@ test('a person account sees its own tasks, a post account the whole post’s', a
       .getSetCookie()
       .map((c) => c.split(';')[0])
       .join('; ')
-    const page = await (await fetch(`${base}/my-tasks?type=week&period=2026-W45`, { headers: { cookie } })).text()
+    const page = await (await sessionFetch(`${base}/my-tasks?type=week&period=2026-W45`, { headers: { cookie } })).text()
     assert.ok(page.includes('个人任务'))
   })
 })
@@ -545,7 +630,7 @@ test('a member may not give a task out', async () => {
     form.set('title', '越级下达')
     form.set('positionId', other.positionId)
 
-    const response = await fetch(`${base}/tasks/assign`, {
+    const response = await sessionFetch(`${base}/tasks/assign`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: form.toString(),
@@ -560,7 +645,7 @@ test('a member may not see the department pages', async () => {
   await withServer(async (base, store) => {
     const clerk = store.people().find((p) => p.name === '黄美琳')!
     for (const path of ['/', '/tasks', '/ledger', '/links', '/collection']) {
-      const response = await fetch(`${base}${path}${path.includes('?') ? '&' : '?'}token=${clerk.token}`)
+      const response = await sessionFetch(`${base}${path}${path.includes('?') ? '&' : '?'}token=${clerk.token}`)
       assert.equal(response.status, 403, `${path} must be closed to a member`)
     }
   })
@@ -605,7 +690,7 @@ test('a member sees only their own tasks', async () => {
       createdAt: NOW,
     })
 
-    const mine = await (await fetch(`${base}/my-tasks?token=${clerk.token}&type=week&period=2026-W45`)).text()
+    const mine = await (await sessionFetch(`${base}/my-tasks?token=${clerk.token}&type=week&period=2026-W45`)).text()
     assert.ok(mine.includes('我自己的任务'))
     assert.ok(!mine.includes('别人的任务'), 'a member must not see another person task')
   })
@@ -633,7 +718,7 @@ test('a leader sees the whole department', async () => {
       createdAt: NOW,
     })
     const html = await (
-      await fetch(`${base}/tasks?type=week&period=2026-W45&token=${manager.token}`)
+      await sessionFetch(`${base}/tasks?type=week&period=2026-W45&token=${manager.token}`)
     ).text()
     assert.ok(html.includes('全部门都能看到'), 'a leader sees the whole department')
   })
@@ -650,7 +735,7 @@ test('somebody outside the chain of command cannot give a task', async () => {
     form.set('title', '越级下达')
     form.set('personId', warehouse.id)
 
-    const response = await fetch(`${base}/tasks/assign`, {
+    const response = await sessionFetch(`${base}/tasks/assign`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: form.toString(),
@@ -682,7 +767,7 @@ test('a person works through their own tasks', async () => {
       createdAt: NOW,
     })
 
-    const html = await (await fetch(`${base}/my-tasks?token=${clerk.token}&type=week&period=2026-W45`)).text()
+    const html = await (await sessionFetch(`${base}/my-tasks?token=${clerk.token}&type=week&period=2026-W45`)).text()
     assert.ok(html.includes('我的任务'))
     assert.ok(html.includes('交回款凭证'))
 
@@ -690,9 +775,9 @@ test('a person works through their own tasks', async () => {
     form.set('token', 'task-5')
     form.set('status', 'done')
     form.set('note', '已交 12 笔')
-    const response = await fetch(`${base}/my-tasks/status`, {
+    const response = await sessionFetch(`${base}/my-tasks/status`, {
       method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: `mdt_token=${clerk.token}` },
       body: form.toString(),
       redirect: 'manual',
     })
@@ -721,7 +806,7 @@ test('the api says who the link belongs to', async () => {
       person: { id: string }
       position: { name: string }
       role: string
-    }>(await fetch(`${base}/api/me?token=${clerk.token}`))
+    }>(await sessionFetch(`${base}/api/me?token=${clerk.token}`))
     assert.equal(data.ok, true)
     assert.equal(data.person.id, clerk.id)
     assert.equal(data.position.name, '合同管理业务员')
@@ -755,7 +840,7 @@ test('the api hands a person their own tasks', async () => {
         createdAt: NOW,
       })
     }
-    const data = await json<Record<string, any>>(await fetch(`${base}/api/my-tasks?token=${clerk.token}&type=week&period=2026-W45`))
+    const data = await json<Record<string, any>>(await sessionFetch(`${base}/api/my-tasks?token=${clerk.token}&type=week&period=2026-W45`))
     assert.equal(data.ok, true)
     const titles = data.tasks.map((t: { title: string }) => t.title)
     assert.ok(titles.includes('我自己的任务'))
@@ -786,7 +871,7 @@ test('the api moves a task on, but only its owner may', async () => {
     })
 
     const post = (token: string) =>
-      fetch(`${base}/api/my-tasks/status`, {
+      sessionFetch(`${base}/api/my-tasks/status`, {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ token, id: 'api-task-move', status: 'done', note: '已交' }).toString(),
@@ -807,11 +892,11 @@ test('the api moves a task on, but only its owner may', async () => {
 test('the api keeps the department overview for the leaders', async () => {
   await withServer(async (base, store) => {
     const clerk = store.people().find((p) => p.name === '黄美琳')!
-    const denied = await fetch(`${base}/api/overview?token=${clerk.token}`)
+    const denied = await sessionFetch(`${base}/api/overview?token=${clerk.token}`)
     assert.equal(denied.status, 403, 'a member may not read the overview')
 
     const leader = makeLeader(store)
-    const ok = await fetch(`${base}/api/overview?token=${leader.token}`)
+    const ok = await sessionFetch(`${base}/api/overview?token=${leader.token}`)
     assert.equal(ok.status, 200)
     const data = await json<{ ok: boolean; peopleCount: number; positions: unknown[] }>(ok)
     assert.equal(data.ok, true)
@@ -829,7 +914,7 @@ test('the api hands a person the duties of their post', async () => {
       position: string
       periodKey: string
       duties: { id: string; status: string }[]
-    }>(await fetch(`${base}/api/my-duties?token=${clerk.token}&type=week`))
+    }>(await sessionFetch(`${base}/api/my-duties?token=${clerk.token}&type=week`))
     assert.equal(data.ok, true)
     assert.equal(data.position, '合同管理业务员')
     assert.ok(data.duties.length > 0)
@@ -843,7 +928,7 @@ test('the api saves a report and hands it back', async () => {
     const duties = await json<{
       periodKey: string
       duties: { id: string }[]
-    }>(await fetch(`${base}/api/my-duties?token=${clerk.token}&type=week`))
+    }>(await sessionFetch(`${base}/api/my-duties?token=${clerk.token}&type=week`))
 
     const items = duties.duties.map((duty, index) => ({
       id: duty.id,
@@ -851,7 +936,7 @@ test('the api saves a report and hands it back', async () => {
       percent: index === 0 ? 100 : 0,
       note: index === 0 ? '已归档' : '',
     }))
-    const response = await fetch(`${base}/api/report`, {
+    const response = await sessionFetch(`${base}/api/report`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: [
@@ -873,7 +958,7 @@ test('the api saves a report and hands it back', async () => {
 
     // Reading the duties back shows the answer.
     const again = await json<{ duties: { status: string }[]; dismissed: { summary: string } | null }>(
-      await fetch(`${base}/api/my-duties?token=${clerk.token}&type=week&period=${duties.periodKey}`),
+      await sessionFetch(`${base}/api/my-duties?token=${clerk.token}&type=week&period=${duties.periodKey}`),
     )
     assert.equal(again.duties[0]?.status, 'done')
     assert.equal(again.dismissed?.summary, '本周小结')
@@ -885,17 +970,17 @@ test('the api lets a leader give a task, and refuses a member', async () => {
     const clerk = store.people().find((p) => p.name === '黄美琳')!
     const leader = makeLeader(store)
 
-    const refused = await fetch(`${base}/api/assignable?token=${clerk.token}`)
+    const refused = await sessionFetch(`${base}/api/assignable?token=${clerk.token}`)
     assert.equal(refused.status, 403, 'a member may not list the posts')
 
     const list = await json<{ ok: boolean; positions: { id: string; headcount: number }[] }>(
-      await fetch(`${base}/api/assignable?token=${leader.token}`),
+      await sessionFetch(`${base}/api/assignable?token=${leader.token}`),
     )
     assert.equal(list.ok, true)
     assert.ok(list.positions.length > 0)
 
     const post = list.positions.find((p) => p.headcount > 0)!
-    const response = await fetch(`${base}/api/tasks/assign`, {
+    const response = await sessionFetch(`${base}/api/tasks/assign`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: [
@@ -919,10 +1004,10 @@ test('the api opens the ledger to a leader and refuses a member', async () => {
     const leader = makeLeader(store)
     const clerk = store.people().find((p) => p.name === '黄美琳')!
 
-    const refused = await fetch(`${base}/api/ledger?token=${clerk.token}`)
+    const refused = await sessionFetch(`${base}/api/ledger?token=${clerk.token}`)
     assert.equal(refused.status, 403, 'a member may not read the department ledger')
 
-    const response = await fetch(`${base}/api/ledger?token=${leader.token}`)
+    const response = await sessionFetch(`${base}/api/ledger?token=${leader.token}`)
     assert.equal(response.status, 200)
     const data = await json<{ ok: boolean; positions: { name: string; duties: unknown[] }[] }>(response)
     assert.equal(data.ok, true)
@@ -937,10 +1022,10 @@ test('the api shows the collected files to a leader and refuses a member', async
     const leader = makeLeader(store)
     const clerk = store.people().find((p) => p.name === '黄美琳')!
 
-    const refused = await fetch(`${base}/api/collection?token=${clerk.token}`)
+    const refused = await sessionFetch(`${base}/api/collection?token=${clerk.token}`)
     assert.equal(refused.status, 403, 'a member may not read the collection')
 
-    const response = await fetch(`${base}/api/collection?token=${leader.token}&type=week`)
+    const response = await sessionFetch(`${base}/api/collection?token=${leader.token}&type=week`)
     assert.equal(response.status, 200)
     const data = await json<{ ok: boolean; counts: { files: number }; positions: unknown[] }>(response)
     assert.equal(data.ok, true)
@@ -961,14 +1046,14 @@ test('the api lets a leader set a fixed task, and refuses a member', async () =>
         `title=${encodeURIComponent('每周交回款台账')}`,
       ].join('&')
 
-    const refused = await fetch(`${base}/api/tasks/recurring`, {
+    const refused = await sessionFetch(`${base}/api/tasks/recurring`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: body(clerk.token),
     })
     assert.equal(refused.status, 403, 'a member may not set a fixed task')
 
-    const response = await fetch(`${base}/api/tasks/recurring`, {
+    const response = await sessionFetch(`${base}/api/tasks/recurring`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: body(leader.token),
@@ -980,7 +1065,7 @@ test('the api lets a leader set a fixed task, and refuses a member', async () =>
 
     // The fixed task shows up in the post's task list for the period.
     const mine = await json<{ tasks: { title: string }[] }>(
-      await fetch(`${base}/api/my-tasks?token=${clerk.token}&type=week&period=2026-W45`),
+      await sessionFetch(`${base}/api/my-tasks?token=${clerk.token}&type=week&period=2026-W45`),
     )
     assert.ok(mine.tasks.some((t) => t.title === '每周交回款台账'))
   })

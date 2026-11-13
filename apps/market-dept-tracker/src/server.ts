@@ -894,7 +894,10 @@ export function createTrackerServer(options: ServerOptions) {
     }
     const taskId = parsed.fields.get('taskId') ?? ''
     const task = store.task(taskId)
-    const viewer = viewerOf(parsed.fields.get('token') ?? '')
+    // A browser form is covered by the login cookie; the mini program passes
+    // the session token /api/login gave it. A link token is not a session.
+    const fieldToken = parsed.fields.get('token') ?? ''
+    const viewer = fieldToken ? accountViewer(fieldToken) : viewerOf(cookieOf(req, SESSION_COOKIE))
     if (!task) {
       if (json) sendJson(res, { ok: false, error: '任务不存在' }, 404)
       else sendText(res, '任务不存在', 404)
@@ -960,8 +963,16 @@ export function createTrackerServer(options: ServerOptions) {
       return
     }
     const task = store.task(photo.taskId)
-    const token = url.searchParams.get('token') ?? cookieOf(req, SESSION_COOKIE)
-    const viewer = viewerOf(token)
+    // The mini program passes the session token /api/login gave it; a
+    // browser uses the login cookie. The cookie wins when both are present
+    // (the page sets it, and the address may carry the session token too).
+    const queryToken = url.searchParams.get('token') ?? ''
+    const sessionToken = cookieOf(req, SESSION_COOKIE)
+    const viewer = sessionToken
+      ? viewerOf(sessionToken)
+      : queryToken
+        ? accountViewer(queryToken)
+        : { role: 'member' as AccessRole }
     const allowed =
       viewer.role === 'leader' ||
       Boolean(
@@ -1018,6 +1029,27 @@ export function createTrackerServer(options: ServerOptions) {
     return { role: 'member' }
   }
 
+  /**
+   * A caller of the JSON API: only the session token /api/login returned
+   * counts. A person's link token is not a session and is refused.
+   */
+  const accountViewer = (
+    token: string | null,
+  ): { person?: Person; position?: Position; role: AccessRole; account?: Account } => {
+    const account = token ? store.accountByToken(token) : undefined
+    if (!account) return { role: 'member' }
+    const position = store.positionById(account.positionId)
+    const person = account.personId
+      ? store.personById(account.personId)
+      : store.people().find((p) => p.positionId === account.positionId)
+    return {
+      person,
+      position,
+      role: person && position ? accessOf(person, position, leaderGrants(db.raw)) : 'member',
+      account,
+    }
+  }
+
   /** The page a member without the wider access gets. */
   const memberOnly = (role: AccessRole, res: ServerResponse): boolean => {
     if (role === 'leader') return false
@@ -1059,6 +1091,8 @@ export function createTrackerServer(options: ServerOptions) {
       return
     }
     const token = url.searchParams.get('token') ?? ''
+    // JSON callers sign in through /api/login; only its session token counts.
+    const viewerOf = accountViewer
     const dept = department()
     const periods = (type: PeriodType) => recentPeriods(type, now(), 8)
     const pickPeriod = (type: PeriodType): { key: string; label: string } => {
@@ -1162,7 +1196,7 @@ export function createTrackerServer(options: ServerOptions) {
         sendJson(res, { ok: false, error: '任务不存在' }, 404)
         return
       }
-      const owner = store.personByToken(caller)
+      const owner = viewerOf(caller).person
       if (!owner || owner.id !== task.personId) {
         sendJson(res, { ok: false, error: '这不是你的任务' }, 403)
         return
@@ -1334,7 +1368,7 @@ export function createTrackerServer(options: ServerOptions) {
 
     // The duties of my post, and what I answered for each of them.
     if (route === '/api/my-duties' && method === 'GET') {
-      const person = store.personByToken(token)
+      const person = viewerOf(token).person
       if (!person) {
         sendJson(res, { ok: false, error: '链接无效' }, 404)
         return
@@ -1375,7 +1409,7 @@ export function createTrackerServer(options: ServerOptions) {
     if (route === '/api/report' && method === 'POST') {
       const form = await readBody(req)
       const caller = form.get('token') ?? token
-      const person = store.personByToken(caller)
+      const person = viewerOf(caller).person
       if (!person) {
         sendJson(res, { ok: false, error: '链接无效' }, 404)
         return
@@ -1454,7 +1488,7 @@ export function createTrackerServer(options: ServerOptions) {
     if (route === '/api/tasks/assign' && method === 'POST') {
       const form = await readBody(req)
       const caller = form.get('token') ?? token
-      const viewer = store.personByToken(caller)
+      const viewer = viewerOf(caller).person
       const viewerPosition = viewer ? store.positionById(viewer.positionId) : undefined
       if (!viewer || !viewerPosition) {
         sendJson(res, { ok: false, error: '链接无效' }, 404)
@@ -1515,7 +1549,7 @@ export function createTrackerServer(options: ServerOptions) {
     if (route === '/api/tasks/recurring' && method === 'POST') {
       const form = await readBody(req)
       const caller = form.get('token') ?? token
-      const viewer = store.personByToken(caller)
+      const viewer = viewerOf(caller).person
       if (!viewer) {
         sendJson(res, { ok: false, error: '链接无效' }, 404)
         return
@@ -1557,13 +1591,8 @@ export function createTrackerServer(options: ServerOptions) {
     const method = req.method ?? 'GET'
 
     try {
-      // A link may be pasted whole; keep only the token out of it.
-      const raw = url.searchParams.get('token') ?? ''
-      const supplied = /([a-f0-9]{32})/i.exec(raw)?.[1] ?? raw.trim()
-      if (supplied && supplied !== raw) url.searchParams.set('token', supplied)
-
       // The mini program and any other JSON caller read the same data. They
-      // carry the token themselves, so the browser cookie does not apply.
+      // sign in through /api/login and carry the session token themselves.
       if (route.startsWith('/api/')) return void api(req, res, url, route, method)
 
       // The post accounts: log in, log out.
@@ -1571,41 +1600,29 @@ export function createTrackerServer(options: ServerOptions) {
       if (route === '/login' && method === 'POST') return void login(req, res)
       if (route === '/logout' && method === 'GET') return logout(req, res)
 
-      // Opening a link remembers whose link it is; later pages then work
-      // without repeating the token in every address.
-      const linked = supplied ? store.personByToken(supplied) : undefined
-      if (linked) remember(res, linked.token)
+      // Content is only for a logged-in browser: the session cookie /login
+      // set. Tokens in the address are no longer accepted.
       const saved = cookieOf(req, SESSION_COOKIE)
       const remembered = saved ? store.personByToken(saved) : undefined
-      const token = linked?.token ?? remembered?.token ?? ''
+      const token = remembered?.token ?? ''
       if (token && !url.searchParams.get('token')) url.searchParams.set('token', token)
 
-      // Somebody who pasted a link in the welcome form goes straight to the
-      // page that fits them: the department for a leader, their own page for
-      // everyone else.
-      if (route === '/enter' && method === 'GET') {
-        // Only what was just pasted counts here; a browser that already
-        // remembered someone else must not be sent on silently.
-        const person = supplied ? store.personByToken(supplied) : undefined
-        if (!person) {
-          sendHtml(
-            res,
-            renderWelcome({
-              departmentName: department().name,
-              error: '这个链接无法识别，请向部门负责人索取最新链接。',
-            }),
-            404,
-          )
-          return
-        }
-        const position = store.positionById(person.positionId)
-        const role = accessOf(person, position, leaderGrants(db.raw))
-        redirect(res, role === 'leader' ? '/' : '/report')
+      // The old link entry points land on the login page; a signed-in visitor
+      // goes to the front page instead.
+      if ((route === '/enter' || route === '/links') && method === 'GET') {
+        redirect(res, token ? '/' : '/login')
+        return
+      }
+
+      // While logged out every page is the login page. Styles, the health
+      // check and the photos keep their own rules.
+      if (!token && route !== '/style.css' && route !== '/healthz' && !route.startsWith('/photos/')) {
+        welcome(req, res)
         return
       }
 
       // The pages that show the department as a whole are for the leaders.
-      const guarded = ['/', '/collection', '/ledger', '/links', '/tasks', '/person']
+      const guarded = ['/', '/collection', '/ledger', '/tasks', '/person']
       if (guarded.includes(route) && method === 'GET') {
         if (!token) {
           // No link yet: ask for one rather than turn the visitor away.
@@ -1629,7 +1646,6 @@ export function createTrackerServer(options: ServerOptions) {
       if (route === '/' && method === 'GET') return overview(req, res, url)
       if (route === '/collection' && method === 'GET') return collection(req, res, url)
       if (route === '/ledger' && method === 'GET') return ledger(req, res)
-      if (route === '/links' && method === 'GET') return links(req, res)
       if (route === '/report' && method === 'GET') return reportForm(req, res, url)
       if (route === '/report' && method === 'POST') return void submitReport(req, res)
       if (route === '/person' && method === 'GET') return personReport(req, res, url)

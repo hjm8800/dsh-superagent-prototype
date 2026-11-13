@@ -295,7 +295,7 @@ test('a report cannot be filed for a period the form never offered', async () =>
 
   const response = await fetch(`http://127.0.0.1:${port}/report`, {
     method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: `mdt_token=${clerk.token}` },
     body: form.toString(),
     redirect: 'manual',
   })
@@ -306,7 +306,7 @@ test('a report cannot be filed for a period the form never offered', async () =>
   form.set('periodKey', '2026-W45')
   const ok = await fetch(`http://127.0.0.1:${port}/report`, {
     method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: `mdt_token=${clerk.token}` },
     body: form.toString(),
     redirect: 'manual',
   })
@@ -334,11 +334,17 @@ test('a report shows the confirmation after it is submitted', async () => {
   const port = typeof address === 'object' && address ? address.port : 0
 
   const clerk = store.people().find((p) => p.name === '黄美琳')!
-  const before = await (await fetch(`http://127.0.0.1:${port}/report?token=${clerk.token}`)).text()
+  const before = await (
+    await fetch(`http://127.0.0.1:${port}/report?token=${clerk.token}`, {
+      headers: { cookie: `mdt_token=${clerk.token}` },
+    })
+  ).text()
   assert.ok(!before.includes('已提交周报'), 'the confirmation must not show before submitting')
 
   const after = await (
-    await fetch(`http://127.0.0.1:${port}/report?token=${clerk.token}&saved=1`)
+    await fetch(`http://127.0.0.1:${port}/report?token=${clerk.token}&saved=1`, {
+      headers: { cookie: `mdt_token=${clerk.token}` },
+    })
   ).text()
   assert.ok(after.includes('已提交周报'), 'the confirmation must show after submitting')
 
@@ -371,17 +377,27 @@ test('the overview offers both ways of counting the completion', async () => {
   const address = server.address()
   const port = typeof address === 'object' && address ? address.port : 0
 
-  const reports = await (await fetch(`http://127.0.0.1:${port}/?token=${leader.token}`)).text()
+  const reports = await (
+    await fetch(`http://127.0.0.1:${port}/?token=${leader.token}`, {
+      headers: { cookie: `mdt_token=${leader.token}` },
+    })
+  ).text()
   assert.ok(reports.includes('按成果文件统计'), 'the overview must offer the file-based count')
   assert.ok(reports.includes('填报率'), 'the overview must keep the reporting rate')
 
-  const files = await (await fetch(`http://127.0.0.1:${port}/?mode=files&token=${leader.token}`)).text()
+  const files = await (
+    await fetch(`http://127.0.0.1:${port}/?mode=files&token=${leader.token}`, {
+      headers: { cookie: `mdt_token=${leader.token}` },
+    })
+  ).text()
   assert.ok(files.includes('产出到位率'), 'the file-based count must lead with the output rate')
   assert.ok(files.includes('按岗位统计'), 'the file-based count must be listed by post')
 
   // A member without the leader grant does not reach the overview.
   const clerk = store.people().find((p) => p.name === '黄美琳')!
-  const closed = await fetch(`http://127.0.0.1:${port}/?token=${clerk.token}`)
+  const closed = await fetch(`http://127.0.0.1:${port}/?token=${clerk.token}`, {
+    headers: { cookie: `mdt_token=${clerk.token}` },
+  })
   assert.equal(closed.status, 403, 'the overview must be closed to a member')
 
   server.closeAllConnections()
