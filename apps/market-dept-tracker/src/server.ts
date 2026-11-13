@@ -324,12 +324,45 @@ export function createTrackerServer(options: ServerOptions) {
     )
   }
 
-  const ledger = (_req: IncomingMessage, res: ServerResponse) => {
+  /** Find a node of the position tree by its id. */
+  const findTreeNode = (nodes: PositionView[], id: string): PositionView | undefined => {
+    for (const node of nodes) {
+      if (node.id === id) return node
+      const found = findTreeNode(node.children, id)
+      if (found) return found
+    }
+    return undefined
+  }
+
+  /**
+   * The posts a page may show: everything for a leader, the viewer's own post
+   * and the posts below it for everyone else. Null means the whole department.
+   */
+  const visiblePositionIds = (person: Person | undefined, role: AccessRole): Set<string> | null => {
+    if (role === 'leader' || !person) return null
+    const tree = taskPositions(department().id)
+    const ids = new Set<string>()
+    const walk = (nodes: TaskPositionNode[], inside: boolean) => {
+      for (const node of nodes) {
+        const here = inside || node.id === person.positionId
+        if (here) ids.add(node.id)
+        walk(node.children, here)
+      }
+    }
+    walk(tree, false)
+    return ids
+  }
+
+  const ledger = (_req: IncomingMessage, res: ServerResponse, url: URL) => {
     const dept = department()
-    sendHtml(
-      res,
-      renderLedger({ departmentName: dept.name, tree: store.tree(dept.id) }),
-    )
+    const token = url.searchParams.get('token') ?? ''
+    const { person, position, role } = viewerOf(token)
+    let tree = store.tree(dept.id)
+    if (role !== 'leader' && position) {
+      const node = findTreeNode(tree, position.id)
+      tree = node ? [node] : []
+    }
+    sendHtml(res, renderLedger({ departmentName: dept.name, tree }))
   }
 
   const collection = (_req: IncomingMessage, res: ServerResponse, url: URL) => {
@@ -347,7 +380,18 @@ export function createTrackerServer(options: ServerOptions) {
     const people = store.people(dept.id)
     const files = store.collectedFiles(periodType, periodKey)
 
-    const artifactViews = artifacts.map((artifact) => {
+    // A member sees the outputs of their own post and the posts below it;
+    // the leader sees the whole department.
+    const statusToken = url.searchParams.get('token') ?? ''
+    const { person: viewer, role } = viewerOf(statusToken)
+    const scoped = visiblePositionIds(viewer, role)
+    const inScope = (positionId: string) => !scoped || scoped.has(positionId)
+    const scopedPeople = new Set(people.filter((p) => inScope(p.positionId)).map((p) => p.id))
+    const scopedArtifacts = artifacts.filter((artifact) => inScope(artifact.positionId))
+    const scopedFiles =
+      role === 'leader' ? files : files.filter((file) => file.personId && scopedPeople.has(file.personId))
+
+    const artifactViews = scopedArtifacts.map((artifact) => {
       const position = positions.find((p) => p.id === artifact.positionId)
       return {
         id: artifact.id,
@@ -365,7 +409,7 @@ export function createTrackerServer(options: ServerOptions) {
       positions.find((p) => p.id === positionId)?.name ?? ''
 
     // The file is credited to the post, not to a person; nobody is named.
-    const fileViews = files.map((file) => {
+    const fileViews = scopedFiles.map((file) => {
       const person = file.personId ? personById.get(file.personId) : undefined
       const artifact = file.artifactId ? artifactById.get(file.artifactId) : undefined
       return {
@@ -389,8 +433,10 @@ export function createTrackerServer(options: ServerOptions) {
         collectedAt: files.length > 0 ? files[0]?.modifiedAt ?? '' : '',
         artifacts: artifactViews,
         files: fileViews.filter((f) => f.positionName && f.artifactName),
-        unmatched: fileViews.filter((f) => !(f.positionName && f.artifactName)),
-        people: store.artifactProgressByPerson(periodType, periodKey, dept.id),
+        unmatched: role === 'leader' ? fileViews.filter((f) => !(f.positionName && f.artifactName)) : [],
+        people: store
+          .artifactProgressByPerson(periodType, periodKey, dept.id)
+          .filter((row) => inScope(row.positionId)),
       }),
     )
   }
@@ -631,16 +677,20 @@ export function createTrackerServer(options: ServerOptions) {
     const positionId = url.searchParams.get('position') ?? ''
     const viewer = store.personByToken(url.searchParams.get('token') ?? '')
     const viewerPosition = viewer ? store.positionById(viewer.positionId) : undefined
+    // A member sees the posts of their own branch; the leader sees everything.
+    const { role: viewerRole } = viewerOf(url.searchParams.get('token') ?? '')
+    const scoped = visiblePositionIds(viewer, viewerRole)
+    const inScope = (positionId: string) => !scoped || scoped.has(positionId)
     // A superior gives tasks out: the posts directly under their own.
     const assignable = viewerPosition ? assignablePosts(tree, viewerPosition.id) : []
     // Anyone with people directly under them gives tasks out.
     const viewerCanAssign = viewerPosition ? assignable.length > 0 : false
 
-    const wanted = positionId
-      ? store.positionById(positionId)
-      : undefined
+    const wanted =
+      positionId && inScope(positionId) ? store.positionById(positionId) : undefined
     const tasks = store
       .taskViews(periodType, periodKey, dept.id)
+      .filter((task) => inScope(task.positionId))
       .filter((task) => (wanted ? task.positionId === wanted.id : true))
 
     const recurring = wanted
@@ -683,7 +733,9 @@ export function createTrackerServer(options: ServerOptions) {
                 .map((p) => ({ id: p.id, name: p.name })),
             }
           : undefined,
-        positions: allTaskPositions(dept.id).map((p) => ({
+        positions: allTaskPositions(dept.id)
+          .filter((p) => inScope(p.id))
+          .map((p) => ({
           id: p.id,
           name: p.name,
           level: p.level,
@@ -1621,8 +1673,9 @@ export function createTrackerServer(options: ServerOptions) {
         return
       }
 
-      // The pages that show the department as a whole are for the leaders.
-      const guarded = ['/', '/collection', '/ledger', '/tasks', '/person']
+      // The overview and the person page are for the leaders; the duties,
+      // the outputs and the task list are scoped to the viewer's branch.
+      const guarded = ['/', '/person']
       if (guarded.includes(route) && method === 'GET') {
         if (!token) {
           // No link yet: ask for one rather than turn the visitor away.
@@ -1645,7 +1698,7 @@ export function createTrackerServer(options: ServerOptions) {
       }
       if (route === '/' && method === 'GET') return overview(req, res, url)
       if (route === '/collection' && method === 'GET') return collection(req, res, url)
-      if (route === '/ledger' && method === 'GET') return ledger(req, res)
+      if (route === '/ledger' && method === 'GET') return ledger(req, res, url)
       if (route === '/report' && method === 'GET') return reportForm(req, res, url)
       if (route === '/report' && method === 'POST') return void submitReport(req, res)
       if (route === '/person' && method === 'GET') return personReport(req, res, url)

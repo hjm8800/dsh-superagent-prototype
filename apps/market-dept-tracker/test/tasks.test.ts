@@ -641,13 +641,23 @@ test('a member may not give a task out', async () => {
   })
 })
 
-test('a member may not see the department pages', async () => {
+test('a member sees their own branch of the duties, outputs and tasks', async () => {
   await withServer(async (base, store) => {
     const clerk = store.people().find((p) => p.name === '黄美琳')!
-    for (const path of ['/', '/tasks', '/ledger', '/links', '/collection']) {
+    // The overview stays closed; the branch pages open, scoped to the post.
+    const overview = await sessionFetch(`${base}/?token=${clerk.token}`)
+    assert.equal(overview.status, 403, 'the department overview stays closed')
+
+    for (const path of ['/tasks', '/ledger', '/collection']) {
       const response = await sessionFetch(`${base}${path}${path.includes('?') ? '&' : '?'}token=${clerk.token}`)
-      assert.equal(response.status, 403, `${path} must be closed to a member`)
+      assert.equal(response.status, 200, `${path} opens for the post`)
+      const html = await response.text()
+      assert.ok(html.includes('合同管理业务员'), `${path} shows the viewer's own post`)
+      assert.ok(!html.includes('技经管理专责'), `${path} hides another branch`)
     }
+
+    const links = await sessionFetch(`${base}/links?token=${clerk.token}`, { redirect: 'manual' })
+    assert.equal(links.status, 302, 'the accounts page is gone')
   })
 })
 
