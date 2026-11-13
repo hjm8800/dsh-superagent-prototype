@@ -1,0 +1,88 @@
+﻿<view class="container">
+  <view wx:if="{{forbidden && !loading}}" class="card">
+    <view class="title">这一页只有领导能看</view>
+    <view class="subtitle">成果采集展示全部门的产出到位情况，只对经理、副经理和公司领导开放。</view>
+    <button class="btn" bindtap="goLogin">用领导的链接进入</button>
+  </view>
+
+  <block wx:else>
+    <view class="card">
+      <view class="title">成果采集</view>
+      <view class="subtitle">
+        {{periodLabel}}{{collectedAt ? '｜最近采集于 ' + collectedAt : '｜这个周期还没有采集过'}}
+      </view>
+      <view class="seg">
+        <view
+          wx:for="{{periodTypes}}"
+          wx:key="value"
+          class="seg-item {{periodType === item.value ? 'seg-active' : ''}}"
+          data-type="{{item.value}}"
+          bindtap="switchType"
+        >{{item.label}}</view>
+      </view>
+      <view class="chips">
+        <view
+          wx:for="{{periods}}"
+          wx:key="key"
+          class="chip {{item.key === periodKey ? 'chip-active' : ''}}"
+          data-key="{{item.key}}"
+          bindtap="pickPeriod"
+        >{{item.label}}</view>
+      </view>
+    </view>
+
+    <view wx:if="{{error}}" class="card" style="color:#b42318;">{{error}}</view>
+    <view wx:if="{{loading}}" class="empty">正在加载…</view>
+
+    <block wx:elif="{{!error}}">
+      <view class="stats">
+        <view class="stat">
+          <text class="stat-value">{{counts.files}}</text>
+          <text class="stat-label">文件</text>
+        </view>
+        <view class="stat">
+          <text class="stat-value" style="color:#1a7f4b;">{{counts.recognized}}</text>
+          <text class="stat-label">认出的产出</text>
+        </view>
+        <view class="stat">
+          <text class="stat-value" style="color:{{counts.unmatched > 0 ? '#b42318' : '#1a7f4b'}};">{{counts.unmatched}}</text>
+          <text class="stat-label">认不出</text>
+        </view>
+      </view>
+
+      <view wx:if="{{positions.length}}" class="card">
+        <view class="title">按岗位统计</view>
+        <view class="task" wx:for="{{positions}}" wx:key="name">
+          <view class="task-head">
+            <text class="task-title">{{item.name}}</text>
+            <text class="tag tag-{{item.level}}">{{item.levelLabel}}</text>
+          </view>
+          <view class="muted small">{{item.done}}/{{item.total}} 项已交｜{{item.reported}} 人已交</view>
+          <view class="bar">
+            <view class="bar-fill" style="width:{{item.percent}}%;"></view>
+          </view>
+          <view class="muted small" style="margin-top:6rpx;">{{item.percent}}%</view>
+        </view>
+      </view>
+
+      <view wx:if="{{unmatched.length}}" class="card">
+        <view class="title">认不出的文件</view>
+        <view class="subtitle">这些文件没有归到任何岗位或产出，补上文件名关键词或放到正确目录后重新采集。</view>
+        <view class="task" wx:for="{{unmatched}}" wx:key="id">
+          <view class="task-title">{{item.name}}</view>
+          <view class="muted small">{{item.reason || '没有匹配到岗位或产出'}}</view>
+        </view>
+      </view>
+
+      <view wx:if="{{files.length}}" class="card">
+        <view class="title">认出的产出</view>
+        <view class="task" wx:for="{{files}}" wx:key="id">
+          <view class="task-title">{{item.name}}</view>
+          <view class="muted small">{{item.positionName}}｜{{item.artifactName}}{{item.matchedKeyword ? '｜关键词：' + item.matchedKeyword : ''}}</view>
+        </view>
+      </view>
+
+      <view wx:if="{{counts.files === 0}}" class="empty">这个周期还没有采集到成果文件</view>
+    </block>
+  </block>
+</view>

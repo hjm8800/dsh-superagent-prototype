@@ -1,0 +1,101 @@
+<view class="container">
+  <block wx:if="{{!person && !loading}}">
+    <view class="card">
+      <view class="title">还没有登录</view>
+      <view class="subtitle">用岗位账户登录后，就能看到自己的任务。</view>
+      <button class="btn" bindtap="goLogin">去登录</button>
+    </view>
+  </block>
+
+  <block wx:else>
+    <view class="card" wx:if="{{person}}">
+      <view class="title">{{position}}</view>
+      <view class="subtitle">{{periodLabel}}｜{{person.name ? '已进入' : ''}}</view>
+      <view class="seg">
+        <view
+          wx:for="{{periodTypes}}"
+          wx:key="value"
+          class="seg-item {{periodType === item.value ? 'seg-active' : ''}}"
+          data-type="{{item.value}}"
+          bindtap="switchType"
+        >{{item.label}}</view>
+      </view>
+      <view class="chips">
+        <view
+          wx:for="{{periods}}"
+          wx:key="key"
+          class="chip {{item.label === periodLabel ? 'chip-active' : ''}}"
+          data-key="{{item.key}}"
+          bindtap="pickPeriod"
+        >{{item.label}}</view>
+      </view>
+      <button class="btn btn-ghost small" bindtap="signOut">退出登录</button>
+    </view>
+
+    <view class="stats" wx:if="{{person}}">
+      <view class="stat">
+        <text class="stat-value">{{stats.total}}</text>
+        <text class="stat-label">任务</text>
+      </view>
+      <view class="stat">
+        <text class="stat-value" style="color:#1a7f4b;">{{stats.done}}</text>
+        <text class="stat-label">已完成</text>
+      </view>
+      <view class="stat">
+        <text class="stat-value">{{stats.open}}</text>
+        <text class="stat-label">待办</text>
+      </view>
+      <view class="stat">
+        <text class="stat-value" style="color:#b42318;">{{stats.blocked}}</text>
+        <text class="stat-label">受阻</text>
+      </view>
+    </view>
+
+    <view wx:if="{{error}}" class="card" style="color:#b42318;">{{error}}</view>
+
+    <view wx:if="{{loading}}" class="empty">正在加载…</view>
+
+    <view wx:elif="{{person}}">
+      <view wx:if="{{canAssign}}" class="btn-row">
+        <button class="btn" bindtap="goAssign">下达任务</button>
+        <button class="btn" bindtap="goRecurring">设固定任务</button>
+      </view>
+
+      <view wx:if="{{tasks.length === 0}}" class="empty">这个周期还没有任务</view>
+
+      <view class="task" wx:for="{{tasks}}" wx:key="id">
+        <view class="task-head">
+          <text class="task-title">{{item.title}}</text>
+          <text class="tag tag-{{item.kind}}">{{item.kindLabel}}</text>
+        </view>
+        <view class="task-detail" wx:if="{{item.detail}}">{{item.detail}}</view>
+        <view class="row">
+          <text class="muted small">状态</text>
+          <picker
+            class="picker"
+            range="{{statusChoices}}"
+            range-key="label"
+            value="{{item.statusIndex}}"
+            data-id="{{item.id}}"
+            bindchange="changeStatus"
+          >
+            <view>{{statusChoices[item.statusIndex].label}}</view>
+          </picker>
+        </view>
+        <view class="task-photos" wx:if="{{item.photos.length > 0}}">
+          <image
+            wx:for="{{item.photos}}"
+            wx:key="id"
+            class="task-photo"
+            src="{{item.url}}"
+            mode="aspectFill"
+            data-task="{{item.id}}"
+            data-url="{{item.url}}"
+            bindtap="previewPhoto"
+          />
+        </view>
+        <button class="btn btn-ghost small" data-id="{{item.id}}" bindtap="choosePhotos">拍照上传</button>
+      </view>
+    </view>
+  </block>
+</view>

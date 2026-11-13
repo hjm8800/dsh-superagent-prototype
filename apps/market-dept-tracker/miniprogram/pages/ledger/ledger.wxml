@@ -1,0 +1,45 @@
+<view class="container">
+  <view wx:if="{{forbidden && !loading}}" class="card">
+    <view class="title">这一页只有领导能看</view>
+    <view class="subtitle">岗位职责台账按岗位列出全部门的职责，只对经理、副经理和公司领导开放。你自己的职责在「职责与填报」里。</view>
+    <button class="btn" bindtap="goLogin">用领导的链接进入</button>
+  </view>
+
+  <block wx:else>
+    <view wx:if="{{loading}}" class="empty">正在加载…</view>
+    <view wx:elif="{{error}}" class="card" style="color:#b42318;">{{error}}</view>
+
+    <block wx:else>
+      <view class="card">
+        <view class="title">{{departmentName}} · 岗位职责台账</view>
+        <view class="subtitle">按层级排列，只显示在岗人数，不显示人名。</view>
+      </view>
+
+      <view
+        class="post"
+        wx:for="{{positions}}"
+        wx:key="id"
+        style="margin-left:{{item.depth * 24}}rpx;"
+      >
+        <view class="post-head">
+          <text class="post-name">{{item.name}}</text>
+          <text class="tag tag-{{item.level}}">{{item.levelLabel}}</text>
+        </view>
+        <view class="muted small">
+          {{item.peopleCount}} 人在岗{{item.headcountNote ? '（' + item.headcountNote + '）' : ''}}
+        </view>
+        <view wx:if="{{item.instructions}}" class="task-detail">工作指引：{{item.instructions}}</view>
+        <view wx:if="{{item.boundary}}" class="task-detail">职责边界：{{item.boundary}}</view>
+        <view wx:if="{{item.note}}" class="task-detail">说明：{{item.note}}</view>
+
+        <view class="duty" wx:for="{{item.duties}}" wx:for-item="duty" wx:key="ordinal">
+          <view class="duty-text">
+            <text class="duty-no">{{duty.ordinal}}</text>
+            <text>{{duty.text}}</text>
+          </view>
+        </view>
+        <view wx:if="{{item.duties.length === 0}}" class="muted small">本岗位暂无单独列出的职责条目。</view>
+      </view>
+    </block>
+  </block>
+</view>
