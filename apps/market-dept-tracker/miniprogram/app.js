@@ -25,10 +25,14 @@ App({
     if (token) {
       this.globalData.token = token
       this.whoAmI(token).catch(() => {
-        // The link may have been withdrawn; ask for it again.
+        // The post may have been removed; ask for the account again.
         wx.removeStorageSync('token')
         this.globalData.token = ''
+        wx.reLaunch({ url: '/pages/login/login' })
       })
+    } else {
+      // No session yet: open the login page instead of an empty task list.
+      wx.reLaunch({ url: '/pages/login/login' })
     }
   },
 

@@ -228,7 +228,12 @@ export function createTrackerServer(options: ServerOptions) {
       `${ACCOUNT_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`,
       `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`,
     ])
-    redirect(res, '/')
+    redirect(res, '/login')
+  }
+
+  /** The login page, also when a session cookie is still around. */
+  const welcome = (_req: IncomingMessage, res: ServerResponse) => {
+    sendHtml(res, renderWelcome({ departmentName: department().name }))
   }
 
   // ------------------------------------------------------------- routes
@@ -1562,6 +1567,7 @@ export function createTrackerServer(options: ServerOptions) {
       if (route.startsWith('/api/')) return void api(req, res, url, route, method)
 
       // The post accounts: log in, log out.
+      if (route === '/login' && method === 'GET') return welcome(req, res)
       if (route === '/login' && method === 'POST') return void login(req, res)
       if (route === '/logout' && method === 'GET') return logout(req, res)
 

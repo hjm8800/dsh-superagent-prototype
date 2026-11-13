@@ -34,6 +34,7 @@ const NAV = [
   { key: 'ledger', label: '岗位职责', href: '/ledger' },
   { key: 'report', label: '我的填报', href: '/report' },
   { key: 'links', label: '岗位账户', href: '/links' },
+  { key: 'logout', label: '退出', href: '/logout' },
 ]
 
 export function layout(options: LayoutOptions): string {

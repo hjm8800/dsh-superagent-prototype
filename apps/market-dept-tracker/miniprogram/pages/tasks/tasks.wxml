@@ -1,9 +1,9 @@
 <view class="container">
   <block wx:if="{{!person && !loading}}">
     <view class="card">
-      <view class="title">还没有进入</view>
-      <view class="subtitle">把部门发给你的链接粘贴进来，就能看到自己的任务。</view>
-      <button class="btn" bindtap="goLogin">粘贴链接进入</button>
+      <view class="title">还没有登录</view>
+      <view class="subtitle">用岗位账户登录后，就能看到自己的任务。</view>
+      <button class="btn" bindtap="goLogin">去登录</button>
     </view>
   </block>
 
@@ -29,7 +29,7 @@
           bindtap="pickPeriod"
         >{{item.label}}</view>
       </view>
-      <button class="btn btn-ghost small" bindtap="signOut">换个链接</button>
+      <button class="btn btn-ghost small" bindtap="signOut">退出登录</button>
     </view>
 
     <view class="stats" wx:if="{{person}}">

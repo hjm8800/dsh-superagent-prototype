@@ -181,5 +181,6 @@ Page({
   signOut() {
     app.signOut()
     this.setData({ person: null, tasks: [], error: '' })
+    wx.reLaunch({ url: '/pages/login/login' })
   },
 })
