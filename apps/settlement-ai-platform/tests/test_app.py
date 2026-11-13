@@ -190,3 +190,54 @@ def test_material_issue_import_export_and_recover(tmp_path):
     assert r.status_code == 200
     assert "spreadsheetml" in r.headers["content-type"]
 
+def test_member_management():
+    login("admin", "admin123")
+    r = client.get("/projects/1/members")
+    assert r.status_code == 200
+    assert "项目成员" in r.text
+    r = client.post("/projects/1/members", data={"username": "jiesuan"}, follow_redirects=False)
+    assert r.status_code == 303
+    r = client.get("/projects/1/members")
+    assert "jiesuan" in r.text
+    # remove the jiesuan member from project 1
+    import sqlite3, os
+    conn = sqlite3.connect(os.path.join(os.environ["PLATFORM_DATA_DIR"], "platform.db"))
+    uid = conn.execute("SELECT id FROM users WHERE username='jiesuan'").fetchone()[0]
+    conn.close()
+    r = client.post(f"/projects/1/members/{uid}/remove", follow_redirects=False)
+    assert r.status_code == 303
+
+
+def test_material_boq_budget_crud_and_settlement_export():
+    login("admin", "admin123")
+    r = client.post("/projects/1/materials", data={"supply": "乙供", "code": "TEST-M", "name": "测试材料", "spec": "S", "unit": "个", "qty": "3"}, follow_redirects=False)
+    assert r.status_code == 303
+    r = client.get("/projects/1?tab=materials")
+    assert "测试材料" in r.text
+    r = client.post("/projects/1/boq", data={"code": "T1", "name": "测试工程量", "unit": "米", "qty": "10", "part": "测试"}, follow_redirects=False)
+    assert r.status_code == 303
+    r = client.get("/projects/1?tab=boq")
+    assert "测试工程量" in r.text
+    r = client.post("/projects/1/budget", data={"name": "测试费用", "amount": "1000", "category": "其他"}, follow_redirects=False)
+    assert r.status_code == 303
+    r = client.get("/projects/1?tab=budget")
+    assert "测试费用" in r.text
+    r = client.get("/projects/1/settlement.xlsx")
+    assert r.status_code == 200
+    assert "spreadsheetml" in r.headers["content-type"]
+
+def test_admin_user_create_and_password_change():
+    login("admin", "admin123")
+    r = client.post("/admin/users", data={"username": "testop", "name": "测试同事", "role": "engineer", "password": "123456"}, follow_redirects=False)
+    assert r.status_code == 303
+    r = client.get("/admin/users")
+    assert "testop" in r.text
+    client.get("/logout")
+    login("testop", "123456")
+    r = client.post("/account/password", data={"current": "123456", "new": "abc123"}, follow_redirects=False)
+    assert r.status_code == 303
+    client.get("/logout")
+    login("testop", "abc123")
+    r = client.get("/account")
+    assert "账号" in r.text
+

@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from openpyxl import Workbook
@@ -29,7 +29,7 @@ from openpyxl.styles import Font, PatternFill
 from itsdangerous import BadSignature, URLSafeSerializer
 
 from parsers import parse_file, parse_material_issue_xlsx
-from seed import check_pw, connect, init_db, now
+from seed import check_pw, connect, hash_pw, init_db, now
 
 BASE = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("PLATFORM_DATA_DIR", str(BASE / "data"))).resolve()
@@ -462,6 +462,68 @@ def material_issue_export(request: Request, station: str = "", team: str = "", s
     return StreamingResponse(bio, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": "attachment; filename=material-issues.xlsx"})
 
 
+@app.get("/account", response_class=HTMLResponse)
+def account_page(request: Request, user=Depends(current_user)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(request, "account.html", {"user": user, "active": "account"})
+
+
+@app.post("/account/password")
+def change_password(request: Request, current: str = Form(...), new: str = Form(...), user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if not check_pw(current, user["password"]):
+        return RedirectResponse("/account?msg=当前密码不正确", status_code=303)
+    if len(new) < 6:
+        return RedirectResponse("/account?msg=新密码至少6位", status_code=303)
+    conn.execute("UPDATE users SET password=? WHERE id=?", (hash_pw(new), user["id"]))
+    conn.commit()
+    audit(conn, None, user, "change_password", "修改密码")
+    return RedirectResponse("/account?msg=密码已修改", status_code=303)
+
+
+@app.get("/admin/users", response_class=HTMLResponse)
+def admin_users_page(request: Request, user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if user["role"] != "admin":
+        raise HTTPException(403, "只有系统管理员可以管理用户")
+    users = conn.execute("SELECT id, username, name, role FROM users ORDER BY id").fetchall()
+    return templates.TemplateResponse(request, "users.html", {"user": user, "users": users, "active": "users"})
+
+
+@app.post("/admin/users")
+def admin_user_create(request: Request, username: str = Form(...), name: str = Form(...), role: str = Form("engineer"), password: str = Form(...), user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if user["role"] != "admin":
+        raise HTTPException(403)
+    if len(password) < 6:
+        return RedirectResponse("/admin/users?msg=初始密码至少6位", status_code=303)
+    try:
+        conn.execute("INSERT INTO users (username, password, name, role) VALUES (?,?,?,?)", (username.strip(), hash_pw(password), name.strip(), role))
+        conn.commit()
+        audit(conn, None, user, "user_create", username)
+        return RedirectResponse("/admin/users?msg=用户已创建", status_code=303)
+    except sqlite3.IntegrityError:
+        return RedirectResponse("/admin/users?msg=账号已存在", status_code=303)
+
+
+@app.post("/admin/users/{uid}/reset")
+def admin_user_reset(uid: int, request: Request, password: str = Form(...), user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if user["role"] != "admin":
+        raise HTTPException(403)
+    if len(password) < 6:
+        return RedirectResponse("/admin/users?msg=密码至少6位", status_code=303)
+    conn.execute("UPDATE users SET password=? WHERE id=?", (hash_pw(password), uid))
+    conn.commit()
+    audit(conn, None, user, "user_reset", str(uid))
+    return RedirectResponse("/admin/users?msg=密码已重置", status_code=303)
+
+
 @app.get("/projects/new", response_class=HTMLResponse)
 def project_new(request: Request, user=Depends(current_user)):
     if not user:
@@ -526,6 +588,104 @@ def project_edit(
         return RedirectResponse(f"/projects/{pid}?tab=overview&msg=项目信息已更新", status_code=303)
     except sqlite3.IntegrityError:
         return RedirectResponse(f"/projects/{pid}/edit?msg=项目编码已存在", status_code=303)
+
+
+@app.get("/projects/{pid}/members", response_class=HTMLResponse)
+def project_members_page(pid: int, request: Request, user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if not can_manage(user):
+        raise HTTPException(403, "只有管理员/项目经理可以维护项目成员")
+    project = get_project(conn, pid, user)
+    members = conn.execute(
+        "SELECT u.id, u.username, u.name, u.role FROM users u JOIN members m ON m.user_id=u.id WHERE m.project_id=? ORDER BY u.id",
+        (pid,),
+    ).fetchall()
+    all_users = conn.execute("SELECT id, username, name, role FROM users ORDER BY id").fetchall()
+    return templates.TemplateResponse(request, "members.html", {"user": user, "p": project, "members": members, "all_users": all_users, "active": "project"})
+
+
+@app.post("/projects/{pid}/members")
+def project_member_add(pid: int, request: Request, username: str = Form(...), user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if not can_manage(user):
+        raise HTTPException(403)
+    get_project(conn, pid, user)
+    target = conn.execute("SELECT * FROM users WHERE username=?", (username.strip(),)).fetchone()
+    if not target:
+        return RedirectResponse(f"/projects/{pid}/members?msg=账号不存在", status_code=303)
+    conn.execute("INSERT OR IGNORE INTO members (user_id, project_id) VALUES (?,?)", (target["id"], pid))
+    conn.commit()
+    audit(conn, pid, user, "member_add", f"{target['username']}")
+    return RedirectResponse(f"/projects/{pid}/members?msg=已添加成员", status_code=303)
+
+
+@app.post("/projects/{pid}/members/{uid}/remove")
+def project_member_remove(pid: int, uid: int, request: Request, user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if not can_manage(user):
+        raise HTTPException(403)
+    get_project(conn, pid, user)
+    conn.execute("DELETE FROM members WHERE user_id=? AND project_id=?", (uid, pid))
+    conn.commit()
+    audit(conn, pid, user, "member_remove", str(uid))
+    return RedirectResponse(f"/projects/{pid}/members?msg=已移除成员", status_code=303)
+
+
+@app.get("/documents/{did}/download")
+def document_download(did: int, request: Request, user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    doc = conn.execute("SELECT * FROM documents WHERE id=?", (did,)).fetchone()
+    if not doc:
+        raise HTTPException(404)
+    get_project(conn, doc["project_id"], user)
+    if not doc["path"] or not Path(doc["path"]).exists():
+        return RedirectResponse(f"/projects/{doc['project_id']}?tab=docs&msg=演示数据没有原始文件，请先上传", status_code=303)
+    return FileResponse(doc["path"], filename=doc["filename"] or doc["name"])
+
+
+@app.get("/projects/{pid}/settlement.xlsx")
+def settlement_draft(pid: int, request: Request, user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    project = get_project(conn, pid, user)
+    profile = conn.execute("SELECT key, value FROM profiles WHERE project_id=? ORDER BY key", (pid,)).fetchall()
+    materials = conn.execute("SELECT supply, code, name, spec, unit, qty FROM materials WHERE project_id=? ORDER BY id", (pid,)).fetchall()
+    boq = conn.execute("SELECT code, name, unit, qty, part FROM boq WHERE project_id=? ORDER BY id", (pid,)).fetchall()
+    compares = conn.execute("SELECT item, unit, design_qty, budget_qty, settle_qty, reason, evidence, status FROM compare_items WHERE project_id=? ORDER BY id", (pid,)).fetchall()
+    budget = conn.execute("SELECT name, amount, category FROM budget_items WHERE project_id=? ORDER BY id", (pid,)).fetchall()
+    wb = Workbook()
+    def add_sheet(title, headers, rows, widths=None):
+        ws = wb.create_sheet(title)
+        ws.append(headers)
+        for c in ws[1]:
+            c.font = Font(bold=True)
+            c.fill = PatternFill("solid", fgColor="E8F0FE")
+        for r in rows:
+            ws.append(list(r))
+        for i, h in enumerate(headers, 1):
+            ws.column_dimensions[chr(64 + i)].width = (widths[i-1] if widths and i-1 < len(widths) else max(12, min(28, len(str(h)) * 2 + 8)))
+    cover = wb.active; cover.title = "封面"
+    cover["A1"] = f"{project['name']} 结算书初稿"
+    cover["A1"].font = Font(size=18, bold=True)
+    cover["A3"] = "项目编码"; cover["B3"] = project["code"]
+    cover["A4"] = "项目类型"; cover["B4"] = project["ptype"]
+    cover["A5"] = "阶段"; cover["B5"] = project["stage"]
+    cover["A6"] = "投产日"; cover["B6"] = project["t0"]
+    cover["A7"] = "负责人"; cover["B7"] = project["owner"]
+    cover["A8"] = "预算总额（元）"; cover["B8"] = project["budget_total"]
+    cover["A10"] = "说明"
+    cover["A11"] = "本文件由结算AI工作台按已录入资料生成初稿，工程量、单价、费用和签章需人工复核，不作为定案依据。"
+    add_sheet("项目画像", ["项目", "内容"], [(r["key"], r["value"]) for r in profile], [20, 60])
+    add_sheet("材料清册", ["供应", "物资编码", "名称", "规格", "单位", "数量"], [tuple(r) for r in materials], [8, 20, 40, 24, 8, 10])
+    add_sheet("工程量", ["编号", "名称", "单位", "数量", "部位"], [tuple(r) for r in boq], [10, 40, 8, 10, 18])
+    add_sheet("三算对比", ["项目", "单位", "设计量", "预算量", "结算量", "原因", "依据", "状态"], [tuple(r) for r in compares], [18, 8, 10, 10, 10, 30, 24, 10])
+    add_sheet("预算汇总", ["项目", "金额（元）", "类别"], [tuple(r) for r in budget], [20, 14, 10])
+    bio = io.BytesIO(); wb.save(bio); bio.seek(0)
+    return StreamingResponse(bio, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename=settlement-draft-{pid}.xlsx"})
 
 
 @app.get("/projects/{pid}", response_class=HTMLResponse)
@@ -605,6 +765,76 @@ def reparse_document(did: int, request: Request, user=Depends(current_user), con
     conn.commit()
     audit(conn, doc["project_id"], user, "parse", f"{doc['name']} -> {parsed['status']}")
     return RedirectResponse(f"/projects/{doc['project_id']}?tab=docs&msg=解析完成：{parsed['status']}", status_code=303)
+
+
+@app.post("/projects/{pid}/materials")
+def add_material(pid: int, request: Request, supply: str = Form("甲供"), code: str = Form(""), name: str = Form(...), spec: str = Form(""), unit: str = Form(""), qty: str = Form(""), user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    get_project(conn, pid, user)
+    conn.execute("INSERT INTO materials (project_id, supply, code, name, spec, unit, qty, source) VALUES (?,?,?,?,?,?,?,?)", (pid, supply, code, name, spec, unit, qty, "手工新增"))
+    conn.commit()
+    audit(conn, pid, user, "material_add", name)
+    return RedirectResponse(f"/projects/{pid}?tab=materials&msg=材料已新增", status_code=303)
+
+
+@app.post("/projects/{pid}/materials/{mid}/delete")
+def delete_material(pid: int, mid: int, request: Request, user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    get_project(conn, pid, user)
+    conn.execute("DELETE FROM materials WHERE id=? AND project_id=?", (mid, pid))
+    conn.commit()
+    audit(conn, pid, user, "material_delete", str(mid))
+    return RedirectResponse(f"/projects/{pid}?tab=materials&msg=材料已删除", status_code=303)
+
+
+@app.post("/projects/{pid}/boq")
+def add_boq(pid: int, request: Request, code: str = Form(""), name: str = Form(...), unit: str = Form(""), qty: str = Form(""), part: str = Form(""), user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    get_project(conn, pid, user)
+    conn.execute("INSERT INTO boq (project_id, code, name, unit, qty, part) VALUES (?,?,?,?,?,?)", (pid, code, name, unit, qty, part))
+    conn.commit()
+    audit(conn, pid, user, "boq_add", name)
+    return RedirectResponse(f"/projects/{pid}?tab=boq&msg=工程量已新增", status_code=303)
+
+
+@app.post("/projects/{pid}/boq/{bid}/delete")
+def delete_boq(pid: int, bid: int, request: Request, user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    get_project(conn, pid, user)
+    conn.execute("DELETE FROM boq WHERE id=? AND project_id=?", (bid, pid))
+    conn.commit()
+    audit(conn, pid, user, "boq_delete", str(bid))
+    return RedirectResponse(f"/projects/{pid}?tab=boq&msg=工程量已删除", status_code=303)
+
+
+@app.post("/projects/{pid}/budget")
+def add_budget(pid: int, request: Request, name: str = Form(...), amount: float = Form(0), category: str = Form("其他"), user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    get_project(conn, pid, user)
+    conn.execute("INSERT INTO budget_items (project_id, name, amount, category) VALUES (?,?,?,?)", (pid, name, amount, category))
+    total = conn.execute("SELECT COALESCE(SUM(amount),0) s FROM budget_items WHERE project_id=?", (pid,)).fetchone()["s"]
+    conn.execute("UPDATE projects SET budget_total=? WHERE id=?", (total, pid))
+    conn.commit()
+    audit(conn, pid, user, "budget_add", name)
+    return RedirectResponse(f"/projects/{pid}?tab=budget&msg=预算项已新增", status_code=303)
+
+
+@app.post("/projects/{pid}/budget/{bid}/delete")
+def delete_budget(pid: int, bid: int, request: Request, user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    get_project(conn, pid, user)
+    conn.execute("DELETE FROM budget_items WHERE id=? AND project_id=?", (bid, pid))
+    total = conn.execute("SELECT COALESCE(SUM(amount),0) s FROM budget_items WHERE project_id=?", (pid,)).fetchone()["s"]
+    conn.execute("UPDATE projects SET budget_total=? WHERE id=?", (total, pid))
+    conn.commit()
+    audit(conn, pid, user, "budget_delete", str(bid))
+    return RedirectResponse(f"/projects/{pid}?tab=budget&msg=预算项已删除", status_code=303)
 
 
 @app.post("/projects/{pid}/compare/{cid}")

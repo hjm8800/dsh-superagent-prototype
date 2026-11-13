@@ -22,7 +22,7 @@
     <span class="username">{{ user.name }}</span>
     {% set role_names = {'engineer':'工程部','settlement':'市场部','material':'物资组','manager':'项目管理','admin':'系统管理'} %}
     <span class="role">{{ role_names.get(user.role, user.role) }}</span>
-    <a href="/logout">退出</a>
+    <a href="/account">账号</a><a href="/logout">退出</a>
   </div>
 </header>
 <div class="layout">
@@ -36,6 +36,7 @@
     <a href="/projects/{{ nav_pid|default(1) }}?tab=ai">AI操作台</a>
     <a href="/projects/{{ nav_pid|default(1) }}?tab=reviews">复核归档</a>
     <a href="/material-issues" class="{{ 'active' if active == 'material_issues' else '' }}">材料超领</a>
+    {% if user.role == 'admin' %}<a href="/admin/users" class="{{ 'active' if active == 'users' else '' }}">用户管理</a>{% endif %}
     <div class="side-title">说明</div>
     <div class="side-note">MVP 演示版<br>数据已匿名化<br>仅内网使用</div>
   </aside>

@@ -8,7 +8,8 @@
     <p class="sub">{{ p.ptype }} · 阶段：{{ p.stage }} · 投产日：{{ p.t0 }} · 负责人：{{ p.owner }}</p>
   </div>
   <div class="head-actions">
-    {% if can_manage %}<a class="btn" href="/projects/{{ p.id }}/edit">编辑项目</a>{% endif %}
+    {% if can_manage %}<a class="btn" href="/projects/{{ p.id }}/edit">编辑项目</a><a class="btn" href="/projects/{{ p.id }}/members">成员</a>{% endif %}
+    <a class="btn" href="/projects/{{ p.id }}/settlement.xlsx">结算书初稿</a>
     <a class="btn" href="/export/{{ p.id }}/xlsx/compare">导出差异 Excel</a>
     <a class="btn primary" href="/projects/{{ p.id }}?tab=ai">AI操作台</a>
   </div>
@@ -89,7 +90,8 @@
           <td><span class="badge {{ 'ok' if d.status == 'parsed' else ('warn' if d.status in ('pending','needs_plugin') else 'danger') }}">{{ d.status }}</span></td>
           <td class="muted">{{ d.summary }}</td>
           <td>
-            <form method="post" action="/documents/{{ d.id }}/parse"><button class="btn small" type="submit">重新解析</button></form>
+            <a class="btn small" href="/documents/{{ d.id }}/download">下载</a>
+            <form method="post" action="/documents/{{ d.id }}/parse" style="display:inline"><button class="btn small" type="submit">重新解析</button></form>
           </td>
         </tr>
       {% endfor %}
@@ -101,12 +103,21 @@
 {% elif tab == 'materials' %}
 <section class="card">
   <div class="card-head"><h2>材料清册</h2><span><a class="link" href="/export/{{ p.id }}/xlsx/materials">导出 Excel</a> · <a class="link" href="/export/{{ p.id }}/materials">CSV</a></span></div>
+  <form class="inline" method="post" action="/projects/{{ p.id }}/materials" style="margin-bottom:10px">
+    <select name="supply"><option>甲供</option><option>乙供</option></select>
+    <input name="code" placeholder="物资编码" style="width:150px">
+    <input name="name" placeholder="材料名称" required style="width:200px">
+    <input name="spec" placeholder="规格" style="width:140px">
+    <input name="unit" placeholder="单位" style="width:70px">
+    <input name="qty" placeholder="数量" style="width:90px">
+    <button class="btn small primary" type="submit">新增材料</button>
+  </form>
   <div class="table-wrap">
     <table class="table">
-      <thead><tr><th>供应</th><th>物资编码</th><th>名称</th><th>规格</th><th>单位</th><th>数量</th><th>来源</th></tr></thead>
+      <thead><tr><th>供应</th><th>物资编码</th><th>名称</th><th>规格</th><th>单位</th><th>数量</th><th>来源</th><th>操作</th></tr></thead>
       <tbody>
       {% for m in materials %}
-        <tr><td><span class="badge info">{{ m.supply }}</span></td><td>{{ m.code }}</td><td>{{ m.name }}</td><td>{{ m.spec }}</td><td>{{ m.unit }}</td><td>{{ m.qty }}</td><td class="muted">{{ m.source }}</td></tr>
+        <tr><td><span class="badge info">{{ m.supply }}</span></td><td>{{ m.code }}</td><td>{{ m.name }}</td><td>{{ m.spec }}</td><td>{{ m.unit }}</td><td>{{ m.qty }}</td><td class="muted">{{ m.source }}</td><td><form method="post" action="/projects/{{ p.id }}/materials/{{ m.id }}/delete"><button class="btn small" type="submit">删除</button></form></td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -116,11 +127,19 @@
 {% elif tab == 'boq' %}
 <section class="card">
   <div class="card-head"><h2>工程量清单</h2><span><a class="link" href="/export/{{ p.id }}/xlsx/boq">导出 Excel</a> · <a class="link" href="/export/{{ p.id }}/boq">CSV</a></span></div>
+  <form class="inline" method="post" action="/projects/{{ p.id }}/boq" style="margin-bottom:10px">
+    <input name="code" placeholder="编号" style="width:100px">
+    <input name="name" placeholder="工程量名称" required style="width:220px">
+    <input name="unit" placeholder="单位" style="width:70px">
+    <input name="qty" placeholder="数量" style="width:90px">
+    <input name="part" placeholder="部位" style="width:120px">
+    <button class="btn small primary" type="submit">新增工程量</button>
+  </form>
   <div class="table-wrap">
     <table class="table">
-      <thead><tr><th>编号</th><th>名称</th><th>单位</th><th>数量</th><th>部位</th></tr></thead>
+      <thead><tr><th>编号</th><th>名称</th><th>单位</th><th>数量</th><th>部位</th><th>操作</th></tr></thead>
       <tbody>
-      {% for b in boq %}<tr><td>{{ b.code }}</td><td>{{ b.name }}</td><td>{{ b.unit }}</td><td>{{ b.qty }}</td><td class="muted">{{ b.part }}</td></tr>{% endfor %}
+      {% for b in boq %}<tr><td>{{ b.code }}</td><td>{{ b.name }}</td><td>{{ b.unit }}</td><td>{{ b.qty }}</td><td class="muted">{{ b.part }}</td><td><form method="post" action="/projects/{{ p.id }}/boq/{{ b.id }}/delete"><button class="btn small" type="submit">删除</button></form></td></tr>{% endfor %}
       </tbody>
     </table>
   </div>
@@ -134,12 +153,18 @@
 </section>
 <section class="card">
   <div class="card-head"><h2>预算构成</h2><span><span class="badge info">XLSX/XML 解析</span> <a class="link" href="/export/{{ p.id }}/xlsx/budget">导出 Excel</a></span></div>
+  <form class="inline" method="post" action="/projects/{{ p.id }}/budget" style="margin-bottom:10px">
+    <input name="name" placeholder="费用名称" required style="width:220px">
+    <input name="amount" type="number" step="0.01" placeholder="金额" required style="width:130px">
+    <select name="category"><option>设备</option><option>安装</option><option>其他</option></select>
+    <button class="btn small primary" type="submit">新增预算项</button>
+  </form>
   <div class="table-wrap">
     <table class="table">
-      <thead><tr><th>项目</th><th>金额（元）</th><th>类别</th></tr></thead>
+      <thead><tr><th>项目</th><th>金额（元）</th><th>类别</th><th>操作</th></tr></thead>
       <tbody>
-      {% for b in budget %}<tr><td>{{ b.name }}</td><td>{{ b.amount|money }}</td><td>{{ b.category }}</td></tr>{% endfor %}
-      <tr class="total"><td>合计</td><td>{{ p.budget_total|money }}</td><td></td></tr>
+      {% for b in budget %}<tr><td>{{ b.name }}</td><td>{{ b.amount|money }}</td><td>{{ b.category }}</td><td><form method="post" action="/projects/{{ p.id }}/budget/{{ b.id }}/delete"><button class="btn small" type="submit">删除</button></form></td></tr>{% endfor %}
+      <tr class="total"><td>合计</td><td>{{ p.budget_total|money }}</td><td></td><td></td></tr>
       </tbody>
     </table>
   </div>
