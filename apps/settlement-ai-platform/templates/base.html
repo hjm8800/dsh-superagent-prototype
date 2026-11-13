@@ -16,6 +16,7 @@
     <a href="/projects/{{ nav_pid|default(1) }}?tab=compare">三算对比</a>
     <a href="/projects/{{ nav_pid|default(1) }}?tab=ai">AI操作台</a>
     <a href="/projects/{{ nav_pid|default(1) }}?tab=reviews">复核归档</a>
+    <a href="/material-issues" class="{{ 'active' if active == 'material_issues' else '' }}">材料超领</a>
   </nav>
   <div class="userbox">
     <span class="username">{{ user.name }}</span>
@@ -34,6 +35,7 @@
     <a href="/projects/{{ nav_pid|default(1) }}?tab=compare">三算对比</a>
     <a href="/projects/{{ nav_pid|default(1) }}?tab=ai">AI操作台</a>
     <a href="/projects/{{ nav_pid|default(1) }}?tab=reviews">复核归档</a>
+    <a href="/material-issues" class="{{ 'active' if active == 'material_issues' else '' }}">材料超领</a>
     <div class="side-title">说明</div>
     <div class="side-note">MVP 演示版<br>数据已匿名化<br>仅内网使用</div>
   </aside>

@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import sqlite3
+import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -27,7 +28,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from itsdangerous import BadSignature, URLSafeSerializer
 
-from parsers import parse_file
+from parsers import parse_file, parse_material_issue_xlsx
 from seed import check_pw, connect, init_db, now
 
 BASE = Path(__file__).resolve().parent
@@ -184,6 +185,49 @@ def can_manage(user):
     return user and user["role"] in ("admin", "manager")
 
 
+def material_issue_rows(conn, station="", team="", status=""):
+    sql = "SELECT * FROM material_issues WHERE 1=1"
+    args = []
+    if station:
+        sql += " AND station=?"; args.append(station)
+    if team:
+        sql += " AND team=?"; args.append(team)
+    if status:
+        sql += " AND status=?"; args.append(status)
+    sql += " ORDER BY station, team, id"
+    rows = []
+    for r in conn.execute(sql, args):
+        d = dict(r)
+        d["diff"] = max(float(d.get("issued_qty") or 0) - float(d.get("settled_qty") or 0), 0)
+        d["amount"] = d["diff"] * float(d.get("price") or 0)
+        d["recovered_amount"] = min(float(d.get("recovered_qty") or 0), d["diff"]) * float(d.get("price") or 0)
+        if d["diff"] > 0:
+            rows.append(d)
+    return rows
+
+
+def group_issues(rows, key):
+    groups = {}
+    for r in rows:
+        k = r[key]
+        g = groups.setdefault(k, {"name": k, "items": 0, "teams": set(), "stations": set(), "amount": 0.0, "pending": 0.0, "recovered": 0.0})
+        g["items"] += 1
+        g["teams"].add(r["team"])
+        g["stations"].add(r["station"])
+        g["amount"] += r["amount"]
+        g["recovered"] += r["recovered_amount"]
+        if r["status"] != "已追回":
+            g["pending"] += r["amount"] - r["recovered_amount"]
+    out = []
+    for g in groups.values():
+        g["team_count"] = len(g.pop("teams"))
+        g["station_names"] = "、".join(sorted(g.pop("stations")))
+        g["rate"] = (g["recovered"] / g["amount"] * 100) if g["amount"] else 0
+        out.append(g)
+    out.sort(key=lambda x: -x["amount"])
+    return out
+
+
 def generate_draft(conn, project, scene):
     profile = {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM profiles WHERE project_id=?", (project["id"],))}
     docs = conn.execute("SELECT name, status, summary FROM documents WHERE project_id=? ORDER BY id", (project["id"],)).fetchall()
@@ -304,6 +348,118 @@ def dashboard(request: Request, user=Depends(current_user), conn=Depends(get_db)
         request, "dashboard.html",
         {"user": user, "projects": projects, "alerts": alerts, "tasks": tasks, "stats": stats, "active": "dashboard", "can_manage": can_manage(user)},
     )
+
+
+@app.get("/material-issues", response_class=HTMLResponse)
+def material_issues_page(
+    request: Request, station: str = "", team: str = "", status: str = "",
+    user=Depends(current_user), conn=Depends(get_db),
+):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    rows = material_issue_rows(conn, station, team, status)
+    all_rows = material_issue_rows(conn)
+    by_station = group_issues(rows, "station")
+    by_team = group_issues(rows, "team")
+    total_amount = sum(r["amount"] for r in rows)
+    total_pending = sum(r["amount"] - r["recovered_amount"] for r in rows if r["status"] != "已追回")
+    total_recovered = sum(r["recovered_amount"] for r in rows)
+    mat_totals = {}
+    for r in rows:
+        mat_totals.setdefault(r["material_name"], 0)
+        mat_totals[r["material_name"]] += r["amount"]
+    top_material = max(mat_totals.items(), key=lambda x: x[1])[0] if mat_totals else "—"
+    top_station = by_station[0]["name"] if by_station else "—"
+    top_team = by_team[0]["name"] if by_team else "—"
+    summary = (
+        f"共发现出库大于结算的物料 {len(rows)} 条，超领金额 {total_amount:,.0f} 元，待追回 {total_pending:,.0f} 元，已追回 {total_recovered:,.0f} 元。"
+        f"超领金额最高的供电所是{top_station}，班组是{top_team}，材料是{top_material}。"
+        "建议先向金额最高的班组发追回通知，再按供电所汇总与物资系统出库单逐条核对。"
+    )
+    stations = [r["station"] for r in conn.execute("SELECT DISTINCT station FROM material_issues ORDER BY station")]
+    teams = [r["team"] for r in conn.execute("SELECT DISTINCT team FROM material_issues ORDER BY team")]
+    statuses = [r["status"] for r in conn.execute("SELECT DISTINCT status FROM material_issues ORDER BY status")]
+    return templates.TemplateResponse(
+        request, "material_issues.html",
+        {"user": user, "rows": rows, "all_count": len(all_rows), "by_station": by_station, "by_team": by_team,
+         "station_options": stations, "team_options": teams, "status_options": statuses,
+         "station": station, "team": team, "status": status, "summary": summary,
+         "total_amount": total_amount, "total_pending": total_pending, "total_recovered": total_recovered,
+         "active": "material_issues"},
+    )
+
+
+@app.get("/material-issues/template")
+def material_issue_template(request: Request, user=Depends(current_user)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    wb = Workbook(); ws = wb.active; ws.title = "材料超领导入"
+    headers = ["供电所", "班组", "项目", "材料编码", "材料名称", "规格型号", "单位", "出库数量", "结算数量", "单价", "已追回数量", "状态", "责任人", "备注"]
+    ws.append(headers)
+    for c in ws[1]:
+        c.font = Font(bold=True)
+        c.fill = PatternFill("solid", fgColor="E8F0FE")
+    ws.append(["供电所A", "班组甲", "项目A·某台区改造工程", "020200300010023", "1kV铝芯交联聚乙烯绝缘架空电缆", "JKLYJ-120(1kV)", "米", 1200, 1100, 12, 0, "待追回", "物资员", "演示行，可删除"])
+    for i, h in enumerate(headers, 1):
+        ws.column_dimensions[chr(64 + i)].width = max(10, min(22, len(h) * 2 + 6))
+    bio = io.BytesIO(); wb.save(bio); bio.seek(0)
+    return StreamingResponse(bio, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": "attachment; filename=material-issue-template.xlsx"})
+
+
+@app.post("/material-issues/import")
+def material_issue_import(request: Request, file: UploadFile = File(...), user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    raw = file.file.read()
+    dest = UPLOAD_DIR / f"material-issue-{uuid.uuid4().hex[:8]}.xlsx"
+    dest.write_bytes(raw)
+    rows = parse_material_issue_xlsx(str(dest))
+    if not rows:
+        return RedirectResponse("/material-issues?msg=未识别到有效数据，请按模板填写", status_code=303)
+    conn.execute("DELETE FROM material_issues")
+    for r in rows:
+        conn.execute(
+            "INSERT INTO material_issues (station, team, project_name, material_code, material_name, spec, unit, issued_qty, settled_qty, price, recovered_qty, status, responsible, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (r["station"], r["team"], r["project_name"], r["material_code"], r["material_name"], r["spec"], r["unit"], r["issued_qty"], r["settled_qty"], r["price"], r["recovered_qty"], r["status"], r["responsible"], r["note"]),
+        )
+    conn.commit()
+    audit(conn, None, user, "material_import", f"导入材料超领 {len(rows)} 条")
+    return RedirectResponse(f"/material-issues?msg=已导入 {len(rows)} 条材料超领记录", status_code=303)
+
+
+@app.post("/material-issues/{iid}/recover")
+def material_issue_recover(iid: int, request: Request, recovered_qty: float = Form(0), status: str = Form("追回中"), responsible: str = Form(""), user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    row = conn.execute("SELECT * FROM material_issues WHERE id=?", (iid,)).fetchone()
+    if not row:
+        raise HTTPException(404)
+    diff = max(float(row["issued_qty"] or 0) - float(row["settled_qty"] or 0), 0)
+    qty = min(max(recovered_qty, 0), diff)
+    if status == "已追回":
+        qty = diff
+    conn.execute("UPDATE material_issues SET recovered_qty=?, status=?, responsible=? WHERE id=?", (qty, status, responsible or row["responsible"], iid))
+    conn.commit()
+    audit(conn, None, user, "material_recover", f"材料超领 #{iid} 追回 {qty}")
+    return RedirectResponse("/material-issues?msg=追回进度已更新", status_code=303)
+
+
+@app.get("/material-issues/export")
+def material_issue_export(request: Request, station: str = "", team: str = "", status: str = "", user=Depends(current_user), conn=Depends(get_db)):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    rows = material_issue_rows(conn, station, team, status)
+    wb = Workbook(); ws = wb.active; ws.title = "材料超领分析"
+    headers = ["供电所", "班组", "项目", "材料编码", "材料名称", "规格型号", "单位", "出库数量", "结算数量", "差异数量", "单价", "超领金额", "已追回数量", "已追回金额", "状态", "责任人", "备注"]
+    ws.append(headers)
+    for c in ws[1]:
+        c.font = Font(bold=True); c.fill = PatternFill("solid", fgColor="E8F0FE")
+    for r in rows:
+        ws.append([r["station"], r["team"], r["project_name"], r["material_code"], r["material_name"], r["spec"], r["unit"], r["issued_qty"], r["settled_qty"], r["diff"], r["price"], r["amount"], r["recovered_qty"], r["recovered_amount"], r["status"], r["responsible"], r["note"]])
+    for i, h in enumerate(headers, 1):
+        ws.column_dimensions[chr(64 + i)].width = max(10, min(24, len(h) * 2 + 6))
+    bio = io.BytesIO(); wb.save(bio); bio.seek(0)
+    return StreamingResponse(bio, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": "attachment; filename=material-issues.xlsx"})
 
 
 @app.get("/projects/new", response_class=HTMLResponse)

@@ -90,6 +90,23 @@ CREATE TABLE IF NOT EXISTS compare_items (
   evidence TEXT,
   status TEXT DEFAULT '待确认'
 );
+CREATE TABLE IF NOT EXISTS material_issues (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  station TEXT,
+  team TEXT,
+  project_name TEXT,
+  material_code TEXT,
+  material_name TEXT,
+  spec TEXT,
+  unit TEXT,
+  issued_qty REAL DEFAULT 0,
+  settled_qty REAL DEFAULT 0,
+  price REAL DEFAULT 0,
+  recovered_qty REAL DEFAULT 0,
+  status TEXT DEFAULT '待追回',
+  responsible TEXT,
+  note TEXT
+);
 CREATE TABLE IF NOT EXISTS tasks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL,
@@ -335,6 +352,19 @@ def seed(conn: sqlite3.Connection) -> None:
             conn.execute("INSERT INTO tasks (project_id, name, owner, due, status) VALUES (?,?,?,?,?)", (p["id"], *t))
         for a in p["alerts"]:
             conn.execute("INSERT INTO alerts (project_id, level, title, detail) VALUES (?,?,?,?)", (p["id"], *a))
+    issues = [
+        ("供电所A", "班组甲", "项目A·某台区改造工程", "020200300010023", "1kV铝芯交联聚乙烯绝缘架空电缆", "JKLYJ-120(1kV)", "米", 1200, 1100, 12.0, 0, "待追回", "物资员", "现场剩余未退库"),
+        ("供电所A", "班组甲", "项目A·某台区改造工程", "020400200010002", "0.6/1kV铜芯交联聚乙烯绝缘电力电缆", "ZA-YJV-1×240", "米", 820, 760, 180.0, 0, "待追回", "物资员", "电缆盘余量"),
+        ("供电所A", "班组乙", "项目A·某台区改造工程", "020100100010008", "普通钢筋混凝土杆", "Φ150×8m", "根", 12, 10, 800.0, 1, "追回中", "物资员", "已退1根，剩1根"),
+        ("供电所B", "班组丙", "项目B·某业扩配套工程", "020500400020804", "拉盘", "LP6", "块", 40, 34, 45.0, 0, "待追回", "物资员", "班组未确认"),
+        ("供电所B", "班组丙", "项目B·某业扩配套工程", "020200300010023", "1kV铝芯交联聚乙烯绝缘架空电缆", "JKLYJ-120(1kV)", "米", 1500, 1380, 12.0, 60, "追回中", "物资员", "已追回60米"),
+        ("供电所C", "班组丁", "项目C·某业扩配套工程", "020400200010002", "0.6/1kV铜芯交联聚乙烯绝缘电力电缆", "ZA-YJV-1×240", "米", 300, 285, 180.0, 5, "追回中", "物资员", "剩余10米"),
+        ("供电所C", "班组丁", "项目C·某业扩配套工程", "020200300010013", "1kV铝芯交联聚乙烯绝缘架空电缆", "JKLYJ-240(1kV)", "米", 500, 450, 18.0, 0, "待追回", "物资员", "需补退库单"),
+    ]
+    conn.executemany(
+        "INSERT INTO material_issues (station, team, project_name, material_code, material_name, spec, unit, issued_qty, settled_qty, price, recovered_qty, status, responsible, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        issues,
+    )
     members = {
         "ziliao": [1, 3], "jiesuan": [2], "wuzi": [1, 2], "jingli": [1, 2, 3],
         "admin": [1, 2, 3],

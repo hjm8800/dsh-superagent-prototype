@@ -373,3 +373,71 @@ def parse_file(path: str, filename: str | None = None) -> dict:
         return {"status": "unsupported", "summary": f"暂不支持 {ext or '未知'} 格式", "data": {}, "text": ""}
     except Exception as e:
         return {"status": "error", "summary": f"解析失败：{e}", "data": {}, "text": ""}
+
+
+def parse_material_issue_xlsx(path: str) -> list[dict]:
+    """Parse the material issue/recovery import template.
+
+    Headers are matched by keyword so exports from different systems can be used:
+    供电所/班组/项目/材料编码/材料名称/规格/单位/出库数量/结算数量/单价/已追回数量/状态/责任人/备注
+    """
+    wb = load_workbook(path, read_only=True, data_only=True)
+    ws = wb.worksheets[0]
+    rows = list(ws.iter_rows(values_only=True))
+    wb.close()
+    if not rows:
+        return []
+    headers = [str(h or "").strip() for h in rows[0]]
+    def col(*keys):
+        for i, h in enumerate(headers):
+            if any(k in h for k in keys):
+                return i
+        return None
+    idx = {
+        "station": col("供电所"),
+        "team": col("班组"),
+        "project_name": col("项目"),
+        "material_code": col("材料编码", "物资编码"),
+        "material_name": col("材料名称", "物资名称"),
+        "spec": col("规格"),
+        "unit": col("单位"),
+        "issued_qty": col("出库", "实发", "领用"),
+        "settled_qty": col("结算"),
+        "price": col("单价"),
+        "recovered_qty": col("已追回", "追回"),
+        "status": col("状态"),
+        "responsible": col("责任人", "经办"),
+        "note": col("备注"),
+    }
+    out = []
+    for r in rows[1:]:
+        def get(key):
+            i = idx.get(key)
+            return r[i] if i is not None and i < len(r) else None
+        def num(v):
+            try:
+                return float(str(v).replace(",", "").strip())
+            except Exception:
+                return 0.0
+        station = str(get("station") or "").strip()
+        team = str(get("team") or "").strip()
+        name = str(get("material_name") or "").strip()
+        if not station or not team or not name:
+            continue
+        out.append({
+            "station": station,
+            "team": team,
+            "project_name": str(get("project_name") or "").strip(),
+            "material_code": str(get("material_code") or "").strip(),
+            "material_name": name,
+            "spec": str(get("spec") or "").strip(),
+            "unit": str(get("unit") or "").strip(),
+            "issued_qty": num(get("issued_qty")),
+            "settled_qty": num(get("settled_qty")),
+            "price": num(get("price")),
+            "recovered_qty": num(get("recovered_qty")),
+            "status": str(get("status") or "待追回").strip() or "待追回",
+            "responsible": str(get("responsible") or "").strip(),
+            "note": str(get("note") or "").strip(),
+        })
+    return out

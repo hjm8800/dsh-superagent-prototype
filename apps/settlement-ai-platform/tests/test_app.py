@@ -152,3 +152,41 @@ def test_upload_xlsx_import_and_excel_export(tmp_path):
     assert r.status_code == 200
     assert "spreadsheetml" in r.headers["content-type"]
 
+def test_material_issues_page():
+    login("wuzi")
+    r = client.get("/material-issues")
+    assert r.status_code == 200
+    assert "材料超领分析" in r.text
+    assert "供电所A" in r.text
+    assert "班组甲" in r.text
+    assert "待追回" in r.text
+    assert "built-in method" not in r.text
+
+
+def test_material_issue_import_export_and_recover(tmp_path):
+    login("wuzi")
+    from openpyxl import Workbook
+    p = tmp_path / "issues.xlsx"
+    wb = Workbook(); ws = wb.active
+    ws.append(["供电所", "班组", "项目", "材料名称", "规格型号", "单位", "出库数量", "结算数量", "单价", "已追回数量", "状态", "责任人", "备注"])
+    ws.append(["供电所Z", "班组Z", "项目Z·测试", "测试电缆", "YJV-1×240", "米", 100, 80, 50, 0, "待追回", "物资员", "测试"])
+    wb.save(p)
+    with open(p, "rb") as fh:
+        r = client.post("/material-issues/import", files={"file": ("issues.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}, follow_redirects=False)
+    assert r.status_code == 303
+    r = client.get("/material-issues")
+    assert "供电所Z" in r.text
+    assert "测试电缆" in r.text
+    # recover
+    import sqlite3, os
+    conn = sqlite3.connect(os.path.join(os.environ["PLATFORM_DATA_DIR"], "platform.db"))
+    row = conn.execute("SELECT id FROM material_issues WHERE station='供电所Z'").fetchone()
+    conn.close()
+    r = client.post(f"/material-issues/{row[0]}/recover", data={"recovered_qty": 20, "status": "已追回", "responsible": "物资员"}, follow_redirects=False)
+    assert r.status_code == 303
+    r = client.get("/material-issues")
+    assert "已追回" in r.text
+    r = client.get("/material-issues/export")
+    assert r.status_code == 200
+    assert "spreadsheetml" in r.headers["content-type"]
+
