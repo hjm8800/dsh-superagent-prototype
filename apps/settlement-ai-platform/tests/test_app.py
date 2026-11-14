@@ -241,3 +241,9 @@ def test_admin_user_create_and_password_change():
     r = client.get("/account")
     assert "账号" in r.text
 
+def test_demo_page_public():
+    r = client.get("/demo")
+    assert r.status_code == 200
+    assert "5 分钟演示" in r.text
+    assert "三算对比" in r.text
+

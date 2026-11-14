@@ -294,6 +294,27 @@ def health():
     return {"ok": True, "app": "settlement-ai-platform", "demo": DEMO}
 
 
+@app.get("/demo", response_class=HTMLResponse)
+def demo_page(request: Request):
+    return templates.TemplateResponse(request, "demo.html", {"active": "demo"})
+
+
+@app.get("/demo/pptx")
+def demo_pptx():
+    p = BASE.parent.parent / "docs" / "settlement" / "settlement-ai-demo.pptx"
+    if not p.exists():
+        raise HTTPException(404, "演示文件尚未生成")
+    return FileResponse(str(p), filename="settlement-ai-demo.pptx")
+
+
+@app.get("/demo/pdf")
+def demo_pdf():
+    p = BASE.parent.parent / "docs" / "settlement" / "settlement-ai-demo.pdf"
+    if not p.exists():
+        raise HTTPException(404, "演示文件尚未生成")
+    return FileResponse(str(p), filename="settlement-ai-demo.pdf")
+
+
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, user=Depends(current_user)):
     if user:
