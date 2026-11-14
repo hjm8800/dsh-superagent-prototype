@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}工作台 · 结算AI工作台{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>工作台</h1>
+    <p class="sub">{{ stats.projects }} 个项目 · 设计资料解析、三算对比与复核</p>
+  </div>
+  <div class="head-actions">
+    <a class="btn" href="/demo">看演示</a>
+    {% if can_manage %}<a class="btn" href="/projects/new">新建项目</a>{% endif %}
+    <a class="btn" href="/projects/{{ projects[0].id if projects else 1 }}?tab=docs">上传资料</a>
+    <a class="btn primary" href="/projects/{{ projects[0].id if projects else 1 }}?tab=ai">AI操作台</a>
+  </div>
+</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="kpi-label">在建项目</div><div class="kpi-value">{{ stats.projects }}</div><div class="kpi-sub">9月投产设计资料</div></div>
+  <div class="kpi"><div class="kpi-label">待解析/需插件</div><div class="kpi-value warn">{{ stats.docs_pending }}</div><div class="kpi-sub">附件3/5 等</div></div>
+  <div class="kpi"><div class="kpi-label">风险提醒</div><div class="kpi-value danger">{{ stats.risk }}</div><div class="kpi-sub">待处理</div></div>
+  <div class="kpi"><div class="kpi-label">待复核</div><div class="kpi-value ok">{{ stats.drafts }}</div><div class="kpi-sub">AI初稿</div></div>
+</div>
+
+<section class="card">
+  <div class="card-head"><h2>项目总览</h2><a class="link" href="/">刷新</a></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>项目</th><th>阶段</th><th>预算</th><th>投产日</th><th>负责人</th><th>资料</th><th>操作</th></tr></thead>
+      <tbody>
+      {% for p in projects %}
+        <tr>
+          <td><a class="strong" href="/projects/{{ p.id }}?tab=overview">{{ p.name }}</a><div class="muted">{{ p.code }} · {{ p.ptype }}</div></td>
+          <td><span class="badge info">{{ p.stage }}</span></td>
+          <td>{{ p.budget_total|money }} 元</td>
+          <td>{{ p.t0 }}</td>
+          <td>{{ p.owner }}</td>
+          <td><span class="badge ok">已解析</span></td>
+          <td><a class="btn small" href="/projects/{{ p.id }}?tab=overview">打开</a></td>
+        </tr>
+      {% endfor %}
+      {% if not projects %}<tr><td colspan="7" class="muted">当前账号没有项目权限。</td></tr>{% endif %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head"><h2>风险与提醒</h2></div>
+    {% for a in alerts %}
+      <div class="alert-row">
+        <span class="badge {{ 'danger' if a.level == '高' else 'warn' }}">{{ a.level }}</span>
+        <div><div class="strong">{{ a.title }}</div><div class="muted">{{ a.pname }} · {{ a.detail }}</div></div>
+      </div>
+    {% endfor %}
+    {% if not alerts %}<div class="muted">暂无风险。</div>{% endif %}
+  </section>
+  <section class="card">
+    <div class="card-head"><h2>待办节点</h2></div>
+    {% for t in tasks %}
+      <div class="task-row">
+        <div><div class="strong">{{ t.name }}</div><div class="muted">{{ t.pname }} · {{ t.owner }} · {{ t.due }}</div></div>
+        <span class="badge {{ 'warn' if t.status == '进行中' else 'info' }}">{{ t.status }}</span>
+      </div>
+    {% endfor %}
+    {% if not tasks %}<div class="muted">暂无待办。</div>{% endif %}
+  </section>
+</div>
+
+<div class="ribbon">
+  <div><strong>解析插件：</strong>DOCX/XLSX/XLS/PDF/XML/ZIP 内置；DWG 用 ODA File Converter；DOC 用 LibreOffice；BDY3 需预算软件插件。</div>
+  <div><strong>AI原则：</strong>AI出初稿、人做判断；数字必复算；敏感资料不出内网。</div>
+</div>
+{% endblock %}

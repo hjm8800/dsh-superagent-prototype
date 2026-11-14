@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}项目成员 · {{ p.name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="crumb">项目库 / {{ p.code }} / 成员</div><h1>项目成员</h1><p class="sub">{{ p.name }}</p></div>
+  <div class="head-actions"><a class="btn" href="/projects/{{ p.id }}?tab=overview">返回项目</a></div>
+</div>
+<section class="card">
+  <div class="card-head"><h2>添加成员</h2><span class="muted">管理员/项目经理可维护</span></div>
+  <form class="inline" method="post" action="/projects/{{ p.id }}/members">
+    <select name="username" required>
+      <option value="">选择账号</option>
+      {% for u in all_users %}<option value="{{ u.username }}">{{ u.name }}（{{ u.username }} / {{ u.role }}）</option>{% endfor %}
+    </select>
+    <button class="btn primary" type="submit">添加</button>
+  </form>
+</section>
+<section class="card">
+  <div class="card-head"><h2>当前成员</h2><span class="muted">{{ members|length }} 人</span></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>姓名</th><th>账号</th><th>角色</th><th>操作</th></tr></thead>
+      <tbody>
+      {% for m in members %}
+        <tr><td class="strong">{{ m.name }}</td><td>{{ m.username }}</td><td><span class="badge info">{{ m.role }}</span></td>
+          <td><form method="post" action="/projects/{{ p.id }}/members/{{ m.id }}/remove"><button class="btn small" type="submit">移除</button></form></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

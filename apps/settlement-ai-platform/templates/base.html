@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}结算AI工作台{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">结算<span>AI</span>工作台</div>
+  <nav class="topnav">
+    <a href="/" class="{{ 'active' if active == 'dashboard' else '' }}">工作台</a>
+    <a href="/projects/{{ nav_pid|default(1) }}?tab=docs" class="{{ 'active' if active == 'project' else '' }}">项目库</a>
+    <a href="/projects/{{ nav_pid|default(1) }}?tab=docs">资料解析</a>
+    <a href="/projects/{{ nav_pid|default(1) }}?tab=compare">三算对比</a>
+    <a href="/projects/{{ nav_pid|default(1) }}?tab=ai">AI操作台</a>
+    <a href="/projects/{{ nav_pid|default(1) }}?tab=reviews">复核归档</a>
+    <a href="/material-issues" class="{{ 'active' if active == 'material_issues' else '' }}">材料超领</a>
+    <a href="/demo" class="{{ 'active' if active == 'demo' else '' }}">演示</a>
+  </nav>
+  <div class="userbox">
+    <span class="username">{{ user.name }}</span>
+    {% set role_names = {'engineer':'工程部','settlement':'市场部','material':'物资组','manager':'项目管理','admin':'系统管理'} %}
+    <span class="role">{{ role_names.get(user.role, user.role) }}</span>
+    <a href="/account">账号</a><a href="/logout">退出</a>
+  </div>
+</header>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="side-title">菜单</div>
+    <a href="/" class="{{ 'active' if active == 'dashboard' else '' }}">工作台</a>
+    <a href="/projects/{{ nav_pid|default(1) }}?tab=overview">项目总览</a>
+    <a href="/projects/{{ nav_pid|default(1) }}?tab=docs">设计资料</a>
+    <a href="/projects/{{ nav_pid|default(1) }}?tab=materials">材料清册</a>
+    <a href="/projects/{{ nav_pid|default(1) }}?tab=compare">三算对比</a>
+    <a href="/projects/{{ nav_pid|default(1) }}?tab=ai">AI操作台</a>
+    <a href="/projects/{{ nav_pid|default(1) }}?tab=reviews">复核归档</a>
+    <a href="/material-issues" class="{{ 'active' if active == 'material_issues' else '' }}">材料超领</a>
+    <a href="/demo" class="{{ 'active' if active == 'demo' else '' }}">演示</a>
+    {% if user.role == 'admin' %}<a href="/admin/users" class="{{ 'active' if active == 'users' else '' }}">用户管理</a>{% endif %}
+    <div class="side-title">说明</div>
+    <div class="side-note">MVP 演示版<br>数据已匿名化<br>仅内网使用</div>
+  </aside>
+  <main class="main">
+    {% if request.query_params.get('msg') %}<div class="flash">{{ request.query_params.get('msg') }}</div>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+<footer class="footer">结算AI工作台 · MVP 演示 · 仅使用匿名项目 A/B/C</footer>
+</body>
+</html>

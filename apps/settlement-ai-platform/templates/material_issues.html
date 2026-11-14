@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}材料超领分析 · 结算AI工作台{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="crumb">物资 / 结算差异</div>
+    <h1>材料超领分析</h1>
+    <p class="sub">出库数量大于结算数量的材料，按供电所、班组汇总；跟踪向班组追回材料。</p>
+  </div>
+  <div class="head-actions">
+    <a class="btn" href="/material-issues/template">下载导入模板</a>
+    <a class="btn" href="/material-issues/export">导出 Excel</a>
+    <a class="btn primary" href="#import">导入数据</a>
+  </div>
+</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="kpi-label">超领物料条目</div><div class="kpi-value">{{ rows|length }}</div><div class="kpi-sub">出库 &gt; 结算</div></div>
+  <div class="kpi"><div class="kpi-label">超领金额</div><div class="kpi-value warn">{{ total_amount|money }}</div><div class="kpi-sub">元</div></div>
+  <div class="kpi"><div class="kpi-label">待追回金额</div><div class="kpi-value danger">{{ total_pending|money }}</div><div class="kpi-sub">元</div></div>
+  <div class="kpi"><div class="kpi-label">已追回金额</div><div class="kpi-value ok">{{ total_recovered|money }}</div><div class="kpi-sub">元 / 退库或冲账</div></div>
+</div>
+
+<section class="card">
+  <div class="card-head"><h2>分析摘要</h2><span class="badge info">规则分析</span></div>
+  <p>{{ summary }}</p>
+  <p class="muted small">口径：差异数量 = 出库数量 - 结算数量，仅统计差异大于 0 的物料；超领金额 = 差异数量 × 单价；已追回金额按实际退库/冲账数量计算。导入会覆盖当前台账，请保留原始文件。</p>
+</section>
+
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head"><h2>按供电所</h2><span class="muted">金额从高到低</span></div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>供电所</th><th>班组数</th><th>条目</th><th>超领金额</th><th>待追回</th><th>已追回</th><th>追回率</th></tr></thead>
+        <tbody>
+        {% for g in by_station %}
+          <tr><td class="strong">{{ g.name }}</td><td>{{ g.team_count }}</td><td>{{ g['items'] }}</td><td>{{ g.amount|money }}</td><td>{{ g.pending|money }}</td><td>{{ g.recovered|money }}</td><td>{{ g.rate|round(1) }}%</td></tr>
+        {% endfor %}
+        {% if not by_station %}<tr><td colspan="7" class="muted">暂无数据，请导入材料出库与结算台账。</td></tr>{% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  <section class="card">
+    <div class="card-head"><h2>按班组</h2><span class="muted">含所属供电所</span></div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>班组</th><th>供电所</th><th>条目</th><th>超领金额</th><th>待追回</th><th>已追回</th><th>追回率</th></tr></thead>
+        <tbody>
+        {% for g in by_team %}
+          <tr><td class="strong">{{ g.name }}</td><td>{{ g.station_names }}</td><td>{{ g['items'] }}</td><td>{{ g.amount|money }}</td><td>{{ g.pending|money }}</td><td>{{ g.recovered|money }}</td><td>{{ g.rate|round(1) }}%</td></tr>
+        {% endfor %}
+        {% if not by_team %}<tr><td colspan="7" class="muted">暂无数据。</td></tr>{% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head"><h2>超领明细与追回</h2><span class="muted">共 {{ rows|length }} 条</span></div>
+  <form class="inline" method="get" action="/material-issues">
+    <select name="station"><option value="">全部供电所</option>{% for s in station_options %}<option {{ 'selected' if s == station else '' }}>{{ s }}</option>{% endfor %}</select>
+    <select name="team"><option value="">全部班组</option>{% for t in team_options %}<option {{ 'selected' if t == team else '' }}>{{ t }}</option>{% endfor %}</select>
+    <select name="status"><option value="">全部状态</option>{% for s in status_options %}<option {{ 'selected' if s == status else '' }}>{{ s }}</option>{% endfor %}</select>
+    <button class="btn" type="submit">筛选</button>
+    <a class="link" href="/material-issues">重置</a>
+  </form>
+  <div class="table-wrap" style="margin-top:12px">
+    <table class="table" style="min-width:1280px">
+      <thead><tr><th>供电所</th><th>班组</th><th>项目</th><th>材料</th><th>规格</th><th>单位</th><th>出库</th><th>结算</th><th>差异</th><th>单价</th><th>超领金额</th><th>已追回</th><th>状态</th><th>追回操作</th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td>{{ r.station }}</td><td class="strong">{{ r.team }}</td><td class="muted">{{ r.project_name }}</td>
+          <td>{{ r.material_name }}<div class="muted small">{{ r.material_code }}</div></td><td>{{ r.spec }}</td><td>{{ r.unit }}</td>
+          <td>{{ r.issued_qty }}</td><td>{{ r.settled_qty }}</td><td class="strong">{{ r.diff }}</td><td>{{ r.price }}</td>
+          <td>{{ r.amount|money }}</td><td>{{ r.recovered_qty }}</td>
+          <td><span class="badge {{ 'ok' if r.status == '已追回' else ('warn' if r.status in ('待追回','追回中') else 'info') }}">{{ r.status }}</span></td>
+          <td>
+            <form class="inline" method="post" action="/material-issues/{{ r.id }}/recover">
+              <input class="tiny" name="recovered_qty" value="{{ r.recovered_qty }}" title="已追回数量">
+              <select name="status"><option {{ 'selected' if r.status == '待追回' else '' }}>待追回</option><option {{ 'selected' if r.status == '追回中' else '' }}>追回中</option><option {{ 'selected' if r.status == '已追回' else '' }}>已追回</option></select>
+              <input class="tiny" name="responsible" value="{{ r.responsible }}" title="责任人">
+              <button class="btn small" type="submit">保存</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      {% if not rows %}<tr><td colspan="14" class="muted">当前筛选无超领记录。</td></tr>{% endif %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card" id="import">
+  <div class="card-head"><h2>导入出库/结算台账</h2><span class="muted">支持 Excel，按模板列名匹配</span></div>
+  <form class="upload-form" method="post" action="/material-issues/import" enctype="multipart/form-data">
+    <label>Excel 文件<input type="file" name="file" accept=".xlsx,.xls" required></label>
+    <button class="btn primary" type="submit">导入并分析</button>
+  </form>
+  <p class="muted small">必填列：供电所、班组、材料名称、单位、出库数量、结算数量、单价；可选：项目、材料编码、规格、已追回数量、状态、责任人、备注。导入会覆盖当前台账。</p>
+</section>
+{% endblock %}

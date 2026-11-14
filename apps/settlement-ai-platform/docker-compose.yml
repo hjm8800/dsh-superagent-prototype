@@ -1,0 +1,12 @@
+services:
+  workbench:
+    build: .
+    ports:
+      - "8090:8090"
+    environment:
+      PLATFORM_DATA_DIR: /data
+      PLATFORM_DEMO: "0"
+      PLATFORM_SECRET: ${PLATFORM_SECRET:?set PLATFORM_SECRET before docker compose up}
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
