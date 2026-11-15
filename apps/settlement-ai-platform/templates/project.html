@@ -66,7 +66,8 @@
 <section class="card">
   <div class="card-head"><h2>上传资料</h2><span class="muted">支持 DOCX/XLSX/XLS/PDF/XML/ZIP/DWG/DOC/图片；DWG 自动调 ODA，DOC 自动调 LibreOffice</span></div>
   <form class="upload-form" method="post" action="/projects/{{ p.id }}/documents" enctype="multipart/form-data">
-    <label>文件（可多选）<input type="file" name="file" multiple required></label>
+    <label>文件（可多选）<input type="file" name="file" multiple></label>
+    <label>或上传文件夹<input type="file" name="folder" webkitdirectory multiple></label>
     <label>资料名称<input name="name" placeholder="留空使用文件名"></label>
     <label>类别
       <select name="category">

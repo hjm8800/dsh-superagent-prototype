@@ -247,3 +247,31 @@ def test_demo_page_public():
     assert "5 分钟演示" in r.text
     assert "三算对比" in r.text
 
+def test_completeness_report_is_detailed():
+    login("ziliao")
+    r = client.post("/projects/1/ai", data={"scene": "资料完整性检查"}, follow_redirects=False)
+    assert r.status_code == 303
+    r = client.get("/projects/1?tab=ai")
+    assert r.status_code == 200
+    assert "附件清单检查" in r.text
+    assert "问题清单" in r.text
+    assert "建议动作" in r.text
+    assert "总体结论" in r.text
+
+
+def test_folder_upload(tmp_path):
+    from docx import Document
+    login("ziliao")
+    f = tmp_path / "folder-demo.docx"
+    d = Document(); d.add_paragraph("文件夹上传测试，项目编码 DEMO-FOLDER。"); d.save(f)
+    with open(f, "rb") as fh:
+        r = client.post(
+            "/projects/1/documents",
+            data={"name": "", "category": "其他"},
+            files={"folder": ("设计资料/附件1/folder-demo.docx", fh, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+            follow_redirects=False,
+        )
+    assert r.status_code == 303
+    r = client.get("/projects/1?tab=docs")
+    assert "folder-demo.docx" in r.text
+

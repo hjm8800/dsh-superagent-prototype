@@ -228,10 +228,171 @@ def group_issues(rows, key):
     return out
 
 
+def _first_int(text):
+    m = re.search(r"(\d+)", str(text or ""))
+    return int(m.group(1)) if m else None
+
+
+def build_completeness_report(project, profile, docs, materials, boq, budget, compares):
+    """Detailed, deterministic completeness check used when no LLM is configured."""
+    lines = [f"【资料完整性检查】{project['name']}（{project['code']}）", ""]
+    lines.append(f"项目阶段：{project['stage']}｜投产日：{project['t0'] or '未填'}｜检查时间：{now()}")
+    lines.append("")
+
+    expected = [
+        ("附件1", "施工图设计说明书", True),
+        ("附件2", "勘探及现场照片", True),
+        ("附件3", "施工图（DWG）", True),
+        ("附件4", "主要设备材料清册", True),
+        ("附件5", "预算", True),
+        ("附件6", "标准设计和典型造价", False),
+        ("附件7", "南网造价控制线", False),
+        ("附件8", "绿色低碳评价", False),
+        ("附件9", "五新应用评价", False),
+    ]
+    found = {}
+    for prefix, label, required in expected:
+        hit = next((d for d in docs if prefix in (d["name"] or "")), None)
+        if not hit and prefix in ("附件8", "附件9"):
+            hit = next((d for d in docs if "附件8/9" in (d["name"] or "") or "8/9" in (d["name"] or "")), None)
+        found[prefix] = hit
+
+    parsed = sum(1 for d in docs if d["status"] == "parsed")
+    needs = sum(1 for d in docs if d["status"] == "needs_plugin")
+    pending = sum(1 for d in docs if d["status"] == "pending")
+    errors = sum(1 for d in docs if d["status"] == "error")
+    mat_a = sum(1 for m in materials if m["supply"] == "甲供")
+    mat_b = sum(1 for m in materials if m["supply"] == "乙供")
+    budget_total = sum(float(b["amount"] or 0) for b in budget)
+    diff_items = [c for c in compares if c["status"] != "通过"]
+
+    high, mid = [], []
+    for prefix, label, required in expected:
+        d = found[prefix]
+        if not d:
+            (high if required else mid).append((prefix, f"缺少{prefix} {label}", "资料员补齐后重新解析"))
+            continue
+        if d["status"] == "needs_plugin":
+            mid.append((prefix, f"{d['name']} 需要插件：{d['summary'] or ''}", "信息管理员安装插件或改用XLSX/XML导出"))
+        elif d["status"] == "error":
+            high.append((prefix, f"{d['name']} 解析失败：{d['summary'] or ''}", "重新上传或转换格式"))
+        elif d["status"] == "pending":
+            mid.append((prefix, f"{d['name']} 尚未解析", "点击重新解析或上传可读版本"))
+    for key in ("10kV线路", "配变", "低压线路", "拆除"):
+        if not str(profile.get(key) or "").strip():
+            mid.append(("画像", f"项目画像缺少“{key}”", "资料员按设计说明书补录"))
+    if not materials:
+        high.append(("材料", "材料清册为空，无法做材料核对和三算对比", "上传附件4或手工新增后复核"))
+    if not boq:
+        high.append(("工程量", "工程量清单为空，无法生成结算书初稿", "上传附件4工程量清单或手工新增"))
+    if not budget:
+        high.append(("预算", "预算汇总为空，无法做预算/结算对比", "上传附件5预算或手工新增"))
+    if not compares:
+        mid.append(("三算", "尚未建立三算对比", "结算员按设计/预算/结算录入对比项"))
+    elif diff_items:
+        names = "、".join(c["item"] for c in diff_items[:5])
+        mid.append(("三算", f"三算对比有 {len(diff_items)} 项待确认：{names}", "结算员逐条核对原因和依据"))
+    # profile vs imported counts
+    profile_a = _first_int(profile.get("甲供材料"))
+    profile_b = _first_int(profile.get("乙供材料"))
+    profile_q = _first_int(profile.get("工程量清单"))
+    if profile_a is not None and profile_a != mat_a:
+        mid.append(("材料", f"画像写甲供材料 {profile_a} 条，材料库中 {mat_a} 条，需确认是否全量导入", "资料员确认导入范围"))
+    if profile_b is not None and profile_b != mat_b:
+        mid.append(("材料", f"画像写乙供材料 {profile_b} 条，材料库中 {mat_b} 条，需确认是否全量导入", "资料员确认导入范围"))
+    if profile_q is not None and profile_q != len(boq):
+        mid.append(("工程量", f"画像写工程量 {profile_q} 条，工程量库中 {len(boq)} 条，需确认是否全量导入", "资料员确认导入范围"))
+    # budget cross-check
+    m = re.search(r"([0-9]+(?:\.[0-9]+)?)", str(profile.get("预算") or ""))
+    if m and budget_total:
+        try:
+            profile_budget = float(m.group(1)) * 10000
+            if abs(profile_budget - budget_total) / budget_total > 0.01:
+                mid.append(("预算", f"画像预算约 {profile_budget:,.0f} 元，预算库合计 {budget_total:,.0f} 元，差异需确认", "物资/结算员核对预算版本"))
+        except Exception:
+            pass
+    if project["code"].startswith("DEMO") and (profile_a or profile_b or profile_q):
+        lines.append("说明：当前为演示数据，材料/工程量只导入了示例条数；画像中的全量条数与库中条数不一致属正常，真实项目全量导入后应一致。")
+        lines.append("")
+
+    lines.append("一、总体结论")
+    lines.append(f"- 资料 {len(docs)} 项：已解析 {parsed}，需插件 {needs}，待解析 {pending}，失败 {errors}。")
+    lines.append(f"- 材料 {len(materials)} 条（甲供 {mat_a} / 乙供 {mat_b}）；工程量 {len(boq)} 条；预算 {len(budget)} 项，合计 {budget_total:,.0f} 元。")
+    lines.append(f"- 三算对比 {len(compares)} 项，其中 {len(diff_items)} 项待确认。")
+    if high:
+        lines.append(f"- 结论：资料尚不完整，有 {len(high)} 项高优先级问题，暂不建议提交复核。")
+    elif mid:
+        lines.append(f"- 结论：资料基本齐全，可进入三算对比/复核，但有 {len(mid)} 项提醒需处理。")
+    else:
+        lines.append("- 结论：资料齐全，可提交复核。")
+    lines.append("")
+
+    lines.append("二、附件清单检查")
+    for prefix, label, required in expected:
+        d = found[prefix]
+        if not d:
+            lines.append(f"- {prefix} {label}：缺失（{'必需' if required else '建议'}）")
+        elif prefix == "附件9" and "8/9" in (d["name"] or ""):
+            lines.append(f"- 附件9 五新应用评价：已由 {d['name']} 合并覆盖，通过")
+        else:
+            status = {"parsed": "已解析", "needs_plugin": "需插件", "pending": "待解析", "error": "解析失败"}.get(d["status"], d["status"])
+            tag = "通过" if d["status"] == "parsed" else "需处理"
+            lines.append(f"- {d['name']}：{status}，{tag}；{d['summary'] or '无摘要'}")
+    lines.append("")
+
+    lines.append("三、项目画像检查")
+    for key in ("10kV线路", "配变", "低压线路", "拆除", "预算"):
+        lines.append(f"- {key}：{profile.get(key) or '未填'}")
+    lines.append("")
+
+    lines.append("四、数据一致性检查")
+    lines.append(f"- 材料：库中 {len(materials)} 条（甲供 {mat_a} / 乙供 {mat_b}），已导入[{', '.join(m['name'] for m in materials[:3])}{'…' if len(materials) > 3 else ''}]。")
+    lines.append(f"- 工程量：库中 {len(boq)} 条；预算：库中 {len(budget)} 项，合计 {budget_total:,.0f} 元。")
+    if diff_items:
+        for c in diff_items[:6]:
+            lines.append(f"- 三算：{c['item']} 设计 {c['design_qty']}、预算 {c['budget_qty']}、结算 {c['settle_qty']}；原因：{c['reason'] or '未填'}；依据：{c['evidence'] or '未填'}。")
+    else:
+        lines.append("- 三算：暂无需确认的差异项。")
+    lines.append("")
+
+    lines.append("五、问题清单（按优先级）")
+    if not high and not mid:
+        lines.append("- 未发现明显缺项。")
+    for i, (prefix, msg, action) in enumerate(high + mid, 1):
+        level = "高" if (prefix, msg, action) in high else "中"
+        lines.append(f"{i}. 【{level}】{msg}；处理：{action}")
+    lines.append("")
+
+    lines.append("六、建议动作（按顺序）")
+    actions = []
+    if any(x in (d["status"] if d else "") for x in ("pending", "needs_plugin", "error")):
+        actions.append("资料员：先处理待解析/需插件/失败的资料，补齐附件1—5。")
+    if profile_a is not None and profile_a != mat_a or profile_b is not None and profile_b != mat_b:
+        actions.append("资料员/物资员：确认材料清册是否全量导入，补齐甲供/乙供数量。")
+    if not boq or profile_q is not None and profile_q != len(boq):
+        actions.append("资料员：确认工程量清单全量导入，与材料清册勾稽。")
+    if diff_items:
+        actions.append("结算员：逐条核对三算差异，补原因和依据。")
+    if not actions:
+        actions.append("复核人：按复核清单确认后提交复核。")
+    for i, a in enumerate(actions, 1):
+        lines.append(f"{i}. {a}")
+    lines.append("")
+
+    lines.append("七、复核前确认")
+    lines.append("- 项目编码、建设规模、预算金额与设计说明书一致。")
+    lines.append("- 甲供/乙供材料、工程量清单为全量数据，不是示例。")
+    lines.append("- 三算差异均有原因和依据，待确认项已闭环。")
+    return "\n".join(lines)
+
+
 def generate_draft(conn, project, scene):
     profile = {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM profiles WHERE project_id=?", (project["id"],))}
     docs = conn.execute("SELECT name, status, summary FROM documents WHERE project_id=? ORDER BY id", (project["id"],)).fetchall()
     compares = conn.execute("SELECT * FROM compare_items WHERE project_id=? ORDER BY id", (project["id"],)).fetchall()
+    materials = conn.execute("SELECT supply, name, qty FROM materials WHERE project_id=? ORDER BY id", (project["id"],)).fetchall()
+    boq = conn.execute("SELECT name, unit, qty FROM boq WHERE project_id=? ORDER BY id", (project["id"],)).fetchall()
+    budget = conn.execute("SELECT name, amount FROM budget_items WHERE project_id=? ORDER BY id", (project["id"],)).fetchall()
     pending_docs = [d["name"] for d in docs if d["status"] not in ("parsed",)]
     diff = [c for c in compares if c["status"] != "通过"]
     prompt = (
@@ -242,6 +403,8 @@ def generate_draft(conn, project, scene):
     )
     engine = "规则初稿"
     output = ""
+    if scene == "资料完整性检查":
+        return prompt, build_completeness_report(project, profile, docs, materials, boq, budget, compares), "规则检查"
     base_url = os.environ.get("LLM_BASE_URL", "").rstrip("/")
     api_key = os.environ.get("LLM_API_KEY", "")
     if base_url and api_key:
@@ -270,10 +433,7 @@ def generate_draft(conn, project, scene):
     if not output:
         lines = [f"【{scene}】{project['name']}（{project['code']}）", ""]
         if scene == "资料完整性检查":
-            lines.append(f"资料共 {len(docs)} 项，已解析 {len(docs)-len(pending_docs)} 项，待处理/需插件 {len(pending_docs)} 项。")
-            if pending_docs:
-                lines.append("待处理：" + "、".join(pending_docs))
-            lines.append("建议：先补齐附件3/附件5的插件解析，再提交复核。")
+            lines = [build_completeness_report(project, profile, docs, materials, boq, budget, compares)]
         elif scene == "设计资料解析":
             lines.append("项目画像：" + "；".join(f"{k}={v}" for k, v in profile.items()))
             lines.append(f"预算总额：{money(project['budget_total'])} 元。")
@@ -737,14 +897,18 @@ def project_page(pid: int, request: Request, tab: str = "overview", user=Depends
 
 @app.post("/projects/{pid}/documents")
 def upload_document(
-    pid: int, request: Request, file: list[UploadFile] = File(...), name: str = Form(""), category: str = Form("其他"),
+    pid: int, request: Request, file: list[UploadFile] = File(default=[]), folder: list[UploadFile] = File(default=[]),
+    name: str = Form(""), category: str = Form("其他"),
     user=Depends(current_user), conn=Depends(get_db),
 ):
     if not user:
         return RedirectResponse("/login", status_code=303)
     get_project(conn, pid, user)
+    uploads = list(file or []) + list(folder or [])
+    if not uploads:
+        return RedirectResponse(f"/projects/{pid}?tab=docs&msg=请选择文件或文件夹", status_code=303)
     results = []
-    for f in file:
+    for f in uploads:
         raw = f.file.read()
         safe = re.sub(r"[^\w\u4e00-\u9fff.\-]+", "_", f.filename or "upload")
         dest_dir = UPLOAD_DIR / f"project_{pid}"
@@ -752,7 +916,7 @@ def upload_document(
         dest = dest_dir / f"{uuid.uuid4().hex[:8]}_{safe}"
         dest.write_bytes(raw)
         parsed = parse_file(str(dest), f.filename)
-        doc_name = (name if len(file) == 1 and name else f.filename) or safe
+        doc_name = (name if len(uploads) == 1 and name else Path(f.filename or safe).name) or safe
         cur = conn.execute(
             "INSERT INTO documents (project_id, name, category, filename, path, size, status, summary, parsed_json, uploaded_by, uploaded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (pid, doc_name, category, f.filename, str(dest), len(raw), parsed["status"], parsed["summary"], json.dumps(parsed, ensure_ascii=False), user["id"], now()),
@@ -764,7 +928,7 @@ def upload_document(
     ok = sum(1 for r in results if r[0] == "parsed")
     plugin = sum(1 for r in results if r[0] == "needs_plugin")
     err = sum(1 for r in results if r[0] == "error")
-    msg = f"上传 {len(file)} 个文件：已解析 {ok}，需插件 {plugin}，失败 {err}"
+    msg = f"上传 {len(uploads)} 个文件：已解析 {ok}，需插件 {plugin}，失败 {err}"
     if any(r[1] for r in results):
         msg += "；结构化数据已导入"
     return RedirectResponse(f"/projects/{pid}?tab=docs&msg={msg}", status_code=303)
