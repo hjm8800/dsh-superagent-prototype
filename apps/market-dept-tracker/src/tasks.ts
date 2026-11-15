@@ -3,6 +3,7 @@ import type {
   PeriodType,
   RecurringTask,
   Task,
+  TaskComment,
   TaskKind,
   TaskPhoto,
   TaskStatus,
@@ -48,6 +49,8 @@ interface TaskStore {
     periodType: PeriodType
     periodKey: string
     periodLabel: string
+    priority?: string
+    dueDate?: string
     assignedById: string | null
     recurringTaskId: string | null
     dutyId: string | null
@@ -59,6 +62,8 @@ interface TaskStore {
   taskPhotos(taskId: string): TaskPhoto[]
   photoById(id: string): TaskPhoto | undefined
   createTaskPhoto(photo: TaskPhoto): void
+  taskComments(taskId: string): TaskComment[]
+  createTaskComment(comment: TaskComment): void
   materialiseRecurringTasks(
     departmentId: string,
     periodType: PeriodType,
@@ -94,6 +99,8 @@ interface TaskRow {
   period_key: string
   period_label: string
   status: string
+  priority: string
+  due_date: string
   assigned_by_id: string | null
   recurring_task_id: string | null
   duty_id: string | null
@@ -110,6 +117,14 @@ interface TaskPhotoRow {
   filename: string
   mime: string
   size: number
+  created_at: string
+}
+
+interface TaskCommentRow {
+  id: string
+  task_id: string
+  person_id: string
+  body: string
   created_at: string
 }
 
@@ -170,7 +185,7 @@ export const taskStore = {
     const rows = this.db.raw
       .prepare(
         `SELECT id, department_id, kind, title, detail, person_id, position_id, period_type, period_key,
-                period_label, status, assigned_by_id, recurring_task_id, duty_id, artifact_id,
+                period_label, status, priority, due_date, assigned_by_id, recurring_task_id, duty_id, artifact_id,
                 created_at, updated_at, note
          FROM tasks
          WHERE period_type = ? AND period_key = ? ${departmentId ? 'AND department_id = ?' : ''}
@@ -189,6 +204,8 @@ export const taskStore = {
       periodKey: r.period_key,
       periodLabel: r.period_label,
       status: r.status as TaskStatus,
+      priority: r.priority,
+      dueDate: r.due_date,
       assignedById: r.assigned_by_id,
       recurringTaskId: r.recurring_task_id,
       dutyId: r.duty_id,
@@ -218,6 +235,8 @@ export const taskStore = {
       periodType: PeriodType
       periodKey: string
       periodLabel: string
+      priority?: string
+      dueDate?: string
       assignedById: string | null
       recurringTaskId: string | null
       dutyId: string | null
@@ -228,18 +247,19 @@ export const taskStore = {
     this.db.raw
       .prepare(
         `INSERT INTO tasks (id, department_id, kind, title, detail, person_id, position_id, period_type, period_key,
-                            period_label, status, assigned_by_id, recurring_task_id, duty_id, artifact_id,
+                            period_label, status, priority, due_date, assigned_by_id, recurring_task_id, duty_id, artifact_id,
                             created_at, updated_at, note)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, '')
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, '')
          ON CONFLICT (id) DO UPDATE SET
            title = excluded.title, detail = excluded.detail, period_type = excluded.period_type,
            period_key = excluded.period_key, period_label = excluded.period_label,
+           priority = excluded.priority, due_date = excluded.due_date,
            assigned_by_id = excluded.assigned_by_id, updated_at = excluded.updated_at`,
       )
       .run(
         input.id, input.departmentId, input.kind, input.title, input.detail, input.personId, input.positionId,
-        input.periodType, input.periodKey, input.periodLabel, input.assignedById, input.recurringTaskId,
-        input.dutyId, input.artifactId, input.createdAt, input.createdAt,
+        input.periodType, input.periodKey, input.periodLabel, input.priority ?? '', input.dueDate ?? '', input.assignedById,
+        input.recurringTaskId, input.dutyId, input.artifactId, input.createdAt, input.createdAt,
       )
   },
 
@@ -261,7 +281,7 @@ export const taskStore = {
     const row = this.db.raw
       .prepare(
         `SELECT id, department_id, kind, title, detail, person_id, position_id, period_type, period_key,
-                period_label, status, assigned_by_id, recurring_task_id, duty_id, artifact_id,
+                period_label, status, priority, due_date, assigned_by_id, recurring_task_id, duty_id, artifact_id,
                 created_at, updated_at, note
          FROM tasks WHERE id = ?`,
       )
@@ -279,6 +299,8 @@ export const taskStore = {
       periodKey: row.period_key,
       periodLabel: row.period_label,
       status: row.status as TaskStatus,
+      priority: row.priority,
+      dueDate: row.due_date,
       assignedById: row.assigned_by_id,
       recurringTaskId: row.recurring_task_id,
       dutyId: row.duty_id,
@@ -332,6 +354,26 @@ export const taskStore = {
     }
   },
 
+  /** The notes left on a task, oldest first. */
+  taskComments(this: TaskStore, taskId: string): TaskComment[] {
+    const rows = this.db.raw
+      .prepare('SELECT id, task_id, person_id, body, created_at FROM task_comments WHERE task_id = ? ORDER BY created_at, id')
+      .all(taskId) as unknown as TaskCommentRow[]
+    return rows.map((row) => ({
+      id: row.id,
+      taskId: row.task_id,
+      personId: row.person_id,
+      body: row.body,
+      createdAt: row.created_at,
+    }))
+  },
+
+  createTaskComment(this: TaskStore, comment: TaskComment): void {
+    this.db.raw
+      .prepare('INSERT INTO task_comments (id, task_id, person_id, body, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(comment.id, comment.taskId, comment.personId, comment.body, comment.createdAt)
+  },
+
   /**
    * Make sure the fixed tasks of a period exist.
    *
@@ -369,6 +411,8 @@ export const taskStore = {
           periodType,
           periodKey,
           periodLabel,
+          priority: '',
+          dueDate: '',
           assignedById: null,
           recurringTaskId: fixed.id,
           dutyId: fixed.dutyId,

@@ -1,5 +1,13 @@
 const app = getApp()
 
+/** Today as YYYY-MM-DD, to tell an overdue due date. */
+function todayKey() {
+  const now = new Date()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${now.getFullYear()}-${month}-${day}`
+}
+
 /** How the task statuses are offered, in the order a person works through them. */
 const STATUS_CHOICES = [
   { value: 'open', label: '待办' },
@@ -57,6 +65,10 @@ Page({
       const tasks = data.tasks.map((task) => ({
         ...task,
         statusIndex: Math.max(0, STATUS_CHOICES.findIndex((c) => c.value === task.status)),
+        priority: task.priority || '',
+        priorityLabel: task.priorityLabel || '',
+        dueDate: task.dueDate || '',
+        overdue: Boolean(task.dueDate && task.dueDate < todayKey()),
         photos: (task.photos || []).map((photo) => ({
           id: photo.id,
           url: `${app.globalData.baseUrl}/photos/${photo.id}?token=${encodeURIComponent(token)}`,

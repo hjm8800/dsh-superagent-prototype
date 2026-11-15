@@ -15,6 +15,7 @@ import type {
   Report,
   ReportItem,
   Task,
+  TaskComment,
   TaskKind,
   TaskPhoto,
   TaskStatus,
@@ -153,6 +154,8 @@ export class Store {
     periodType: PeriodType
     periodKey: string
     periodLabel: string
+    priority?: string
+    dueDate?: string
     assignedById: string | null
     recurringTaskId: string | null
     dutyId: string | null
@@ -164,6 +167,8 @@ export class Store {
   declare taskPhotos: (taskId: string) => TaskPhoto[]
   declare photoById: (id: string) => TaskPhoto | undefined
   declare createTaskPhoto: (photo: TaskPhoto) => void
+  declare taskComments: (taskId: string) => TaskComment[]
+  declare createTaskComment: (comment: TaskComment) => void
   declare materialiseRecurringTasks: (
     departmentId: string,
     periodType: PeriodType,

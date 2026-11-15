@@ -337,6 +337,92 @@ test('a person attaches several photos to a task, and only the post may see them
   })
 })
 
+test('a task carries a priority and a due date, and the board shows it', async () => {
+  await withServer(async (base, store) => {
+    const leader = makeLeader(store)
+    const clerk = store.people().find((p) => p.name === '黄美琳')!
+    store.createTask({
+      id: 'task-priority',
+      departmentId: 'mkt',
+      kind: 'assigned',
+      title: '优先任务',
+      detail: '',
+      personId: clerk.id,
+      positionId: clerk.positionId,
+      periodType: 'week',
+      periodKey: '2026-W45',
+      periodLabel: '2026年第45周',
+      priority: 'urgent',
+      dueDate: '2026-11-10',
+      assignedById: leader.id,
+      recurringTaskId: null,
+      dutyId: null,
+      artifactId: null,
+      createdAt: NOW,
+    })
+    const task = store.task('task-priority')!
+    assert.equal(task.priority, 'urgent')
+    assert.equal(task.dueDate, '2026-11-10')
+
+    const page = await (
+      await sessionFetch(`${base}/my-tasks?type=week&period=2026-W45&token=${clerk.token}`)
+    ).text()
+    assert.ok(page.includes('紧急'), 'the priority is shown')
+    assert.ok(page.includes('11-10'), 'the due date is shown')
+
+    const board = await (
+      await sessionFetch(`${base}/board?type=week&period=2026-W45&token=${clerk.token}`)
+    ).text()
+    assert.ok(board.includes('优先任务'), 'the board shows the task')
+    assert.ok(board.includes('紧急'), 'the board shows the priority')
+  })
+})
+
+test('a task takes comments, and only its post may leave one', async () => {
+  await withServer(async (base, store) => {
+    const leader = makeLeader(store)
+    const clerk = store.people().find((p) => p.name === '黄美琳')!
+    const other = store.people().find((p) => p.name === '潘清河')!
+    store.createTask({
+      id: 'task-comment',
+      departmentId: 'mkt',
+      kind: 'assigned',
+      title: '留言任务',
+      detail: '',
+      personId: clerk.id,
+      positionId: clerk.positionId,
+      periodType: 'week',
+      periodKey: '2026-W45',
+      periodLabel: '2026年第45周',
+      assignedById: leader.id,
+      recurringTaskId: null,
+      dutyId: null,
+      artifactId: null,
+      createdAt: NOW,
+    })
+    const comment = (token: string, body: string) =>
+      sessionFetch(`${base}/task/task-comment/comment`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token, body }).toString(),
+        redirect: 'manual',
+      })
+
+    const added = await comment(clerk.token, '合同已经收齐')
+    assert.equal(added.status, 302)
+    assert.equal(store.taskComments('task-comment').length, 1)
+
+    const page = await (await sessionFetch(`${base}/task/task-comment?token=${clerk.token}`)).text()
+    assert.ok(page.includes('合同已经收齐'), 'the comment is shown')
+    assert.ok(page.includes('合同管理业务员'), 'the author post is shown')
+    assert.ok(!page.includes('黄美琳'), 'no person may be named')
+
+    const denied = await comment(other.token, '越权留言')
+    assert.equal(denied.status, 403, 'another branch may not comment')
+    assert.equal(store.taskComments('task-comment').length, 1)
+  })
+})
+
 test('a link token alone opens neither a page nor the api', async () => {
   await withServer(async (base, store) => {
     const person = store.people().find((p) => p.name === '黄美琳')!

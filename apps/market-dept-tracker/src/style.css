@@ -427,10 +427,34 @@ input:focus, textarea:focus { outline: 2px solid var(--primary-weak); border-col
 /* The photos attached to a task. */
 .photo-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
 .photo-cell { display: flex; flex-wrap: wrap; gap: 6px; }
-.thumb { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); display: block; }
+.thumb { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); display: block; }
 .photo-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
 .photo-form input[type='file'] { font-size: 13px; max-width: 220px; }
 .photo-form .btn { padding: 4px 10px; font-size: 13px; }
+
+/* The tasks carry a priority and a due date, and the board lays them out. */
+.tag-priority-urgent { background: var(--alert-weak); color: var(--alert); }
+.tag-priority-high { background: var(--warn-weak); color: var(--warn); }
+.tag-priority-normal { background: var(--primary-weak); color: var(--primary); }
+.tag-priority-low { background: #eef1f4; color: var(--muted); }
+.due.is-overdue { color: var(--alert); font-weight: 600; }
+.link { color: var(--primary); text-decoration: none; font-size: 13px; }
+.comment { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.comment-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.comment p { margin: 0; }
+.task-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px 16px; margin: 12px 0; }
+.task-meta dt { color: var(--muted); font-size: 12px; }
+.task-meta dd { margin: 2px 0 0; }
+.inline-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.board { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.board-col { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; }
+.board-col-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.board-card { display: block; text-decoration: none; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 8px; }
+.board-title { font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+.board-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.empty-col { padding: 8px 0; }
+@media (max-width: 900px) { .board { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 720px) { .board { grid-template-columns: 1fr; } }
 
 @media (max-width: 720px) {
   .topbar-inner { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px; }

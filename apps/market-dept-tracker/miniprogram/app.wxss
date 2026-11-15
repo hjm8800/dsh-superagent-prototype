@@ -56,6 +56,13 @@ page {
 
 .tag-assigned { background: #e8f0fe; color: #1f6feb; }
 .tag-recurring { background: #e6f4ec; color: #1a7f4b; }
+.tag-urgent { background: #fdecea; color: #b42318; }
+.tag-high { background: #fdf2e3; color: #b45309; }
+.tag-normal { background: #e8f0fe; color: #1f6feb; }
+.tag-low { background: #eef1f4; color: #6b7785; }
+
+.task-meta-row { display: flex; align-items: center; gap: 12rpx; margin-top: 8rpx; }
+.due-overdue { color: #b42318; font-weight: 600; }
 
 /* The level of a post, used by the ledger and the overview. */
 .tag-manager { background: #e8f0fe; color: #1f6feb; }

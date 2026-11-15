@@ -68,6 +68,10 @@
           <text class="task-title">{{item.title}}</text>
           <text class="tag tag-{{item.kind}}">{{item.kindLabel}}</text>
         </view>
+        <view class="task-meta-row" wx:if="{{item.priorityLabel || item.dueDate}}">
+          <text wx:if="{{item.priorityLabel}}" class="tag tag-{{item.priority}}">{{item.priorityLabel}}</text>
+          <text wx:if="{{item.dueDate}}" class="muted small {{item.overdue ? 'due-overdue' : ''}}">截止 {{item.dueDate}}</text>
+        </view>
         <view class="task-detail" wx:if="{{item.detail}}">{{item.detail}}</view>
         <view class="row">
           <text class="muted small">状态</text>

@@ -1,8 +1,21 @@
 import { escapeHtml, join, layout, pageHead, stat, bar, empty } from './html.ts'
-import { LEVEL_LABELS, PERIOD_LABELS, TASK_KIND_LABELS, TASK_STATUS_LABELS } from './types.ts'
-import type { PeriodType, TaskStatus, TaskView, TaskPhoto } from './types.ts'
+import { LEVEL_LABELS, PERIOD_LABELS, PRIORITY_LABELS, TASK_KIND_LABELS, TASK_STATUS_LABELS } from './types.ts'
+import type { PeriodType, TaskStatus, TaskView, TaskPhoto, TaskComment } from './types.ts'
 
 /** The task list pages. */
+
+/** The priority of a task, as a tag; an empty priority shows a dash. */
+const priorityTag = (priority: string): string => {
+  const label = PRIORITY_LABELS[priority]
+  return label ? `<span class="tag tag-priority-${priority}">${escapeHtml(label)}</span>` : '<span class="muted">—</span>'
+}
+
+/** The due date as month and day, red when it has passed. */
+const dueCell = (dueDate: string, today: string): string => {
+  if (!dueDate) return '<span class="muted">—</span>'
+  const overdue = Boolean(today) && dueDate < today
+  return `<span class="due${overdue ? ' is-overdue' : ''}" title="${escapeHtml(dueDate)}">${escapeHtml(dueDate.slice(5))}</span>`
+}
 
 /** A post, as the task list needs it. */
 export interface TaskPosition {
@@ -24,6 +37,8 @@ export interface TaskListData {
   periodType: PeriodType
   periodKey: string
   periodLabel: string
+  /** Today, as YYYY-MM-DD, to tell an overdue due date. */
+  today: string
   periods: { key: string; label: string }[]
   /** The post whose list is shown; all of them when none is picked. */
   position?: TaskPosition
@@ -95,10 +110,13 @@ export function renderTaskList(data: TaskListData): string {
   <td>${escapeHtml(t.title)}${t.holders > 1 ? ` <span class="tag">${t.doneBy}/${t.holders} 人完成</span>` : ''}</td>
   <td><span class="tag tag-kind-${t.kind}">${escapeHtml(TASK_KIND_LABELS[t.kind])}</span></td>
   <td class="note-cell">${escapeHtml(t.detail || t.dutyText || t.artifactName || '—')}</td>
+  <td>${priorityTag(t.priority)}</td>
+  <td>${dueCell(t.dueDate, data.today)}</td>
   <td><span class="status status-${t.status}">${escapeHtml(TASK_STATUS_LABELS[t.status])}</span></td>
   <td class="photo-cell">${(data.photos?.[t.id] ?? [])
     .map((p) => `<a href="/photos/${p.id}" target="_blank"><img class="thumb" src="/photos/${p.id}" alt="照片"></a>`)
     .join('')}</td>
+  <td><a class="link" href="/task/${escapeHtml(t.id)}">详情</a></td>
 </tr>`,
         )
         .join('')
@@ -109,7 +127,7 @@ export function renderTaskList(data: TaskListData): string {
     ${bar(percent)}
   </div>
   <div class="table-wrap"><table class="table">
-  <thead><tr><th>任务</th><th>来源</th><th>说明</th><th>状态</th><th>照片</th></tr></thead>
+  <thead><tr><th>任务</th><th>来源</th><th>说明</th><th>重要</th><th>截止</th><th>状态</th><th>照片</th><th></th></tr></thead>
   <tbody>${rows}</tbody>
 </table></div>
 </section>`
@@ -149,6 +167,16 @@ export function renderTaskList(data: TaskListData): string {
         <option value="week"${data.periodType === 'week' ? ' selected' : ''}>周</option>
         <option value="month"${data.periodType === 'month' ? ' selected' : ''}>月</option>
       </select></label>
+    </div>
+    <div class="form-row">
+      <label class="field"><span>重要程度</span><select name="priority">
+        <option value="">未设</option>
+        <option value="urgent">紧急</option>
+        <option value="high">高</option>
+        <option value="normal">中</option>
+        <option value="low">低</option>
+      </select></label>
+      <label class="field"><span>截止日期</span><input type="date" name="dueDate"></label>
     </div>
     <div class="form-actions"><button class="btn btn-primary" type="submit">下达</button></div>
   </form>
@@ -236,6 +264,8 @@ export function renderMyTasks(data: {
   periodType: PeriodType
   periodKey: string
   periodLabel: string
+  /** Today, as YYYY-MM-DD, to tell an overdue due date. */
+  today: string
   periods: { key: string; label: string }[]
   tasks: TaskView[]
   /** The posts this person may give tasks to. */
@@ -267,6 +297,8 @@ export function renderMyTasks(data: {
   <td>${escapeHtml(t.title)}</td>
   <td><span class="tag tag-kind-${t.kind}">${escapeHtml(TASK_KIND_LABELS[t.kind])}</span></td>
   <td class="note-cell">${escapeHtml(t.detail || t.dutyText || t.artifactName || '—')}</td>
+  <td>${priorityTag(t.priority)}</td>
+  <td>${dueCell(t.dueDate, data.today)}</td>
   <td class="wide">
     <form class="status-form" method="post" action="/my-tasks/status">
       <input type="hidden" name="token" value="${escapeHtml(t.id)}">
@@ -287,6 +319,7 @@ export function renderMyTasks(data: {
       <input type="file" name="photos" accept="image/*" multiple>
       <button class="btn" type="submit">上传照片</button>
     </form>
+    <a class="link" href="/task/${escapeHtml(t.id)}">详情与留言</a>
   </td>
 </tr>`,
     )
@@ -309,6 +342,16 @@ export function renderMyTasks(data: {
         .map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}（${p.people.length} 人）</option>`)
         .join('')}
     </select></label>
+    <div class="form-row">
+      <label class="field"><span>重要程度</span><select name="priority">
+        <option value="">未设</option>
+        <option value="urgent">紧急</option>
+        <option value="high">高</option>
+        <option value="normal">中</option>
+        <option value="low">低</option>
+      </select></label>
+      <label class="field"><span>截止日期</span><input type="date" name="dueDate"></label>
+    </div>
     <div class="form-actions"><button class="btn btn-primary" type="submit">下达</button></div>
   </form>
 </section>`
@@ -357,7 +400,7 @@ ${data.error ? `<div class="alert is-error">${escapeHtml(data.error)}</div>` : '
   ${
     rows
       ? `<div class="table-wrap"><table class="table">
-  <thead><tr><th>任务</th><th>来源</th><th>说明</th><th>状态</th></tr></thead>
+  <thead><tr><th>任务</th><th>来源</th><th>说明</th><th>重要</th><th>截止</th><th>操作</th></tr></thead>
   <tbody>${rows}</tbody>
 </table></div>`
       : empty('这个周期还没有任务。')
@@ -397,4 +440,137 @@ export function assignablePosts(
   }
   const viewer = find(tree)
   return viewer ? viewer.children.map(toTaskPosition) : []
+}
+
+/** One task, with everything the page shows about it. */
+export interface TaskPageData {
+  departmentName: string
+  task: TaskView
+  photos: TaskPhoto[]
+  comments: { body: string; authorPosition: string; createdAt: string }[]
+  /** Today, as YYYY-MM-DD. */
+  today: string
+  /** Whether the viewer may move it on or attach photos. */
+  canEdit: boolean
+  /** The viewer's token, for the forms on the page. */
+  viewerToken: string
+}
+
+export function renderTaskPage(data: TaskPageData): string {
+  const task = data.task
+  const photos = data.photos.length
+    ? data.photos
+        .map((p) => `<a href="/photos/${p.id}" target="_blank"><img class="thumb" src="/photos/${p.id}" alt="照片"></a>`)
+        .join('')
+    : '<span class="muted">暂无</span>'
+  const comments = data.comments.length
+    ? data.comments
+        .map(
+          (comment) => `<div class="comment">
+  <div class="comment-head"><span class="tag">${escapeHtml(comment.authorPosition || '岗位')}</span><span class="muted small">${escapeHtml(comment.createdAt.slice(0, 16).replace('T', ' '))}</span></div>
+  <p>${escapeHtml(comment.body)}</p>
+</div>`,
+        )
+        .join('')
+    : empty('还没有留言。')
+  const statusForm = data.canEdit
+    ? `<form class="status-form" method="post" action="/my-tasks/status">
+  <input type="hidden" name="token" value="${escapeHtml(task.id)}">
+  <select name="status">
+    ${STATUS_ORDER.map(
+      (status) => `<option value="${status}"${task.status === status ? ' selected' : ''}>${escapeHtml(TASK_STATUS_LABELS[status])}</option>`,
+    ).join('')}
+  </select>
+  <input type="text" name="note" value="${escapeHtml(task.note)}" placeholder="说明">
+  <button class="btn" type="submit">保存状态</button>
+</form>`
+    : ''
+  const photoForm = data.canEdit
+    ? `<form class="photo-form" method="post" action="/my-tasks/photos" enctype="multipart/form-data">
+  <input type="hidden" name="taskId" value="${escapeHtml(task.id)}">
+  <input type="hidden" name="token" value="${escapeHtml(data.viewerToken)}">
+  <input type="file" name="photos" accept="image/*" multiple>
+  <button class="btn" type="submit">上传照片</button>
+</form>`
+    : ''
+  const body = `
+${pageHead(
+  `${task.positionName} · 任务详情`,
+  `${task.periodLabel} · ${TASK_KIND_LABELS[task.kind] ?? ''}`,
+)}
+<div class="stat-row">
+  ${stat('状态', TASK_STATUS_LABELS[task.status] ?? '', '')}
+  ${stat('重要程度', PRIORITY_LABELS[task.priority] ?? '未设', data.task.dueDate ? dueCell(data.task.dueDate, data.today) : '')}
+  ${stat('照片', String(data.photos.length), '张')}
+</div>
+<section class="card">
+  <h2>${escapeHtml(task.title)}</h2>
+  <p class="muted">${escapeHtml(task.detail || task.dutyText || task.artifactName || '没有补充说明')}</p>
+  <dl class="task-meta">
+    <div><dt>来源</dt><dd>${escapeHtml(TASK_KIND_LABELS[task.kind] ?? task.kind)}</dd></div>
+    <div><dt>所属岗位</dt><dd>${escapeHtml(task.positionName)}</dd></div>
+    <div><dt>交办岗位</dt><dd>${escapeHtml(task.assignedByName || '—')}</dd></div>
+    <div><dt>截止</dt><dd>${dueCell(task.dueDate, data.today)}</dd></div>
+    <div><dt>照片</dt><dd class="inline-row">${photos}</dd></div>
+  </dl>
+  ${statusForm}
+  ${photoForm}
+</section>
+<section class="card">
+  <h2>进展留言</h2>
+  ${comments}
+  <form class="task-form" method="post" action="/task/${escapeHtml(task.id)}/comment">
+    <input type="hidden" name="token" value="${escapeHtml(data.viewerToken)}">
+    <label class="field"><span>补充进展</span><input type="text" name="body" placeholder="做了什么 / 卡在哪里" required></label>
+    <div class="form-actions"><button class="btn btn-primary" type="submit">留言</button></div>
+  </form>
+</section>
+`
+  return layout({ title: '任务详情', active: 'tasks', body })
+}
+
+/** The tasks of a period, one column per status. */
+export interface BoardData {
+  departmentName: string
+  periodType: PeriodType
+  periodKey: string
+  periodLabel: string
+  periods: { key: string; label: string }[]
+  /** Today, as YYYY-MM-DD. */
+  today: string
+  columns: { status: TaskStatus; label: string; tasks: TaskView[] }[]
+}
+
+export function renderBoard(data: BoardData): string {
+  const periodOptions = join(
+    data.periods.map(
+      (period) =>
+        `<a class="chip${period.key === data.periodKey ? ' is-active' : ''}" href="/board?type=${data.periodType}&period=${encodeURIComponent(period.key)}">${escapeHtml(period.label)}</a>`,
+    ),
+  )
+  const columns = data.columns
+    .map(
+      (column) => `<section class="board-col">
+  <header class="board-col-head"><strong>${escapeHtml(column.label)}</strong><span class="muted small">${column.tasks.length}</span></header>
+  ${
+    column.tasks.length
+      ? column.tasks
+          .map(
+            (task) => `<a class="board-card" href="/task/${escapeHtml(task.id)}">
+  <div class="board-title">${escapeHtml(task.title)}</div>
+  <div class="board-meta">${priorityTag(task.priority)}${dueCell(task.dueDate, data.today)}<span class="muted small">${escapeHtml(task.positionName)}</span></div>
+</a>`,
+          )
+          .join('')
+      : '<div class="muted small empty-col">暂无</div>'
+  }
+</section>`,
+    )
+    .join('')
+  const body = `
+${pageHead(`${data.departmentName} · 任务看板`, `${data.periodLabel}，按状态分列，点卡片看详情`)}
+<div class="chips">${periodOptions}</div>
+<div class="board">${columns}</div>
+`
+  return layout({ title: '任务看板', active: 'board', body })
 }

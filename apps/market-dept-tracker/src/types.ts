@@ -240,6 +240,10 @@ export interface Task {
   periodKey: string
   periodLabel: string
   status: TaskStatus
+  /** How urgent it is: '', urgent, high, normal or low. */
+  priority: string
+  /** The day it should be finished, as YYYY-MM-DD, or ''. */
+  dueDate: string
   /** Who assigned it, when a person did. */
   assignedById: string | null
   /** The fixed task this occurrence came from, when it came from one. */
@@ -275,6 +279,23 @@ export interface TaskPhoto {
   mime: string
   size: number
   createdAt: string
+}
+
+/** One note someone left on a task, shown by post and not by name. */
+export interface TaskComment {
+  id: string
+  taskId: string
+  personId: string
+  body: string
+  createdAt: string
+}
+
+/** The priorities a task can carry, in the order the pages show them. */
+export const PRIORITY_LABELS: Record<string, string> = {
+  urgent: '紧急',
+  high: '高',
+  normal: '中',
+  low: '低',
 }
 
 /**

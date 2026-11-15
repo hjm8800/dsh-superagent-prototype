@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { Store } from './store.ts'
 import { PROGRESS_STATUSES, type ProgressStatus, type ReportItem } from './types.ts'
-import { LEVEL_LABELS, PROGRESS_LABELS, TASK_KIND_LABELS, TASK_STATUS_LABELS } from './types.ts'
+import { LEVEL_LABELS, PRIORITY_LABELS, PROGRESS_LABELS, TASK_KIND_LABELS, TASK_STATUS_LABELS } from './types.ts'
 import { periodFor, periodRange, recentPeriods } from './period.ts'
 import {
   renderOverview,
@@ -21,6 +21,8 @@ import {
 import {
   renderTaskList,
   renderMyTasks,
+  renderTaskPage,
+  renderBoard,
   assignablePosts,
   type TaskPosition,
   type TaskPositionNode,
@@ -108,6 +110,21 @@ export function createTrackerServer(options: ServerOptions) {
   }
 
   const parseType = (value: string | null): PeriodType => (value === 'month' ? 'month' : 'week')
+
+  /** The priorities a task may carry; anything else is left unset. */
+  const parsePriority = (value: string | null): string =>
+    value && ['urgent', 'high', 'normal', 'low'].includes(value) ? value : ''
+
+  /** A due date as YYYY-MM-DD, or an empty string. */
+  const parseDueDate = (value: string | null): string => {
+    const text = (value ?? '').trim()
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return ''
+    const date = new Date(`${text}T00:00:00Z`)
+    return Number.isNaN(date.getTime()) ? '' : text
+  }
+
+  /** Today as YYYY-MM-DD, for telling an overdue due date. */
+  const todayKey = (): string => now().toISOString().slice(0, 10)
 
   // ------------------------------------------------------------ helpers
 
@@ -720,6 +737,7 @@ export function createTrackerServer(options: ServerOptions) {
         periodType,
         periodKey,
         periodLabel,
+        today: todayKey(),
         periods,
         position: wanted
           ? {
@@ -806,6 +824,8 @@ export function createTrackerServer(options: ServerOptions) {
         periodType,
         periodKey: period.key,
         periodLabel: period.label,
+        priority: parsePriority(form.get('priority')),
+        dueDate: parseDueDate(form.get('dueDate')),
         assignedById: viewer.id,
         recurringTaskId: null,
         dutyId: null,
@@ -901,6 +921,7 @@ export function createTrackerServer(options: ServerOptions) {
         periodType,
         periodKey,
         periodLabel,
+        today: todayKey(),
         periods,
         tasks,
         assignablePositions: assignable,
@@ -927,6 +948,134 @@ export function createTrackerServer(options: ServerOptions) {
       now().toISOString(),
     )
     redirect(res, `/my-tasks?type=${task.periodType}&period=${encodeURIComponent(task.periodKey)}`)
+  }
+
+  /** One task, as a page of its own. */
+  const taskPage = (req: IncomingMessage, res: ServerResponse, url: URL) => {
+    const dept = department()
+    const token = url.searchParams.get('token') ?? cookieOf(req, SESSION_COOKIE)
+    const viewer = viewerOf(token)
+    const id = url.pathname.replace(/^\/task\//, '').split('/')[0] ?? ''
+    const task = store.task(id)
+    if (!task) {
+      sendHtml(
+        res,
+        layout({ title: '任务不存在', active: 'tasks', body: '<div class="page-head"><div><h1>任务不存在</h1></div></div>' }),
+        404,
+      )
+      return
+    }
+    const scope = visiblePositionIds(viewer.person, viewer.role)
+    if (scope && !scope.has(task.positionId)) {
+      sendHtml(
+        res,
+        layout({ title: '没有权限', active: 'tasks', body: '<div class="page-head"><div><h1>没有权限查看这条任务</h1></div></div>' }),
+        403,
+      )
+      return
+    }
+    const view = store.taskViews(task.periodType, task.periodKey, dept.id).find((item) => item.id === task.id)
+    if (!view) {
+      sendHtml(
+        res,
+        layout({ title: '任务不存在', active: 'tasks', body: '<div class="page-head"><div><h1>任务不存在</h1></div></div>' }),
+        404,
+      )
+      return
+    }
+    const comments = store.taskComments(task.id).map((comment) => ({
+      body: comment.body,
+      authorPosition: store.positionById(store.personById(comment.personId)?.positionId ?? '')?.name ?? '',
+      createdAt: comment.createdAt,
+    }))
+    sendHtml(
+      res,
+      renderTaskPage({
+        departmentName: dept.name,
+        task: view,
+        photos: store.taskPhotos(task.id),
+        comments,
+        today: todayKey(),
+        canEdit: true,
+        viewerToken: viewer.person?.token ?? token,
+      }),
+    )
+  }
+
+  /** Leave a note on a task; it is shown by post, not by name. */
+  const addTaskComment = async (req: IncomingMessage, res: ServerResponse) => {
+    const form = await readBody(req)
+    const url = new URL(req.url ?? '/', options.baseUrl)
+    const id = url.pathname.replace(/^\/task\//, '').replace(/\/comment$/, '').split('/')[0] ?? ''
+    const task = store.task(id)
+    if (!task) {
+      sendText(res, '任务不存在', 404)
+      return
+    }
+    const token = (form.get('token') ?? cookieOf(req, SESSION_COOKIE)).toString()
+    const viewer = viewerOf(token)
+    if (!viewer.person) {
+      sendText(res, '登录已失效', 401)
+      return
+    }
+    const scope = visiblePositionIds(viewer.person, viewer.role)
+    if (scope && !scope.has(task.positionId)) {
+      sendText(res, '不能给这个任务留言', 403)
+      return
+    }
+    const body = (form.get('body') ?? '').toString().trim().slice(0, 1000)
+    if (body) {
+      store.createTaskComment({
+        id: `comment-${randomUUID()}`,
+        taskId: task.id,
+        personId: viewer.person.id,
+        body,
+        createdAt: now().toISOString(),
+      })
+    }
+    redirect(res, `/task/${task.id}?token=${encodeURIComponent(viewer.person.token)}`)
+  }
+
+  /** The tasks of a period, one column per status. */
+  const boardPage = (req: IncomingMessage, res: ServerResponse, url: URL) => {
+    const dept = department()
+    const token = url.searchParams.get('token') ?? cookieOf(req, SESSION_COOKIE)
+    const viewer = viewerOf(token)
+    const scope = visiblePositionIds(viewer.person, viewer.role)
+    const periodType = parseType(url.searchParams.get('type'))
+    const periods = taskPeriods(periodType)
+    const current = periods[0] ?? { key: '', label: '' }
+    const requested = url.searchParams.get('period')
+    const periodKey = periods.some((p) => p.key === requested) ? (requested as string) : current.key
+    const periodLabel = periods.find((p) => p.key === periodKey)?.label ?? current.label
+    store.materialiseRecurringTasks(dept.id, periodType, periodKey, periodLabel, now().toISOString())
+    const seen = new Set<string>()
+    const tasks = store
+      .taskViews(periodType, periodKey, dept.id)
+      .filter((task) => !scope || scope.has(task.positionId))
+      .filter((task) => {
+        const key = `${task.kind}|${task.title}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+    const columns = (['open', 'in_progress', 'blocked', 'done'] as TaskStatus[]).map((status) => ({
+      status,
+      label: TASK_STATUS_LABELS[status],
+      tasks: tasks.filter((task) => task.status === status),
+    }))
+    sendHtml(
+      res,
+      renderBoard({
+        departmentName: dept.name,
+        periodType,
+        periodKey,
+        periodLabel,
+        periods,
+        today: todayKey(),
+        columns,
+      }),
+    )
   }
 
   /** Add photos to a task; the files live under the data directory. */
@@ -1231,6 +1380,9 @@ export function createTrackerServer(options: ServerOptions) {
           kindLabel: TASK_KIND_LABELS[t.kind],
           status: t.status,
           statusLabel: TASK_STATUS_LABELS[t.status],
+          priority: t.priority,
+          priorityLabel: PRIORITY_LABELS[t.priority] ?? '',
+          dueDate: t.dueDate,
           note: t.note,
           photos: store.taskPhotos(t.id).map((p) => ({ id: p.id })),
         })),
@@ -1581,6 +1733,8 @@ export function createTrackerServer(options: ServerOptions) {
           periodType: type,
           periodKey: period.key,
           periodLabel: period.label,
+          priority: parsePriority(form.get('priority')),
+          dueDate: parseDueDate(form.get('dueDate')),
           assignedById: viewer.id,
           recurringTaskId: null,
           dutyId: null,
@@ -1705,6 +1859,10 @@ export function createTrackerServer(options: ServerOptions) {
       if (route === '/tasks' && method === 'GET') return taskList(req, res, url)
       if (route === '/tasks/assign' && method === 'POST') return void assignTask(req, res)
       if (route === '/tasks/recurring' && method === 'POST') return void createRecurring(req, res)
+      if (route === '/board' && method === 'GET') return boardPage(req, res, url)
+      if (route.startsWith('/task/') && route.endsWith('/comment') && method === 'POST')
+        return void addTaskComment(req, res)
+      if (route.startsWith('/task/') && method === 'GET') return taskPage(req, res, url)
       if (route === '/my-tasks' && method === 'GET') return myTasks(req, res, url)
       if (route === '/my-tasks/status' && method === 'POST') return void updateMyTask(req, res)
       if (route === '/my-tasks/photos' && method === 'POST') return void uploadPhotos(req, res, false)

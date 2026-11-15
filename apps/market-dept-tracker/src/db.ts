@@ -150,6 +150,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   period_key        TEXT NOT NULL,
   period_label      TEXT NOT NULL,
   status            TEXT NOT NULL DEFAULT 'open',
+  priority          TEXT NOT NULL DEFAULT '',
+  due_date          TEXT NOT NULL DEFAULT '',
   assigned_by_id    TEXT REFERENCES people(id),
   recurring_task_id TEXT REFERENCES recurring_tasks(id),
   duty_id           TEXT REFERENCES duties(id),
@@ -161,6 +163,15 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_duties_position ON duties(position_id);
+
+-- What the people working on a task said about its progress.
+CREATE TABLE IF NOT EXISTS task_comments (
+  id          TEXT PRIMARY KEY,
+  task_id     TEXT NOT NULL REFERENCES tasks(id),
+  person_id   TEXT NOT NULL REFERENCES people(id),
+  body        TEXT NOT NULL,
+  created_at  TEXT NOT NULL
+);
 
 -- Photos a person attaches to a task as evidence.
 CREATE TABLE IF NOT EXISTS task_photos (
@@ -194,6 +205,14 @@ export function openDatabase(file: string): Database {
   const accountColumns = raw.prepare('PRAGMA table_info(accounts)').all() as unknown as Array<{ name: string }>
   if (!accountColumns.some((column) => column.name === 'person_id')) {
     raw.exec('ALTER TABLE accounts ADD COLUMN person_id TEXT REFERENCES people(id)')
+  }
+  // Tasks gained a priority and a due date; older databases keep their rows.
+  const taskColumns = raw.prepare('PRAGMA table_info(tasks)').all() as unknown as Array<{ name: string }>
+  if (!taskColumns.some((column) => column.name === 'priority')) {
+    raw.exec("ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT ''")
+  }
+  if (!taskColumns.some((column) => column.name === 'due_date')) {
+    raw.exec("ALTER TABLE tasks ADD COLUMN due_date TEXT NOT NULL DEFAULT ''")
   }
   return { raw, close: () => raw.close() }
 }
