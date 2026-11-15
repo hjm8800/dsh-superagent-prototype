@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>演示 · 结算AI工作台</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .demo-wrap{max-width:1180px;margin:0 auto;padding:26px 24px 50px}
+    .demo-hero{background:linear-gradient(135deg,#1d4ed8,#2563eb 55%,#0ea5e9);color:#fff;border-radius:18px;padding:28px 30px;box-shadow:0 12px 28px rgba(37,99,235,.18)}
+    .demo-hero h1{margin:0;font-size:32px;letter-spacing:.02em}
+    .demo-hero p{margin:8px 0 0;color:#dbeafe;font-size:15px}
+    .demo-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+    .demo-actions .btn{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.35);color:#fff}
+    .demo-actions .btn.primary{background:#fff;border-color:#fff;color:#1d4ed8}
+    .demo-actions .btn:hover{background:rgba(255,255,255,.24);text-decoration:none}
+    .timeline{display:grid;grid-template-columns:repeat(7,1fr);gap:0;margin:22px 0 8px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px 10px}
+    .tl{position:relative;text-align:center;padding:6px 4px;font-size:12px;color:var(--muted)}
+    .tl:not(:last-child):after{content:"";position:absolute;top:15px;right:-2px;width:50%;height:2px;background:#dbeafe}
+    .tl:not(:first-child):before{content:"";position:absolute;top:15px;left:-50%;width:50%;height:2px;background:#dbeafe}
+    .tl b{display:block;width:26px;height:26px;line-height:26px;border-radius:50%;background:var(--blue-soft);color:var(--blue);margin:0 auto 6px;font-size:11px;position:relative;z-index:1}
+    .tl strong{display:block;color:var(--ink);font-size:12px}
+    .steps{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}
+    .step{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:8px}
+    .step-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+    .step-no{width:30px;height:30px;border-radius:50%;background:#eff6ff;color:#1d4ed8;font-weight:800;display:flex;align-items:center;justify-content:center;flex:0 0 30px}
+    .step h3{margin:0;font-size:16px}
+    .step .time{font-size:11px;color:#b45309;background:#fff7ed;padding:2px 8px;border-radius:999px;white-space:nowrap}
+    .step p{margin:0;color:#4b5563;font-size:13px;line-height:1.7}
+    .step .say{border-left:3px solid #93c5fd;background:#f8fbff;padding:8px 10px;color:#1e3a8a;font-size:12px;border-radius:0 8px 8px 0}
+    .step .links{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto}
+    .demo-note{display:grid;grid-template-columns:1.2fr .8fr;gap:14px;margin-top:16px}
+    .demo-note .card{margin:0}
+    .demo-note ul{margin:0;padding-left:18px;color:#374151;font-size:13px;line-height:1.9}
+    .demo-foot{color:#9ca3af;font-size:12px;text-align:center;margin-top:28px;line-height:1.8}
+    @media (max-width:900px){.timeline{grid-template-columns:repeat(4,1fr);gap:8px}.tl:before,.tl:after{display:none}.steps,.demo-note{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">结算<span>AI</span>工作台</div>
+  <div style="flex:1"></div>
+  <div class="userbox"><a href="/login">进入工作台</a><a href="/demo/pptx">下载 PPT</a></div>
+</header>
+
+<div class="demo-wrap">
+  <section class="demo-hero">
+    <h1>结算AI工作台 · 5 分钟演示</h1>
+    <p>按《结算工作专项方案》的流程走一遍：建项目 → 收资料 → 解析入库 → 现场验收 → 三算对比 → AI 初稿与复核 → 结算书初稿 → 定案归档。</p>
+    <div class="demo-actions">
+      <a class="btn primary" href="/login">进入工作台</a>
+      <a class="btn" href="/demo/pptx">下载演示 PPT</a>
+      <a class="btn" href="/demo/pdf">下载 PDF</a>
+    </div>
+  </section>
+
+  <div class="timeline">
+    <div class="tl"><b>1</b><strong>T0-30</strong>启动</div>
+    <div class="tl"><b>2</b><strong>T0-30~T0-8</strong>资料</div>
+    <div class="tl"><b>3</b><strong>T0-7~T0-5</strong>验收</div>
+    <div class="tl"><b>4</b><strong>T0-3~T0+1</strong>签章移交</div>
+    <div class="tl"><b>5</b><strong>T0+1~T0+5</strong>结算</div>
+    <div class="tl"><b>6</b><strong>T0+6~T0+14</strong>对数</div>
+    <div class="tl"><b>7</b><strong>T0+15~T0+20</strong>定案</div>
+  </div>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-top"><div style="display:flex;gap:10px;align-items:center"><div class="step-no">1</div><h3>建项目、定人</h3></div><span class="time">T0-30</span></div>
+      <p>先在项目库建项目，填项目编码、投产日、负责人；把工程部、市场部、物资组的人加进项目成员。</p>
+      <div class="say">“后面所有资料、对比、复核都挂在这个项目下，先定责任人和时间基准。”</div>
+      <div class="links"><a class="btn small" href="/projects/new">新建项目</a><a class="btn small" href="/projects/1/members">项目成员</a></div>
+    </div>
+
+    <div class="step">
+      <div class="step-top"><div style="display:flex;gap:10px;align-items:center"><div class="step-no">2</div><h3>收资料、批量上传</h3></div><span class="time">T0-30~T0-8</span></div>
+      <p>把附件1—9一次传进资料包；DOCX/XLSX/PDF/XML/ZIP 自动解析，DWG 调 ODA，DOC 调 LibreOffice，缺什么插件会标出来。</p>
+      <div class="say">“资料不用先整理成统一格式，平台一边收一边解析，缺项和插件缺口都能看到。”</div>
+      <div class="links"><a class="btn small" href="/projects/1?tab=docs">打开资料包</a></div>
+    </div>
+
+    <div class="step">
+      <div class="step-top"><div style="display:flex;gap:10px;align-items:center"><div class="step-no">3</div><h3>解析入库，变成可核对的数据</h3></div><span class="time">T0-8</span></div>
+      <p>项目画像、甲供/乙供材料、工程量、预算自动入库；解析错了可以在页面直接增删，不用改数据库。</p>
+      <div class="say">“不是给一份解析报告，而是把数据落到材料清册、工程量和预算里，后面直接做对比。”</div>
+      <div class="links"><a class="btn small" href="/projects/1?tab=materials">材料清册</a><a class="btn small" href="/projects/1?tab=boq">工程量</a><a class="btn small" href="/projects/1?tab=budget">预算</a></div>
+    </div>
+
+    <div class="step">
+      <div class="step-top"><div style="display:flex;gap:10px;align-items:center"><div class="step-no">4</div><h3>现场验收、工程量确认</h3></div><span class="time">T0-7~T0-5</span></div>
+      <p>现场用无人机、测距仪、滚轮测；平台负责把资料、照片、工程量确认表挂到项目上，确认后的量进入对比。</p>
+      <div class="say">“现场测量还是人做，平台不替代验收；它保证测完的数据和资料能对上、能追溯。”</div>
+      <div class="links"><a class="btn small" href="/projects/1?tab=overview">项目画像</a><a class="btn small" href="/projects/1?tab=docs">影像资料</a></div>
+    </div>
+
+    <div class="step">
+      <div class="step-top"><div style="display:flex;gap:10px;align-items:center"><div class="step-no">5</div><h3>三算对比</h3></div><span class="time">T0+1~T0+5</span></div>
+      <p>设计量、预算量、结算量同表对比；差异标出来，能更新结算量、写原因、挂依据，导出 Excel。</p>
+      <div class="say">“重点不是算一个总数，而是把每一笔差异落到项目、材料、依据和责任人。”</div>
+      <div class="links"><a class="btn small" href="/projects/1?tab=compare">打开三算对比</a></div>
+    </div>
+
+    <div class="step">
+      <div class="step-top"><div style="display:flex;gap:10px;align-items:center"><div class="step-no">6</div><h3>AI 初稿、人工复核</h3></div><span class="time">T0+1~T0+5</span></div>
+      <p>AI 操作台生成资料完整性、三算差异和结算书初稿；复核人“通过/退回”，记录留痕。</p>
+      <div class="say">“AI 只出初稿，不签章、不定案；数字要复算，结论要人确认。”</div>
+      <div class="links"><a class="btn small" href="/projects/1?tab=ai">AI 操作台</a><a class="btn small" href="/projects/1?tab=reviews">复核记录</a></div>
+    </div>
+
+    <div class="step">
+      <div class="step-top"><div style="display:flex;gap:10px;align-items:center"><div class="step-no">7</div><h3>结算书初稿、送审</h3></div><span class="time">T0+5~T0+6</span></div>
+      <p>一键生成结算书初稿 Excel（封面、画像、材料、工程量、三算、预算），人工复核后随竣工资料送业主。</p>
+      <div class="say">“先出可核对的初稿，把编制时间留给真正的量价判断和对外沟通。”</div>
+      <div class="links"><a class="btn small" href="/projects/1/settlement.xlsx">下载结算书初稿</a></div>
+    </div>
+
+    <div class="step">
+      <div class="step-top"><div style="display:flex;gap:10px;align-items:center"><div class="step-no">8</div><h3>定案归档、复盘</h3></div><span class="time">T0+15~T0+20</span></div>
+      <p>定案后归档复核记录和审计日志；用同一套数据复盘量差、材料超领和工期偏差。</p>
+      <div class="say">“一次项目做完，数据还在，下一次同类项目可以直接复用规则和模板。”</div>
+      <div class="links"><a class="btn small" href="/projects/1?tab=reviews">复核记录</a><a class="btn small" href="/projects/1?tab=overview">项目总览</a></div>
+    </div>
+  </div>
+
+  <div class="demo-note">
+    <section class="card">
+      <div class="card-head"><h2>演示账号与数据</h2></div>
+      <p>登录账号：<code>admin</code> / <code>admin123</code>；进入后先改密码，再建业务账号、加项目成员。</p>
+      <p class="muted small">演示数据为匿名项目 A/B/C；材料超领页为匿名供电所/班组数据。真实项目数据请在自己的部署环境导入。</p>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>演示时强调</h2></div>
+      <ul>
+        <li>平台不替代现场验收和签章。</li>
+        <li>AI 只出初稿，人工复核后才流转。</li>
+        <li>按当前范围不接 SSO 和供电局系统。</li>
+        <li>数字必须复算，依据必须留痕。</li>
+      </ul>
+    </section>
+  </div>
+
+  <div class="demo-foot">结算AI工作台 · 演示页 · 依据《结算工作专项方案》流程整理<br>演示数据已匿名化，仅用于内部演示</div>
+</div>
+</body>
+</html>

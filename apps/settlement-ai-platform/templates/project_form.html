@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ '新建项目' if mode == 'new' else '编辑项目' }} · 结算AI工作台</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">结算<span>AI</span>工作台</div>
+  <nav class="topnav"><a href="/">工作台</a><a href="/projects/1?tab=docs">项目库</a></nav>
+  <div class="userbox"><span class="username">{{ user.name }}</span><a href="/logout">退出</a></div>
+</header>
+<main class="main" style="max-width:900px;margin:24px auto">
+  <div class="page-head">
+    <div>
+      <div class="crumb">项目库 / {{ '新建' if mode == 'new' else '编辑' }}</div>
+      <h1>{{ '新建项目' if mode == 'new' else '编辑项目' }}</h1>
+      <p class="sub">项目编码、名称和阶段由业务负责人填写；上传设计资料包后自动解析。</p>
+    </div>
+  </div>
+  {% if request.query_params.get('msg') %}<div class="flash error">{{ request.query_params.get('msg') }}</div>{% endif %}
+  <section class="card">
+    <form class="form" method="post" action="{{ '/projects' if mode == 'new' else '/projects/' ~ p.id ~ '/edit' }}">
+      <label>项目编码<input name="code" value="{{ p.code if p else '' }}" required placeholder="如 DEMO-D"></label>
+      <label>项目名称<input name="name" value="{{ p.name if p else '' }}" required placeholder="如 项目D·某台区改造工程"></label>
+      <label>项目类型
+        <select name="ptype">
+          {% for t in ['台区改造','业扩配套','新建线路','其他'] %}<option {{ 'selected' if p and p.ptype == t else '' }}>{{ t }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>阶段
+        <select name="stage">
+          {% for t in ['资料解析','资料移交','结算编制','对数定案','已归档'] %}<option {{ 'selected' if p and p.stage == t else '' }}>{{ t }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>投产日<input name="t0" value="{{ p.t0 if p else '' }}" placeholder="2026-12-31"></label>
+      <label>负责人<input name="owner" value="{{ p.owner if p else user.name }}"></label>
+      <label>所在地<input name="location" value="{{ p.location if p else '' }}" placeholder="某供电所"></label>
+      <label>备注<textarea name="note" rows="3">{{ p.note if p else '' }}</textarea></label>
+      <div class="head-actions"><button class="btn primary" type="submit">保存</button><a class="btn" href="/">取消</a></div>
+    </form>
+  </section>
+</main>
+</body>
+</html>

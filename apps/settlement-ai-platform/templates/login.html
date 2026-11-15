@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 · 结算AI工作台</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-body">
+  <div class="login-card">
+    <div class="login-brand">结算<span>AI</span>工作台</div>
+    <p class="login-sub">配网结算资料解析 · 三算对比 · AI操作台</p>
+    {% if msg %}<div class="flash error">{{ msg }}</div>{% endif %}
+    <form method="post" action="/login" class="form">
+      <label>账号<input name="username" autocomplete="username" required></label>
+      <label>密码<input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="btn primary" type="submit">登录</button>
+    </form>
+    <div class="demo-accounts">
+      <div class="hint">演示账号（密码 123456，管理员 admin123）</div>
+      <code>ziliao 资料员</code> <code>jiesuan 结算员</code> <code>wuzi 物资员</code> <code>jingli 项目经理</code> <code>admin 管理员</code>
+    </div>
+    <p class="login-note">MVP 演示版，仅使用匿名项目 A/B/C；生产部署需接公司统一认证。</p>
+  </div>
+</body>
+</html>
