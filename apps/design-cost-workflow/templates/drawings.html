@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% from "_macros.html" import stage_banner %}
+{% block title %}图纸解析 · {{ p.name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="crumb">项目工作流 / {{ p.code }} / 图纸解析</div>
+    <h1>图纸解析 <span class="badge {{ badge_class(stage.status) }}">{{ stage.status }}</span></h1>
+    <p class="sub">施工图、说明书、杆塔明细表与设备材料清册导入 → 自动识别项目画像（路径长度、杆塔、配变容量、导线型号）→ 为建模提供初稿依据</p>
+  </div>
+</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="kpi-label">图纸 / 清册总数</div><div class="kpi-value">{{ counts.total }}</div><div class="kpi-sub">含已识别与需插件文件</div></div>
+  <div class="kpi"><div class="kpi-label">已识别</div><div class="kpi-value ok">{{ counts['已识别'] }}</div><div class="kpi-sub">可用于生成模型初稿</div></div>
+  <div class="kpi"><div class="kpi-label">需插件</div><div class="kpi-value {{ 'warn' if counts['需插件'] else '' }}">{{ counts['需插件'] }}</div><div class="kpi-sub">DWG 需 ODA File Converter</div></div>
+  <div class="kpi"><div class="kpi-label">解析失败 / 待识别</div><div class="kpi-value {{ 'danger' if counts['解析失败'] else '' }}">{{ counts['解析失败'] + counts['待识别'] }}</div><div class="kpi-sub">可人工编目后继续</div></div>
+</div>
+
+{% set extra_buttons %}
+  {% if autofill_ok %}
+  <form method="post" action="/project/{{ p.id }}/drawings/autofill{{ keep_as }}" class="inline-form">
+    <button class="btn" type="submit">由已识别图纸生成模型初稿</button>
+  </form>
+  {% endif %}
+  {% if identified %}
+  <a class="btn" href="/project/{{ p.id }}/model{{ keep_as }}">进入建模 →</a>
+  {% endif %}
+{% endset %}
+{{ stage_banner(stage, p, keep_as, can_edit, can_review, extra_buttons) }}
+
+<div class="grid-2 wide-left">
+  <section class="card">
+    <div class="card-head">
+      <h2>上传图纸 / 清册</h2>
+      <span class="muted small">支持 PDF / DWG / XLSX / XLS / DOCX / JPG，可多选</span>
+    </div>
+    {% if editable %}
+    <form class="upload-form" method="post" action="/project/{{ p.id }}/drawings/upload{{ keep_as }}" enctype="multipart/form-data">
+      <label class="field">
+        <span>文件（可多选，单个 ≤ 50MB）</span>
+        <input type="file" name="files" multiple required data-file-input>
+      </label>
+      <label class="field">
+        <span>图纸类别</span>
+        <select name="category">
+          <option value="自动识别">自动识别（按文件名）</option>
+          <option value="设计说明书">设计说明书</option>
+          <option value="平面图">平面图</option>
+          <option value="安装图">安装图</option>
+          <option value="明细表">明细表</option>
+          <option value="材料清册">材料清册</option>
+          <option value="预算">预算</option>
+          <option value="现场照片">现场照片</option>
+          <option value="其他">其他</option>
+        </select>
+      </label>
+      <button class="btn primary" type="submit">上传并识别</button>
+    </form>
+    <div class="hint" data-file-hint>
+      上传后系统自动解析：PDF 提取文字并识别路径/杆塔/配变；XLSX/XLS 读取工作表与数据行；
+      DWG 检测 ODA File Converter 插件后转 DXF 读取文字，未安装时标记“需插件”。
+    </div>
+    {% else %}
+    <div class="empty">
+      当前不可上传：需图纸解析阶段为“进行中”，且当前角色为造价员或管理员。
+      {% if stage.status == '已完成' %}该阶段已完成，如需补充图纸请由复核员退回本阶段。{% endif %}
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>识别结果概览</h2>
+      <span class="muted small">已识别 {{ identified|length }} 份</span>
+    </div>
+    {% if identified %}
+    <div class="ident-list">
+      {% for d in identified[:6] %}
+      <div class="ident-row">
+        <span class="badge ok">已识别</span>
+        <div>
+          <div class="strong">{{ d.name }} <span class="muted small">· {{ d.category or '其他' }}</span></div>
+          <div class="muted small">{{ d.summary or '无识别结论' }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty">暂无识别成功的图纸，请上传 PDF / XLSX 等支持格式的文件。</div>
+    {% endif %}
+    {% if counts['需插件'] %}
+    <div class="hint warn">有 {{ counts['需插件'] }} 份 DWG 图纸因未安装 ODA File Converter 而标记“需插件”，已登记图纸目录，可人工编目后继续建模。</div>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head">
+    <h2>图纸目录</h2>
+    <span class="muted small">共 {{ counts.total }} 份 · 识别结论来自解析器自动提取，需人工复核</span>
+  </div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th style="width:52px">序号</th>
+          <th style="width:110px">图纸编号</th>
+          <th style="width:210px">图纸名称</th>
+          <th style="width:100px">类别</th>
+          <th style="width:64px">格式</th>
+          <th style="width:58px">张数</th>
+          <th style="width:86px">状态</th>
+          <th>识别结论</th>
+          <th style="width:122px">上传时间</th>
+          <th style="width:84px">上传人</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in drawings %}
+        <tr>
+          <td class="muted">{{ loop.index }}</td>
+          <td class="mono">{{ d.code or '—' }}</td>
+          <td>{{ d.name }}</td>
+          <td>{{ d.category or '其他' }}</td>
+          <td>{{ d.fmt or '—' }}</td>
+          <td class="num">{{ d.sheet_count or 1 }}</td>
+          <td><span class="badge {{ badge_class(d.status) }}">{{ d.status }}</span></td>
+          <td class="muted small">{{ d.summary or '—' }}</td>
+          <td class="muted small">{{ d.uploaded_at or '—' }}</td>
+          <td class="small">{{ d.uploader_name or '—' }}</td>
+        </tr>
+        {% endfor %}
+        {% if not drawings %}
+        <tr><td colspan="10" class="empty-cell">暂无图纸，请先上传施工图或材料清册。</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

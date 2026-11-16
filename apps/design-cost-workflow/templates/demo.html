@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}演示路线 · 设计造价工作流{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="crumb">演示路线</div>
+    <h1>5 分钟演示路线</h1>
+    <p class="sub">用项目C（{{ demo_project.name }}）走完 图纸解析 → 建模 → 算量 → 计价 → 对比 全链路，再用项目A查看完成态与预算对比</p>
+  </div>
+  <div class="head-actions">
+    <a class="btn primary" href="/project/{{ demo_project.id }}/drawings?as=zaojia">从图纸解析开始</a>
+    <a class="btn" href="/project/{{ finished_project.id }}?as=zaojia">直接看项目A完成态</a>
+  </div>
+</div>
+
+<div class="demo-layout">
+  <div class="demo-main">
+    <section class="card">
+      <div class="card-head"><h2>演示步骤</h2><span class="muted small">建议开两个浏览器标签页，分别用造价员 / 复核员身份配合演示</span></div>
+      <div class="demo-steps">
+        <div class="demo-step">
+          <div class="step-no">1</div>
+          <div class="step-body">
+            <div class="step-title">认识工作台与四阶段状态机</div>
+            <div class="muted small">{{ demo_project.name }} 当前处于“{{ demo_stages.get('drawings', {}).get('status', '图纸解析') }}”阶段：图纸解析进行中，建模/算量/计价未开始；右侧待办与风险提醒由四阶段状态与差异数据自动汇总。</div>
+            <div class="step-links"><a class="btn small" href="/">打开工作台</a></div>
+          </div>
+        </div>
+        <div class="demo-step">
+          <div class="step-no">2</div>
+          <div class="step-body">
+            <div class="step-title">图纸解析：上传并识别施工图 / 材料清册</div>
+            <div class="muted small">以造价员身份进入项目C图纸解析页：上传 PDF 说明书或 XLSX 材料清册（可用任意示例文件），系统自动识别路径长度、杆塔数量、配变容量与导线型号；DWG 图纸在未安装 ODA 插件时显示“需插件”。</div>
+            <div class="step-links">
+              <a class="btn small primary" href="/project/{{ demo_project.id }}/drawings?as=zaojia">打开图纸解析</a>
+              <a class="btn small" href="/project/{{ demo_project.id }}/model?as=zaojia">生成模型初稿</a>
+            </div>
+          </div>
+        </div>
+        <div class="demo-step">
+          <div class="step-no">3</div>
+          <div class="step-body">
+            <div class="step-title">提交图纸复核 → 切换复核员通过</div>
+            <div class="muted small">造价员点击“提交复核”，阶段进入“待复核”；切换右上角演示身份为复核员，在流程总览页填写复核意见并通过，系统自动把“建模”阶段置为进行中。这就是四阶段复核门禁。</div>
+            <div class="step-links">
+              <a class="btn small" href="/project/{{ demo_project.id }}?as=zaojia">造价员视角</a>
+              <a class="btn small" href="/project/{{ demo_project.id }}?as=fuhe">复核员视角</a>
+            </div>
+          </div>
+        </div>
+        <div class="demo-step">
+          <div class="step-no">4</div>
+          <div class="step-body">
+            <div class="step-title">建模：校正模型并执行校验</div>
+            <div class="muted small">建模页提供线路 / 设备 / 主材 / 土建 / 拆除可编辑表格与服务端生成的平面示意图；点击“执行模型校验”查看高/中/低问题；高级问题清零后可提交复核。</div>
+            <div class="step-links">
+              <a class="btn small primary" href="/project/{{ demo_project.id }}/model?as=zaojia">打开建模</a>
+            </div>
+          </div>
+        </div>
+        <div class="demo-step">
+          <div class="step-no">5</div>
+          <div class="step-body">
+            <div class="step-title">算量：一键重算工程量 + 材料量对比</div>
+            <div class="muted small">复核通过建模后进入算量：点击“重新计算工程量”，按规则生成工程量清单（含计算式与依据），同时生成设计清册与模型量的对比、差异等级与归因。</div>
+            <div class="step-links">
+              <a class="btn small primary" href="/project/{{ demo_project.id }}/quantities?as=zaojia">打开算量</a>
+            </div>
+          </div>
+        </div>
+        <div class="demo-step">
+          <div class="step-no">6</div>
+          <div class="step-body">
+            <div class="step-title">计价：套价、取费、导出预算书</div>
+            <div class="muted small">复核通过算量后进入计价：一键按 2022 版费率与示例定额库生成施工图预算，查看费用汇总、定额套用与主材明细，可更换定额子目并导出中文 Excel 预算书。</div>
+            <div class="step-links">
+              <a class="btn small primary" href="/project/{{ demo_project.id }}/pricing?as=zaojia">打开计价</a>
+            </div>
+          </div>
+        </div>
+        <div class="demo-step">
+          <div class="step-no">7</div>
+          <div class="step-body">
+            <div class="step-title">对比分析：材料量差异 + 设计预算对比 + 送审条件</div>
+            <div class="muted small">对比页汇总材料量差异、设计预算（附件5）与模型预算、风险清单与送审条件；项目A已完成计价定稿，可直接查看完成态效果。</div>
+            <div class="step-links">
+              <a class="btn small" href="/project/{{ demo_project.id }}/compare?as=zaojia">项目C对比</a>
+              <a class="btn small" href="/project/{{ finished_project.id }}/compare?as=zaojia">项目A对比</a>
+              <a class="btn small" href="/project/{{ finished_project.id }}/pricing?as=zaojia">项目A计价完成态</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <aside class="demo-side">
+    <section class="card">
+      <div class="card-head"><h2>演示账号</h2></div>
+      <div class="demo-accounts inline-accounts">
+        {% for username, password, label in demo_accounts %}
+        <div class="demo-row"><code>{{ username }} / {{ password }}</code><span>{{ label }}</span></div>
+        {% endfor %}
+      </div>
+      <div class="hint">WORKFLOW_DEMO=1 时，页面右上角“演示身份”可直接切换角色，无需退出登录。</div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>项目状态</h2></div>
+      <div class="kv-list">
+        <div class="kv"><span class="kv-label">项目C 当前阶段</span><span class="kv-value">{{ demo_project.stage }}</span></div>
+        {% for key, name in stages_meta %}
+        <div class="kv"><span class="kv-label">{{ name }}</span><span class="kv-value"><span class="badge {{ badge_class(demo_stages.get(key, {}).get('status', '未开始')) }}">{{ demo_stages.get(key, {}).get('status', '未开始') }}</span></span></div>
+        {% endfor %}
+        <div class="kv"><span class="kv-label">项目A 当前阶段</span><span class="kv-value">{{ finished_project.stage }}</span></div>
+      </div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>演示说明</h2></div>
+      <ul class="notes">
+        <li>项目A/B/C 均为匿名示例数据，不代表真实工程。</li>
+        <li>示例定额库与材料价为演示数据，费率按 2022 版编制规定演示取值。</li>
+        <li>AI 只做识别、提示与差异说明，不签章、不定价，金额由人工复核确认。</li>
+        <li>数据仅存本地 SQLite（data/workflow.db），不上传外网。</li>
+      </ul>
+    </section>
+  </aside>
+</div>
+{% endblock %}
