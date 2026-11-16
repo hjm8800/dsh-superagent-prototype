@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS positions (
   instructions    TEXT NOT NULL DEFAULT '',
   boundary        TEXT NOT NULL DEFAULT '',
   note            TEXT NOT NULL DEFAULT '',
-  ordinal         INTEGER NOT NULL DEFAULT 0
+  ordinal         INTEGER NOT NULL DEFAULT 0,
+  retired         INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS duties (
@@ -220,6 +221,12 @@ export function openDatabase(file: string): Database {
   const dutyColumns = raw.prepare('PRAGMA table_info(duties)').all() as unknown as Array<{ name: string }>
   if (!dutyColumns.some((column) => column.name === 'retired')) {
     raw.exec('ALTER TABLE duties ADD COLUMN retired INTEGER NOT NULL DEFAULT 0')
+  }
+  // A post can be retired when the department reorganises; its history stays,
+  // it is only hidden from the tree and the lists.
+  const positionColumns = raw.prepare('PRAGMA table_info(positions)').all() as unknown as Array<{ name: string }>
+  if (!positionColumns.some((column) => column.name === 'retired')) {
+    raw.exec('ALTER TABLE positions ADD COLUMN retired INTEGER NOT NULL DEFAULT 0')
   }
   return { raw, close: () => raw.close() }
 }

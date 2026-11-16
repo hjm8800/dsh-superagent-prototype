@@ -203,7 +203,7 @@ export class Store {
         `SELECT id, department_id, name, role, level, parent_id, headcount_note,
                 instructions, boundary, note
          FROM positions
-         ${departmentId ? 'WHERE department_id = ?' : ''}
+         ${departmentId ? 'WHERE department_id = ? AND retired = 0' : 'WHERE retired = 0'}
          ORDER BY ordinal, name`,
       )
       .all(...(departmentId ? [departmentId] : [])) as unknown as PositionRow[]
@@ -757,6 +757,10 @@ Store.prototype.taskViews = function taskViews(
   const tasks = this.tasks(periodType, periodKey, departmentId)
   const people = this.people(departmentId)
   const positions = this.positions(departmentId)
+  // Tasks of a retired post stay in the database for history but are not
+  // listed any more.
+  const activePosts = new Set(positions.map((position) => position.id))
+  const visibleTasks = tasks.filter((task) => activePosts.has(task.positionId))
   const duties = new Map<string, string>()
   for (const position of positions) {
     for (const duty of this.duties(position.id)) duties.set(duty.id, duty.text)
@@ -765,7 +769,7 @@ Store.prototype.taskViews = function taskViews(
   const nameOf = (id: string | null): string =>
     id ? (people.find((p) => p.id === id)?.name ?? '') : ''
 
-  return tasks.map((task) => ({
+  return visibleTasks.map((task) => ({
     ...task,
     personName: nameOf(task.personId),
     positionName: positions.find((p) => p.id === task.positionId)?.name ?? '',
