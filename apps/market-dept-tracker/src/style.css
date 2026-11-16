@@ -456,6 +456,26 @@ input:focus, textarea:focus { outline: 2px solid var(--primary-weak); border-col
 @media (max-width: 900px) { .board { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 720px) { .board { grid-template-columns: 1fr; } }
 
+/* The duties ledger, drawn as the post tree. */
+.org-tree { padding: 6px 0; }
+.tree-root, .tree-children { list-style: none; margin: 0; padding: 0; }
+.tree-root { margin-bottom: 14px; }
+.tree-children { margin-left: 24px; padding-left: 20px; border-left: 2px solid var(--border); }
+.tree-node { position: relative; padding: 6px 0 6px 16px; }
+.tree-node::before { content: ''; position: absolute; left: -20px; top: 22px; width: 18px; border-top: 2px solid var(--border); }
+.tree-root > .tree-node { padding-left: 0; }
+.tree-root > .tree-node::before { display: none; }
+.tree-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; }
+.tree-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.tree-name { font-weight: 700; font-size: 15px; }
+.tree-instructions { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+.tree-details { margin-top: 6px; }
+.tree-details summary { cursor: pointer; color: var(--primary); font-size: 13px; }
+.tree-details .duties { margin: 8px 0 0; padding-left: 20px; }
+.tree-details .duties li { margin: 4px 0; line-height: 1.6; }
+.tree-details .boundary { color: var(--muted); font-size: 13px; margin: 8px 0; }
+@media (max-width: 720px) { .tree-children { margin-left: 12px; padding-left: 12px; } }
+
 @media (max-width: 720px) {
   .topbar-inner { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px; }
   .nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; width: 100%; }

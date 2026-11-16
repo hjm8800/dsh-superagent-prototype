@@ -224,7 +224,9 @@ export class Store {
 
   duties(positionId: string): Duty[] {
     const rows = this.db.raw
-      .prepare('SELECT id, position_id, ordinal, text FROM duties WHERE position_id = ? ORDER BY ordinal')
+      .prepare(
+        'SELECT id, position_id, ordinal, text FROM duties WHERE position_id = ? AND retired = 0 ORDER BY ordinal',
+      )
       .all(positionId) as unknown as Array<{ id: string; position_id: string; ordinal: number; text: string }>
     return rows.map((r) => ({ id: r.id, positionId: r.position_id, ordinal: r.ordinal, text: r.text }))
   }

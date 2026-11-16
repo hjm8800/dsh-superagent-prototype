@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS duties (
   id           TEXT PRIMARY KEY,
   position_id  TEXT NOT NULL REFERENCES positions(id),
   ordinal      INTEGER NOT NULL,
-  text         TEXT NOT NULL
+  text         TEXT NOT NULL,
+  retired      INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS people (
@@ -213,6 +214,12 @@ export function openDatabase(file: string): Database {
   }
   if (!taskColumns.some((column) => column.name === 'due_date')) {
     raw.exec("ALTER TABLE tasks ADD COLUMN due_date TEXT NOT NULL DEFAULT ''")
+  }
+  // Duties can be retired when the department rewrites the list; old report
+  // items still point at them, they are only hidden from the forms.
+  const dutyColumns = raw.prepare('PRAGMA table_info(duties)').all() as unknown as Array<{ name: string }>
+  if (!dutyColumns.some((column) => column.name === 'retired')) {
+    raw.exec('ALTER TABLE duties ADD COLUMN retired INTEGER NOT NULL DEFAULT 0')
   }
   return { raw, close: () => raw.close() }
 }

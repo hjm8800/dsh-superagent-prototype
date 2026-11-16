@@ -413,35 +413,48 @@ ${data.error ? `<div class="alert is-error">${escapeHtml(data.error)}</div>` : '
 }
 
 export function renderLedger(data: LedgerData): string {
+  // The duties are shown as a tree: each post is a node, the posts under it
+  // hang off it, and the duties open under the node. Nobody is named.
   const renderNode = (node: PositionView): string => {
-    // The ledger is by post; nobody is named here.
     const people = node.people.length
-      ? `<p class="muted small">在岗 ${node.people.length} 人</p>`
-      : '<p class="muted small">本岗位暂无人</p>'
+      ? `<span class="muted small">在岗 ${node.people.length} 人</span>`
+      : '<span class="muted small">本岗位暂无人</span>'
     const duties = node.duties.length
-      ? `<ol class="duties">${node.duties.map((d) => `<li>${escapeHtml(d.text)}</li>`).join('')}</ol>`
-      : '<p class="muted">本岗位暂无单独列出的职责条目。</p>'
+      ? `<ol class="duties">${node.duties.map((duty) => `<li>${escapeHtml(duty.text)}</li>`).join('')}</ol>`
+      : '<p class="muted small">本岗位暂无单独列出的职责条目。</p>'
     const children = node.children.length
-      ? `<div class="children">${node.children.map(renderNode).join('')}</div>`
+      ? `<ul class="tree-children">${node.children.map(renderNode).join('')}</ul>`
       : ''
-    return `<article class="position">
-  <header class="position-head">
-    <h3>${escapeHtml(node.name)}</h3>
-    <span class="tag tag-${node.level}">${escapeHtml(LEVEL_LABELS[node.level])}</span>
-    ${node.headcountNote ? `<span class="muted small">${escapeHtml(node.headcountNote)}</span>` : ''}
-  </header>
-  ${node.instructions ? `<p class="instructions">工作指引：${escapeHtml(node.instructions)}</p>` : ''}
-  ${node.boundary ? `<p class="boundary">${escapeHtml(node.boundary).replace(/\n/g, '<br>')}</p>` : ''}
-  ${node.note ? `<p class="muted small">${escapeHtml(node.note)}</p>` : ''}
-  ${people ? `<div class="pos-people"><span class="label">在岗人员</span>${people}</div>` : ''}
-  <div class="pos-duties"><span class="label">工作职责（${node.duties.length}）</span>${duties}</div>
+    return `<li class="tree-node">
+  <div class="tree-card">
+    <div class="tree-card-head">
+      <span class="tree-name">${escapeHtml(node.name)}</span>
+      <span class="tag tag-${node.level}">${escapeHtml(LEVEL_LABELS[node.level])}</span>
+      ${people}
+      <span class="muted small">职责 ${node.duties.length} 项</span>
+    </div>
+    ${
+      node.instructions
+        ? `<p class="tree-instructions">工作指引：${escapeHtml(node.instructions)}</p>`
+        : ''
+    }
+    <details class="tree-details">
+      <summary>展开职责</summary>
+      ${node.boundary ? `<p class="boundary">${escapeHtml(node.boundary).replace(/\n/g, '<br>')}</p>` : ''}
+      ${node.note ? `<p class="muted small">${escapeHtml(node.note)}</p>` : ''}
+      ${duties}
+    </details>
+  </div>
   ${children}
-</article>`
+</li>`
   }
 
   const body = `
-${pageHead(`${data.departmentName} · 岗位职责台账`, '按层级展示每个岗位的职责范围与在岗人员。')}
-<div class="ledger">${data.tree.map(renderNode).join('')}</div>
+${pageHead(
+  `${data.departmentName} · 岗位职责树`,
+  '按层级展示岗位架构：点岗位上的“展开职责”查看该岗位的职责条目与职责边界。',
+)}
+<div class="org-tree">${data.tree.map((node) => `<ul class="tree-root">${renderNode(node)}</ul>`).join('')}</div>
 `
   return layout({ title: '岗位职责', active: 'ledger', body })
 }
