@@ -1,0 +1,33 @@
+<view class="container">
+  <view class="card">
+    <view class="title">市场部工作台</view>
+    <view class="subtitle">用岗位账户登录，每个岗位一个账户。</view>
+
+    <input
+      class="input"
+      placeholder="岗位账户"
+      value="{{username}}"
+      bindinput="onUsername"
+    />
+
+    <input
+      class="input"
+      placeholder="密码"
+      password="{{true}}"
+      value="{{password}}"
+      bindinput="onPassword"
+      confirm-type="done"
+      bindconfirm="submit"
+    />
+
+    <view wx:if="{{error}}" class="muted" style="color:#b42318; margin-top:16rpx;">{{error}}</view>
+
+    <button class="btn" style="margin-top:24rpx;" bindtap="submit" disabled="{{busy}}">
+      {{busy ? '正在登录…' : '登录'}}
+    </button>
+
+    <view class="muted small" style="margin-top:20rpx;">
+      账户和密码由部门负责人分配。
+    </view>
+  </view>
+</view>

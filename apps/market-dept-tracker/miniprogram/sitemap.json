@@ -1,0 +1,9 @@
+{
+  "desc": "市场部工作台",
+  "rules": [
+    {
+      "action": "disallow",
+      "page": "*"
+    }
+  ]
+}

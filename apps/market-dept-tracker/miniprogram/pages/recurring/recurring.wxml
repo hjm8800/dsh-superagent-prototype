@@ -1,0 +1,53 @@
+<view class="container">
+  <view wx:if="{{forbidden && !loading}}" class="card">
+    <view class="title">只有领导可以设固定任务</view>
+    <view class="subtitle">这一页对经理、副经理和公司领导开放。</view>
+    <button class="btn" bindtap="goLogin">用领导的链接进入</button>
+  </view>
+
+  <block wx:else>
+    <view wx:if="{{loading}}" class="empty">正在加载…</view>
+    <view wx:elif="{{error}}" class="card" style="color:#b42318;">{{error}}</view>
+
+    <block wx:else>
+      <view class="card">
+        <view class="title">设固定任务</view>
+        <view class="subtitle">按周或按月自动出现在该岗位每个人的清单里，一直有效。</view>
+
+        <view class="muted small" style="margin:12rpx 0 6rpx;">交给哪个岗位</view>
+        <picker
+          class="picker"
+          range="{{positions}}"
+          range-key="name"
+          value="{{positionIndex}}"
+          bindchange="pickPosition"
+        >
+          <view>{{positions[positionIndex].name}}（{{positions[positionIndex].headcount}} 人）</view>
+        </picker>
+
+        <view class="muted small" style="margin:12rpx 0 6rpx;">重复周期</view>
+        <picker
+          class="picker"
+          range="{{cadences}}"
+          range-key="label"
+          value="{{cadenceIndex}}"
+          bindchange="pickCadence"
+        >
+          <view>{{cadences[cadenceIndex].label}}</view>
+        </picker>
+
+        <view class="muted small" style="margin:12rpx 0 6rpx;">任务</view>
+        <input class="input" placeholder="每个周期要做什么" value="{{title}}" bindinput="inputTitle" maxlength="200" />
+
+        <view class="muted small" style="margin:12rpx 0 6rpx;">说明（可选）</view>
+        <input class="input" placeholder="补充要求" value="{{detail}}" bindinput="inputDetail" maxlength="500" />
+
+        <button class="btn" style="margin-top:24rpx;" bindtap="submit" disabled="{{submitting}}">
+          {{submitting ? '正在设置…' : '设为固定任务'}}
+        </button>
+
+        <view wx:if="{{lastResult}}" class="muted small" style="margin-top:12rpx; color:#1a7f4b;">{{lastResult}}</view>
+      </view>
+    </block>
+  </block>
+</view>

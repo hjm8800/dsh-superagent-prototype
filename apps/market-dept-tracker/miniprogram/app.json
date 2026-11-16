@@ -1,0 +1,30 @@
+{
+  "pages": [
+    "pages/tasks/tasks",
+    "pages/duties/duties",
+    "pages/overview/overview",
+    "pages/assign/assign",
+    "pages/collection/collection",
+    "pages/ledger/ledger",
+    "pages/recurring/recurring",
+    "pages/login/login"
+  ],
+  "window": {
+    "navigationBarTitleText": "市场部工作台",
+    "navigationBarBackgroundColor": "#1f6feb",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#f5f6f8"
+  },
+  "tabBar": {
+    "color": "#6b7785",
+    "selectedColor": "#1f6feb",
+    "backgroundColor": "#ffffff",
+    "list": [
+      { "pagePath": "pages/tasks/tasks", "text": "我的任务" },
+      { "pagePath": "pages/duties/duties", "text": "职责与填报" },
+      { "pagePath": "pages/overview/overview", "text": "部门总览" }
+    ]
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}
