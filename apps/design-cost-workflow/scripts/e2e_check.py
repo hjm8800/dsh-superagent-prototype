@@ -12,9 +12,12 @@
 第二轮（v2）追加“典型设计（典设）匹配”验证：GET /project/3/typdesign →
 POST match（复核员 403 越权校验）→ POST confirm 一项 → GET export.xlsx →
 /project/3/compare 送审条件与风险提示 → 只读查库校验匹配/确认计数与 A/B 演示种子。
+第三轮（v3）追加“工作流开始入口/新建项目”验证：GET /project/new 200 →
+POST /project/new（唯一名称）→ 跳转新项目图纸解析页 → 项目页含“下一步” →
+只读查库校验新项目 stage=图纸解析、四阶段初始化、成员与审计 → 工作台“开始工作流”引导。
 
-注意：本脚本会修改演示数据库（项目C 四阶段状态 + 典设匹配确认状态），属预期行为；
-运行前请确认 C 项目为干净状态。输出：PASS/FAIL 明细表 + 汇总；全部通过返回 0，否则返回 1。
+注意：本脚本会修改演示数据库（项目C 四阶段状态 + 典设匹配确认状态 + 新增一个演示项目），
+属预期行为；运行前请确认 C 项目为干净状态。输出：PASS/FAIL 明细表 + 汇总；全部通过返回 0。
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ import os
 import re
 import sqlite3
 import sys
+from datetime import datetime
 from pathlib import Path
 
 try:  # 中文输出在 GBK 控制台/重定向时都尽量正常
@@ -359,6 +363,65 @@ def main(argv=None) -> int:
                   f"待确认 {pending_b[0]['n'] if pending_b else 0} 个")
         except Exception as exc:  # noqa: BLE001 - v2 未就绪时给出 FAIL 而不是中断
             check("典型设计匹配（v2）E2E 执行", False, f"异常：{exc}")
+
+        # ---------- 8. 工作流开始入口与新建项目（第三轮 v3，contract3 §5） ----------
+        try:
+            response = zaojia.get("/project/new")
+            check("新建项目表单页 GET /project/new 200",
+                  response.status_code == 200 and "新建项目" in response.text and "项目名称" in response.text,
+                  f"HTTP {response.status_code}")
+
+            new_name = f"E2E新建项目-{datetime.now().strftime('%H%M%S')}"
+            response = post(zaojia, "/project/new", {
+                "name": new_name, "ptype": "业扩配套", "location": "某供电所",
+                "note": "E2E 自动创建（v3 新建项目校验）",
+            })
+            final_url = str(response.url)
+            url_match = re.search(r"/project/(\d+)/drawings", final_url)
+            new_pid = int(url_match.group(1)) if url_match else 0
+            check("POST /project/new 创建项目并跳转图纸解析页",
+                  response.status_code == 200 and bool(url_match),
+                  f"HTTP {response.status_code}，最终 URL {final_url}")
+            check("新项目图纸解析页含“图纸解析/提交复核”",
+                  response.status_code == 200 and "图纸解析" in response.text and "提交复核" in response.text,
+                  "页面含“图纸解析/提交复核”")
+
+            response = post(fuhe, "/project/new", {"name": "越权新建项目-不应创建",
+                                                    "ptype": "台区改造", "location": "某供电所", "note": ""})
+            check("复核员无新建项目权限（403）", response.status_code == 403, f"HTTP {response.status_code}")
+
+            if new_pid:
+                project = db_query("SELECT name, stage FROM projects WHERE id=?", (new_pid,))
+                check("新建项目已入库（stage=图纸解析）",
+                      bool(project) and project[0]["name"] == new_name
+                      and project[0]["stage"] == "图纸解析",
+                      f"项目 {project[0]['name'] if project else '（无数据）'} / "
+                      f"stage={project[0]['stage'] if project else '—'}")
+                stages_new = {r["key"]: r["status"] for r in db_query(
+                    "SELECT key, status FROM stages WHERE project_id=?", (new_pid,))}
+                check("新建项目四阶段已初始化",
+                      len(stages_new) == 4 and stages_new.get("drawings") == "进行中"
+                      and all(stages_new.get(k) == "未开始" for k in ("model", "quantities", "pricing")),
+                      "、".join(f"{k}={v}" for k, v in stages_new.items()))
+                members = db_query("SELECT COUNT(*) AS n FROM members WHERE project_id=?", (new_pid,))
+                check("新建项目已加入全部演示账号", bool(members) and members[0]["n"] >= 3,
+                      f"成员 {members[0]['n'] if members else 0} 个")
+                audit_new = db_query(
+                    "SELECT COUNT(*) AS n FROM audit WHERE project_id=? AND action LIKE '%新建项目%'",
+                    (new_pid,))
+                check("新建项目写入审计日志", bool(audit_new) and audit_new[0]["n"] >= 1,
+                      f"审计 {audit_new[0]['n'] if audit_new else 0} 条")
+                response = zaojia.get(f"/project/{new_pid}")
+                check("新建项目页含“下一步”引导条",
+                      response.status_code == 200 and "下一步" in response.text,
+                      f"HTTP {response.status_code}")
+
+            response = zaojia.get("/")
+            check("工作台含“开始工作流”引导区",
+                  response.status_code == 200 and "开始工作流" in response.text and "新建项目" in response.text,
+                  "页面含“开始工作流/新建项目”")
+        except Exception as exc:  # noqa: BLE001 - v3 未就绪时给出 FAIL 而不是中断
+            check("新建项目（v3）E2E 执行", False, f"异常：{exc}")
     finally:
         zaojia.close()
         fuhe.close()
@@ -375,7 +438,7 @@ def main(argv=None) -> int:
                 print(f"  - {name}：{detail}")
         return 1
     print("E2E 全部通过 ✅（项目C 已走完 图纸→建模→算量→计价 全链路并完成复核与导出；"
-          "典型设计匹配/确认/导出/送审条件亦通过）")
+          "典型设计匹配/确认/导出/送审条件亦通过；新建项目与“下一步”引导通过）")
     return 0
 
 

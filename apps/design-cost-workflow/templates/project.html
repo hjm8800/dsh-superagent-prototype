@@ -49,6 +49,20 @@
   </div>
 </div>
 
+{% if next_action %}
+{% set cta_label = '查看对比分析 →' if next_action.kind == 'done' else ('去复核 →' if next_action.kind == 'review' else '去处理 →') %}
+<div class="next-action {{ next_action.kind }}">
+  <div class="next-action-main">
+    <span class="next-kicker">{{ '已完成' if next_action.kind == 'done' else '下一步' }}</span>
+    <div>
+      <div class="next-title">{{ next_action.label }}</div>
+      <div class="next-desc">{{ next_action.desc }}</div>
+    </div>
+  </div>
+  <a class="btn primary" href="{{ next_action.href }}{{ keep_as }}">{{ cta_label }}</a>
+</div>
+{% endif %}
+
 <section class="card">
   <div class="card-head">
     <h2>四阶段工作流</h2>

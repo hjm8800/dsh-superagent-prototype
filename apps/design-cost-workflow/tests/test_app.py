@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 import sys
 import tempfile
@@ -48,6 +49,15 @@ def db_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(os.path.join(_TEST_DATA_DIR, "workflow.db"))
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def project_count() -> int:
+    """当前项目总数（用于校验非法创建不写库）。"""
+    conn = db_conn()
+    try:
+        return int(conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0])
+    finally:
+        conn.close()
 
 
 def xlsx_bytes() -> bytes:
@@ -602,4 +612,149 @@ def test_typdesign_pending_blocks_submission_condition():
     assert "已确认 25/40 个模块" in compare_a.text
     assert "典型设计待确认（" not in compare_a.text
     client.get("/logout")
+
+
+# ---------------------------------------------------------------------------
+# v3：工作流“开始”入口 + 新建项目
+# ---------------------------------------------------------------------------
+def test_dashboard_start_guide():
+    login("zaojia", "123456")
+    response = client.get("/")
+    assert response.status_code == 200
+    for keyword in ("开始工作流", "三步走", "＋ 新建项目", "5 分钟演示路线", "从这里开始"):
+        assert keyword in response.text, keyword
+    client.get("/logout")
+
+
+def test_new_project_page():
+    login("zaojia", "123456")
+    response = client.get("/project/new")
+    assert response.status_code == 200
+    assert "新建项目" in response.text
+    assert "项目名称" in response.text
+    assert "图纸解析" in response.text
+    client.get("/logout")
+
+
+def test_new_project_create_and_next_action():
+    login("zaojia", "123456")
+    before = project_count()
+    response = client.post(
+        "/project/new",
+        data={
+            "name": "演示新建项目",
+            "ptype": "业扩配套",
+            "location": "某供电所",
+            "note": "v3 新建项目测试",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    location = response.headers["location"]
+    match = re.match(r"^/project/(\d+)/drawings", location)
+    assert match, location
+    pid = int(match.group(1))
+    assert project_count() == before + 1
+
+    conn = db_conn()
+    project = conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+    assert project is not None
+    assert project["name"] == "演示新建项目"
+    assert project["ptype"] == "业扩配套"
+    assert project["stage"] == "图纸解析"
+    assert re.match(r"^PRJ-\d{8}-\d{2}$", project["code"]), project["code"]
+    assert float(project["design_total"]) == 0.0
+
+    stage_rows = conn.execute(
+        "SELECT key, status FROM stages WHERE project_id=? ORDER BY id", (pid,)
+    ).fetchall()
+    status_map = {row["key"]: row["status"] for row in stage_rows}
+    assert status_map == {
+        "drawings": "进行中",
+        "model": "未开始",
+        "quantities": "未开始",
+        "pricing": "未开始",
+    }
+    member_count = conn.execute(
+        "SELECT COUNT(*) AS c FROM members WHERE project_id=?", (pid,)
+    ).fetchone()["c"]
+    assert member_count == 3
+    audit_count = conn.execute(
+        "SELECT COUNT(*) AS c FROM audit WHERE project_id=? AND action='新建项目'", (pid,)
+    ).fetchone()["c"]
+    assert audit_count >= 1
+    conn.close()
+
+    page = client.get(f"/project/{pid}")
+    assert page.status_code == 200
+    assert "下一步：打开图纸解析" in page.text
+    drawings = client.get(f"/project/{pid}/drawings")
+    assert drawings.status_code == 200
+    assert "图纸目录" in drawings.text
+    client.get("/logout")
+
+
+def test_new_project_forbidden_for_reviewer():
+    login("fuhe", "123456")
+    page = client.get("/project/new")
+    assert page.status_code == 200  # 所有登录用户可查看创建页
+    assert "仅管理员 / 造价员可创建项目" in page.text
+    before = project_count()
+    response = client.post(
+        "/project/new", data={"name": "复核员越权项目"}, follow_redirects=False
+    )
+    assert response.status_code == 403
+    assert project_count() == before
+    client.get("/logout")
+
+
+def test_new_project_validation_empty_name():
+    login("zaojia", "123456")
+    before = project_count()
+    response = client.post(
+        "/project/new", data={"name": "   ", "ptype": "台区改造"}, follow_redirects=False
+    )
+    assert response.status_code == 200
+    assert "项目名称不能为空" in response.text
+    assert project_count() == before
+    client.get("/logout")
+
+
+def test_next_action_states_on_project_pages():
+    login("admin", "admin123")
+    # 新建一个项目，验证“进行中 → 打开阶段页”的下一步引导
+    response = client.post(
+        "/project/new",
+        data={"name": "下一步状态测试项目", "ptype": "台区改造"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    pid = int(re.match(r"^/project/(\d+)/drawings", response.headers["location"]).group(1))
+    new_page = client.get(f"/project/{pid}")
+    assert new_page.status_code == 200
+    assert "下一步：打开图纸解析" in new_page.text
+
+    # 项目A：四阶段全完成 → 引导到对比分析
+    page_a = client.get("/project/1")
+    assert page_a.status_code == 200
+    assert "工作流已完成：查看对比分析" in page_a.text
+    # 项目B：算量待复核 → 引导复核
+    page_b = client.get("/project/2")
+    assert page_b.status_code == 200
+    assert "下一步：算量待复核" in page_b.text
+    client.get("/logout")
+
+
+def test_start_hints_on_login_and_demo():
+    anonymous = TestClient(app)
+    login_page = anonymous.get("/login")
+    assert login_page.status_code == 200
+    assert "登录后：工作台" in login_page.text
+    login("admin", "admin123")
+    demo_page = client.get("/demo")
+    assert demo_page.status_code == 200
+    assert "从这里开始" in demo_page.text
+    assert "新建项目" in demo_page.text
+    client.get("/logout")
+
 

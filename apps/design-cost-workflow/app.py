@@ -437,6 +437,40 @@ def td_confirmed(conn: sqlite3.Connection, pid: int) -> list[dict]:
 
 
 # --------------------------------------------------------------------------- #
+# 工作流“下一步”引导（v3）
+# --------------------------------------------------------------------------- #
+def build_next_action(project, stages: list[dict]) -> dict:
+    """按四阶段状态计算项目页“下一步”引导条（进行中 / 待复核 / 已完成）。"""
+    pid = int(project["id"])
+    for stage in stages:
+        key = str(stage.get("key") or "")
+        name = str(stage.get("name") or key)
+        status = str(stage.get("status") or "")
+        if status == "进行中":
+            owner = stage.get("owner") or "造价员"
+            return {
+                "label": f"下一步：打开{name}",
+                "desc": f"当前阶段进行中，负责人：{owner}。完成后在本页提交复核。",
+                "href": f"/project/{pid}/{key}",
+                "kind": "primary",
+            }
+        if status == "待复核":
+            owner = stage.get("owner") or "—"
+            return {
+                "label": f"下一步：{name}待复核",
+                "desc": f"提交人：{owner}，请切换复核员（或管理员）复核；通过后自动进入下一阶段。",
+                "href": f"/project/{pid}/{key}",
+                "kind": "review",
+            }
+    return {
+        "label": "工作流已完成：查看对比分析",
+        "desc": "四阶段均已完成，可导出预算书或查看送审条件。",
+        "href": f"/project/{pid}/compare",
+        "kind": "done",
+    }
+
+
+# --------------------------------------------------------------------------- #
 # 页面渲染 / 重定向 / 操作结果提示
 # --------------------------------------------------------------------------- #
 def page(request: Request, name: str, user, **context):
@@ -640,6 +674,106 @@ def dashboard(request: Request, conn: sqlite3.Connection = Depends(get_db)):
 
 
 # --------------------------------------------------------------------------- #
+# 新建项目（v3：工作流“开始”入口）
+# --------------------------------------------------------------------------- #
+PROJECT_TYPES = ["台区改造", "业扩配套", "技改修理", "其他"]
+NEW_NAME_MAX = 60
+NEW_LOCATION_MAX = 40
+NEW_NOTE_MAX = 200
+
+
+def next_project_code(conn: sqlite3.Connection) -> str:
+    """生成 PRJ-YYYYMMDD-NN 项目编码（当日已有项目数+1；冲突时递增保证唯一）。"""
+    prefix = f"PRJ-{datetime.now():%Y%m%d}-"
+    used = 0
+    for row in conn.execute("SELECT code FROM projects WHERE code LIKE ?", (prefix + "%",)):
+        suffix = str(row["code"] or "")[len(prefix):]
+        if suffix.isdigit():
+            used += 1
+    seq = used + 1
+    while conn.execute("SELECT 1 FROM projects WHERE code=?", (f"{prefix}{seq:02d}",)).fetchone():
+        seq += 1
+    return f"{prefix}{seq:02d}"
+
+
+def new_project_context(user, form: dict | None = None, error: str = "") -> dict:
+    """新建项目页模板上下文。"""
+    return {
+        "active": "new_project",
+        "project_types": PROJECT_TYPES,
+        "form": form or {"name": "", "ptype": PROJECT_TYPES[0], "location": "某供电所", "note": ""},
+        "error": error,
+    }
+
+
+@app.get("/project/new")
+def new_project_page(request: Request, conn: sqlite3.Connection = Depends(get_db)):
+    """新建项目表单页：登录用户均可查看，提交仅 admin/zaojia。"""
+    user = require_user(request, conn)
+    return page(request, "new_project.html", user, **new_project_context(user))
+
+
+@app.post("/project/new")
+async def new_project_submit(request: Request, conn: sqlite3.Connection = Depends(get_db)):
+    """创建项目：写 projects/members、初始化四阶段、写审计，然后跳转图纸解析页。"""
+    user = require_user(request, conn)
+    require_role(user, CAN_EDIT_ROLES, "新建项目")
+
+    form = await request.form()
+    name = str(form.get("name") or "").strip()
+    ptype = str(form.get("ptype") or PROJECT_TYPES[0]).strip()
+    location = str(form.get("location") or "").strip() or "某供电所"
+    note = str(form.get("note") or "").strip()
+    if ptype not in PROJECT_TYPES:
+        ptype = PROJECT_TYPES[0]
+    values = {"name": name, "ptype": ptype, "location": location, "note": note}
+
+    error = ""
+    if not name:
+        error = "项目名称不能为空"
+    elif len(name) > NEW_NAME_MAX:
+        error = f"项目名称不能超过 {NEW_NAME_MAX} 字"
+    elif len(location) > NEW_LOCATION_MAX:
+        error = f"项目地点不能超过 {NEW_LOCATION_MAX} 字"
+    elif len(note) > NEW_NOTE_MAX:
+        error = f"备注不能超过 {NEW_NOTE_MAX} 字"
+    if error:
+        return page(request, "new_project.html", user, **new_project_context(user, values, error))
+
+    code = next_project_code(conn)
+    try:
+        cursor = conn.execute(
+            "INSERT INTO projects (code, name, ptype, stage, location, t0, design_equipment, "
+            "design_install, design_other, design_reserve, design_total, note) "
+            "VALUES (?,?,?,?,?,?,0,0,0,0,0,?)",
+            (code, name, ptype, "图纸解析", location, None, note),
+        )
+        pid = int(cursor.lastrowid)
+        # 演示环境简化权限：所有现有账号都加入该项目成员
+        conn.execute("INSERT INTO members (user_id, project_id) SELECT id, ? FROM users", (pid,))
+        # 初始化四阶段（图纸解析=进行中，其余未开始）
+        engine.init_project_stages(conn, pid)
+        audit(conn, pid, user, "新建项目", f"{name}（{code}）")
+    except Exception as exc:  # 创建失败则回滚，不留下半成品项目
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        return page(
+            request,
+            "new_project.html",
+            user,
+            **new_project_context(user, values, f"项目创建失败：{exc}"),
+        )
+
+    return redirect_msg(
+        request,
+        f"/project/{pid}/drawings",
+        "项目已创建：请上传施工图/说明书，识别后提交复核",
+    )
+
+
+# --------------------------------------------------------------------------- #
 # 项目工作流主页
 # --------------------------------------------------------------------------- #
 @app.get("/project/{pid}")
@@ -679,6 +813,7 @@ def project_home(pid: int, request: Request, conn: sqlite3.Connection = Depends(
         model_total=model_total,
         diff_rate=((model_total - design_total) / design_total * 100) if design_total else 0.0,
         td_stats=td_stats(conn, pid),
+        next_action=build_next_action(project, ctx["stages"]),
         **ctx,
     )
 

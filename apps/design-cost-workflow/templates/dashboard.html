@@ -8,7 +8,8 @@
     <p class="sub">配电网工程施工企业造价工作流：图纸结构化 → 配网建模 → 规则算量 → 2022 版计价与预算对比</p>
   </div>
   <div class="head-actions">
-    <a class="btn primary" href="/demo{{ keep_as }}">5 分钟演示路线</a>
+    <a class="btn" href="/project/new{{ keep_as }}">＋ 新建项目</a>
+    <a class="btn" href="/demo{{ keep_as }}">5 分钟演示路线</a>
     <a class="btn" href="/project/1{{ keep_as }}">查看完成态项目A</a>
   </div>
 </div>
@@ -23,10 +24,37 @@
   {% endfor %}
 </div>
 
+<section class="card start-guide">
+  <div class="start-guide-main">
+    <div class="start-kicker">从这里开始</div>
+    <h2>开始工作流（三步走）</h2>
+    <p class="muted small">新建项目后系统自动初始化四阶段：图纸解析 → 建模 → 算量 → 计价，逐阶段提交 / 复核即可完成一个配网工程的造价工作。</p>
+  </div>
+  <div class="start-steps">
+    <div class="start-step">
+      <span class="start-num">1</span>
+      <div><strong>新建项目</strong><div class="muted small">或从下方演示项目继续</div></div>
+    </div>
+    <div class="start-step">
+      <span class="start-num">2</span>
+      <div><strong>图纸解析 → 建模 → 算量 → 计价</strong><div class="muted small">逐阶段提交复核，复核通过后自动流转</div></div>
+    </div>
+    <div class="start-step">
+      <span class="start-num">3</span>
+      <div><strong>对比分析、导出预算书与匹配清单</strong><div class="muted small">设计预算 vs 模型预算、材料量差异、典设匹配清单</div></div>
+    </div>
+  </div>
+  <div class="start-actions">
+    <a class="btn primary btn-big" href="/project/new{{ keep_as }}">＋ 新建项目，从图纸解析开始</a>
+    <a class="btn" href="/demo{{ keep_as }}">5 分钟演示路线</a>
+    <span class="muted small">{{ '当前角色可创建项目；也可从下方演示项目继续' if can_edit else '复核员可查看项目；创建项目需切换造价员 / 管理员' }}</span>
+  </div>
+</section>
+
 <section class="card">
   <div class="card-head">
     <h2>项目列表</h2>
-    <span class="muted small">共 {{ cards|length }} 个演示项目 · 点击卡片进入四阶段工作流</span>
+    <span class="muted small">共 {{ cards|length }} 个演示项目 · 也可点击卡片继续现有项目</span>
   </div>
   <div class="project-grid">
     {% for c in cards %}
