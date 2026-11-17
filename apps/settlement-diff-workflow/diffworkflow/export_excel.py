@@ -192,10 +192,16 @@ def _summary_metrics(comparison: dict) -> list[list]:
     if settlement_totals.get("old_equipment") is not None or settlement_totals.get("new_equipment") is not None:
         old_value, new_value = settlement_totals.get("old_equipment"), settlement_totals.get("new_equipment")
         delta = (new_value - old_value) if (old_value is not None and new_value is not None) else None
-        rows.append(["审核结算（表一口径·设备检修费）", old_value, new_value, delta,
+        rows.append(["施工费（表一口径·设备检修费）", old_value, new_value, delta,
                      (delta / old_value) if (delta is not None and old_value) else None,
                      settlement["summary"].get("changed_count"),
                      settlement["summary"].get("risk_counts", {}).get(RISK_HIGH, 0)])
+    fee_analysis = analysis.get("construction_fee") or {}
+    direct = fee_analysis.get("direct") or {}
+    yigong = fee_analysis.get("yigong_material") or {}
+    if direct.get("net") is not None or yigong.get("net") is not None:
+        rows.append(["其中：定额直接费（施工费拆分）", None, None, direct.get("net"), None, None, None])
+        rows.append(["其中：乙供材料（施工费拆分）", None, None, yigong.get("net"), None, None, None])
     if settlement_totals.get("new_discount_final") is not None and settlement_totals.get("old_equipment") is not None:
         old_value = settlement_totals.get("old_equipment")
         new_value = settlement_totals.get("new_discount_final")
@@ -423,6 +429,195 @@ def _sheet_boq_text_full(ws, comparison: dict):
     return row
 
 
+def _sheet_construction_fee(ws, comparison: dict):
+    analysis = comparison.get("analysis") or {}
+    fee = analysis.get("construction_fee") or {}
+    row = 1
+    row = _write_title(ws, row, "施工费差异成因分析", span=8)
+    for column, width in enumerate([26, 16, 16, 16, 10, 14, 40], start=1):
+        ws.column_dimensions[get_column_letter(column)].width = width
+
+    row = _write_section(ws, row + 1, "一、施工费总额与分解", span=7)
+    row = _write_headers(ws, row, ["项目", "原版（元）", "新版（元）", "变化（元）", "变化率", "拆分说明"])
+    direct = fee.get("direct") or {}
+    yigong = fee.get("yigong_material") or {}
+    agong = fee.get("agong_material") or {}
+    parts = fee.get("parts") or {}
+    rows = [
+        ("施工费（表一口径）", fee.get("old_fee"), fee.get("new_fee"), fee.get("fee_delta"),
+         fee.get("fee_ratio"), ""),
+        ("定额直接费合计", fee.get("direct_old"), fee.get("direct_new"), direct.get("net"), None, "定额/组合件条目合计"),
+        ("  其中：量差效应", None, None, direct.get("qty_effect"), None, "Δ数量 × 原单价"),
+        ("  其中：价差效应", None, None, direct.get("price_effect"), None, "新数量 × Δ单价"),
+        ("  其中：新增项", None, None, direct.get("added"), None, "新增条目金额"),
+        ("  其中：删除项", None, None, -(direct.get("removed") or 0) if direct.get("removed") else None, None, "删除条目金额（负）"),
+        ("  其中：单位/规格/其他", None, None, direct.get("other"), None, "无法按量价拆分部分"),
+        ("乙供未计价材料（计入施工费）", None, None, yigong.get("net"), None, "乙供主材/材料变化"),
+        ("  其中：量差效应", None, None, yigong.get("qty_effect"), None, "Δ数量 × 原单价"),
+        ("  其中：价差效应", None, None, yigong.get("price_effect"), None, "新数量 × Δ单价"),
+        ("  其中：新增/删除项", None, None, (yigong.get("added") or 0) - (yigong.get("removed") or 0),
+         None, "新增-删除"),
+        ("取费与汇总口径残差", None, None, fee.get("residual_vs_effects"), None,
+         "施工费变化 - 定额直接费 - 乙供材料"),
+        ("（口径参考）甲供材料变化", None, None, agong.get("net"), None, "甲供材料不计入施工费"),
+        ("（口径参考）配件变化", None, None, parts.get("net"), None, "配件购置费口径"),
+    ]
+    notes = [row[-1] for row in rows]
+    for index, (label, old_value, new_value, delta, ratio, note) in enumerate(rows):
+        _apply_spec(ws, row, 1, label, "text")
+        _apply_spec(ws, row, 2, old_value, "money")
+        _apply_spec(ws, row, 3, new_value, "money")
+        cell = _apply_spec(ws, row, 4, delta, "money")
+        if isinstance(delta, (int, float)):
+            cell.font = POS_FONT if delta > 0 else (NEG_FONT if delta < 0 else None)
+        _apply_spec(ws, row, 5, ratio, "ratio")
+        _apply_spec(ws, row, 6, note, "text")
+        row += 1
+
+    components = fee.get("components") or []
+    if components:
+        row = _write_section(ws, row + 1, "二、费用构成变化", span=7)
+        row = _write_headers(ws, row, ["费用项", "原版（元）", "新版（元）", "变化（元）"])
+        for component in components:
+            _apply_spec(ws, row, 1, component.get("name"), "text")
+            _apply_spec(ws, row, 2, component.get("old"), "money")
+            _apply_spec(ws, row, 3, component.get("new"), "money")
+            cell = _apply_spec(ws, row, 4, component.get("delta"), "money")
+            if isinstance(component.get("delta"), (int, float)):
+                cell.font = POS_FONT if component["delta"] > 0 else NEG_FONT
+            row += 1
+
+    sections = fee.get("sections") or []
+    if sections:
+        row = _write_section(ws, row + 1, "三、分部贡献（原版表二甲 vs 新版项目划分）", span=7)
+        row = _write_headers(ws, row, ["分部", "原版（元）", "新版（元）", "变化（元）", "变化率"])
+        for section in sections:
+            _apply_spec(ws, row, 1, section.get("name"), "text")
+            _apply_spec(ws, row, 2, section.get("old"), "money")
+            _apply_spec(ws, row, 3, section.get("new"), "money")
+            cell = _apply_spec(ws, row, 4, section.get("delta"), "money")
+            if isinstance(section.get("delta"), (int, float)):
+                cell.font = POS_FONT if section["delta"] > 0 else NEG_FONT
+            _apply_spec(ws, row, 5, section.get("ratio"), "ratio")
+            row += 1
+
+    causes = fee.get("item_causes") or []
+    if causes:
+        row = _write_section(ws, row + 1, "四、项目级 TOP 成因", span=7)
+        row = _write_headers(ws, row, ["名称", "状态", "成因类型", "原数量", "新数量", "数量变化率", "金额差（元）"])
+        for cause in causes:
+            _apply_spec(ws, row, 1, f"{cause.get('name', '')} {cause.get('spec', '')}".strip(), "text")
+            _apply_spec(ws, row, 2, cause.get("status"), "text")
+            _apply_spec(ws, row, 3, cause.get("effect_kind"), "text")
+            _apply_spec(ws, row, 4, cause.get("old_qty"), "qty")
+            _apply_spec(ws, row, 5, cause.get("new_qty"), "qty")
+            _apply_spec(ws, row, 6, cause.get("qty_ratio"), "ratio")
+            cell = _apply_spec(ws, row, 7, cause.get("amount_delta"), "money")
+            if isinstance(cause.get("amount_delta"), (int, float)):
+                cell.font = POS_FONT if cause["amount_delta"] > 0 else NEG_FONT
+            row += 1
+
+    row = _write_section(ws, row + 1, "五、供料口径变化（影响施工费可比性）", span=7)
+    row = _write_headers(ws, row, ["材料口径", "原版（元）", "新版（元）", "变化（元）"])
+    for label, old_value, new_value in (
+        ("乙供未计价材料（计入施工费）", fee.get("old_yigong"), fee.get("new_yigong")),
+        ("甲供未计价材料（不计入施工费）",
+         next((c.get("old") for c in components if c.get("name") == "甲供未计价材料"), None),
+         next((c.get("new") for c in components if c.get("name") == "甲供未计价材料"), None)),
+    ):
+        _apply_spec(ws, row, 1, label, "text")
+        _apply_spec(ws, row, 2, old_value, "money")
+        _apply_spec(ws, row, 3, new_value, "money")
+        _apply_spec(ws, row, 4, (new_value - old_value) if (old_value is not None and new_value is not None) else None, "money")
+        row += 1
+    top_added = fee.get("top_added") or []
+    top_removed = fee.get("top_removed") or []
+    if top_added or top_removed:
+        row = _write_section(ws, row + 1, "六、新增 / 删除金额最大的条目", span=7)
+        row = _write_headers(ws, row, ["类型", "名称", "归类", "金额差（元）"])
+        for label, items in (("新增", top_added), ("删除", top_removed)):
+            for item in items:
+                _apply_spec(ws, row, 1, label, "text")
+                _apply_spec(ws, row, 2, item.get("name"), "text")
+                _apply_spec(ws, row, 3, item.get("effect_kind"), "text")
+                _apply_spec(ws, row, 4, item.get("amount_delta"), "money")
+                row += 1
+
+    row = _write_note(ws, row + 1,
+                      "说明：量差/价差按匹配条目逐项拆分（Δ金额≈量差效应+价差效应）；新增/删除条目单独列示；"
+                      "残差 = 一笔性费用（费用类条目）+ 取费构成（措施费/规费/利润/价差/税金等）+ 损耗 + 条目匹配差异，"
+                      "不能全部归因于取费。仅“组合件汇总表”的结算书无表一/表三甲，只能拆分直接费口径。")
+    return row
+
+
+def _sheet_quantity(ws, comparison: dict):
+    analysis = comparison.get("analysis") or {}
+    quantity = analysis.get("quantity") or {}
+    row = 1
+    row = _write_title(ws, row, "工程量差异分析", span=8)
+    for column, width in enumerate([30, 18, 12, 8, 12, 12, 12, 24], start=1):
+        ws.column_dimensions[get_column_letter(column)].width = width
+
+    row = _write_section(ws, row + 1, "一、数量变化 TOP（结算明细）", span=8)
+    row = _write_headers(ws, row, ["名称", "规格", "单位", "原数量", "新数量", "数量差", "变化率", "金额差（元）"])
+    for item in quantity.get("top_qty_changes") or []:
+        _apply_spec(ws, row, 1, item.get("name"), "text")
+        _apply_spec(ws, row, 2, item.get("spec"), "text")
+        _apply_spec(ws, row, 3, item.get("unit"), "text")
+        _apply_spec(ws, row, 4, item.get("old_qty"), "qty")
+        _apply_spec(ws, row, 5, item.get("new_qty"), "qty")
+        cell = _apply_spec(ws, row, 6, item.get("qty_delta"), "delta_qty")
+        _apply_spec(ws, row, 7, item.get("qty_ratio"), "ratio")
+        _apply_spec(ws, row, 8, item.get("amount_delta"), "money")
+        row += 1
+
+    for title, key in (("二、新增条目 TOP", "top_added"), ("三、删除条目 TOP", "top_removed")):
+        items = quantity.get(key) or []
+        if not items:
+            continue
+        row = _write_section(ws, row + 1, title, span=8)
+        row = _write_headers(ws, row, ["名称", "规格", "单位", "数量", "金额差（元）"])
+        for item in items:
+            _apply_spec(ws, row, 1, item.get("name"), "text")
+            _apply_spec(ws, row, 2, item.get("spec"), "text")
+            _apply_spec(ws, row, 3, item.get("unit"), "text")
+            _apply_spec(ws, row, 4, item.get("new_qty") if key == "top_added" else item.get("old_qty"), "qty")
+            _apply_spec(ws, row, 5, item.get("amount_delta"), "money")
+            row += 1
+
+    unit_changes = quantity.get("unit_changes") or []
+    spec_changes = quantity.get("spec_changes") or []
+    if unit_changes or spec_changes:
+        row = _write_section(ws, row + 1, "四、单位变化 / 规格变化（需人工确认换算与依据）", span=8)
+        row = _write_headers(ws, row, ["类型", "名称", "规格", "单位", "原数量", "新数量", "金额差（元）"])
+        for kind, items in (("单位变化", unit_changes), ("规格变化", spec_changes)):
+            for item in items:
+                _apply_spec(ws, row, 1, kind, "text")
+                _apply_spec(ws, row, 2, item.get("name"), "text")
+                _apply_spec(ws, row, 3, item.get("spec"), "text")
+                _apply_spec(ws, row, 4, item.get("unit"), "text")
+                _apply_spec(ws, row, 5, item.get("old_qty"), "qty")
+                _apply_spec(ws, row, 6, item.get("new_qty"), "qty")
+                _apply_spec(ws, row, 7, item.get("amount_delta"), "money")
+                row += 1
+
+    grounding = quantity.get("grounding") or {}
+    old_grounding = grounding.get("old") or {}
+    new_grounding = grounding.get("new") or {}
+    if old_grounding or new_grounding:
+        row = _write_section(ws, row + 1, "五、竣工资料接地工程量（与结算量勾稽）", span=8)
+        row = _write_headers(ws, row, ["材料", "原版", "新版", "差值"])
+        for name in sorted(set(old_grounding) | set(new_grounding)):
+            old_value = old_grounding.get(name, 0.0)
+            new_value = new_grounding.get(name, 0.0)
+            _apply_spec(ws, row, 1, name, "text")
+            _apply_spec(ws, row, 2, old_value, "qty")
+            _apply_spec(ws, row, 3, new_value, "qty")
+            _apply_spec(ws, row, 4, new_value - old_value, "delta_qty")
+            row += 1
+    return row
+
+
 def _sheet_risks(ws, comparison: dict):
     row = 1
     row = _write_title(ws, row, "风险与建议", span=8)
@@ -521,6 +716,8 @@ def build(comparison: dict) -> bytes:
     wb.remove(wb.active)
 
     _sheet_overview(wb.create_sheet("总览"), comparison)
+    _sheet_construction_fee(wb.create_sheet("施工费差异成因"), comparison)
+    _sheet_quantity(wb.create_sheet("工程量差异"), comparison)
     _sheet_settlement_summary(wb.create_sheet("审核结算-汇总"), comparison)
 
     settlement_diffs = comparison["documents"]["settlement"].get("diffs") or []

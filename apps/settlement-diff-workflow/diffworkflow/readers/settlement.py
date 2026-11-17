@@ -202,10 +202,28 @@ class _SectionTracker:
 # ---------------------------------------------------------------------------
 
 
+def _detect_summary_unit_scale(rows: list[list[Any]]) -> float:
+    """识别表一金额单位；返回换算到“元”的倍率（万元 → 10000，元 → 1）。
+
+    旧结算书里出现“金额单位:万元”，此时只有表一金额是万元；同工作簿的表二甲/表三甲/
+    材料汇总表仍是元，因此倍率只用于表一 totals。
+    """
+    for row in rows[:8]:
+        for value in row:
+            text = _compact(cell_text(value))
+            if "金额单位" not in text:
+                continue
+            if "万元" in text:
+                return 10000.0
+            if "元" in text:
+                return 1.0
+    return 1.0
+
+
 def _parse_summary_totals(
-    rows: list[list[Any]], warnings: list[str], source: str
+    rows: list[list[Any]], warnings: list[str], source: str, scale: float = 1.0
 ) -> dict[str, float | None]:
-    """解析表一：按“工程或费用名称”取金额。"""
+    """解析表一：按“工程或费用名称”取金额，并按 scale 统一换算成“元”。"""
     name_col: int | None = None
     amount_col: int | None = None
     for row in rows[:10]:
@@ -273,7 +291,7 @@ def _parse_summary_totals(
         if value is None:
             # 表一允许费用行为空（如旧版没有甲供配件材料费），不记 warning
             continue
-        totals[matched] = value
+        totals[matched] = round(value * scale, 2) if scale != 1.0 else value
     return totals
 
 
@@ -773,6 +791,133 @@ def _sum_amounts(items: list[dict[str, Any]], **filters: str) -> float | None:
 
 
 # ---------------------------------------------------------------------------
+# 组合件汇总表（部分轻量结算书只有该表，无表一/表三甲/材料表）
+# ---------------------------------------------------------------------------
+
+
+def _parse_assembly_sheet(
+    rows: list[list[Any]],
+    sheet_name: str,
+    source: str,
+    warnings: list[str],
+) -> tuple[list[dict[str, Any]], float | None]:
+    """解析“组合件汇总表”：列=序号/编码/项目名称/单位/[计算式]/数量/单价/合价。
+
+    返回 (items, 合计金额)。该类工作簿没有表一/表三甲/材料表，施工费口径即组合件合价合计。
+    """
+    header_row: int | None = None
+    for row_index, row in enumerate(rows[:10]):
+        texts = [_compact(cell_text(value)) for value in row]
+        if "项目名称" in texts or ("编码" in texts and "合价" in texts):
+            header_row = row_index
+            break
+    if header_row is None:
+        warnings.append(f"{source}：未识别“组合件汇总表”表头，无法提取组合件明细")
+        return [], None
+
+    cells: list[tuple[int, int, str]] = []
+    for row_index in range(0, min(len(rows), header_row + 2)):
+        for column_index, value in enumerate(rows[row_index]):
+            text = _compact(cell_text(value))
+            if text:
+                cells.append((row_index, column_index, text))
+
+    def find(*keywords: str, exclude: tuple[str, ...] = ()) -> int | None:
+        return _find_column(cells, *keywords, exclude=exclude)
+
+    seq_col = find("序号")
+    code_col = find("编码")
+    name_col = find("项目名称")
+    unit_col = find("单位", exclude=("金额单位",))
+    formula_col = find("计算式")
+    qty_col = find("数量")
+    price_col = find("单价", exclude=("合价",))
+    amount_col = find("合价")
+
+    if name_col is None:
+        name_col = 2
+    if code_col is None:
+        code_col = 1
+    if unit_col is None:
+        unit_col = 3
+    if qty_col is None:
+        qty_col = (formula_col + 1) if formula_col is not None else 5
+    if price_col is None:
+        price_col = qty_col + 1
+    if amount_col is None:
+        amount_col = price_col + 1
+    if seq_col is not None and seq_col >= name_col:
+        seq_col = None
+
+    items: list[dict[str, Any]] = []
+    section = ""
+    declared_total: float | None = None
+    summed_total = 0.0
+    has_amount = False
+    for row_index in range(header_row + 1, len(rows)):
+        row = rows[row_index]
+        row_no = row_index + 1
+        texts = [_compact(cell_text(value)) for value in row]
+
+        summary_label = None
+        for text in texts:
+            for prefix in ("小计", "合计", "总计"):
+                if text.startswith(prefix) and len(text) <= len(prefix) + 2:
+                    summary_label = prefix
+                    break
+            if summary_label:
+                break
+        if summary_label:
+            numbers = [cell_number(value) for value in row]
+            numbers = [number for number in numbers if number is not None]
+            if numbers:
+                declared_total = round(numbers[-1], 2)
+            continue
+
+        name = cell_text(_cell(row, name_col))
+        if not name:
+            continue
+        # 分节标题行，如“一、新建部分”“二、新建部分”，只用于 section，不计入 items
+        if re.match(rf"^[{_CN_NUMERALS}]+[、.．]", _compact(name)):
+            section = re.sub(rf"^[{_CN_NUMERALS}]+[、.．]\s*", "", name).strip()
+            continue
+
+        unit = cell_text(_cell(row, unit_col))
+        code = cell_text(_cell(row, code_col))
+        qty = _number(_cell(row, qty_col), warnings, source, row_no, "数量")
+        unit_price = _number(_cell(row, price_col), warnings, source, row_no, "单价")
+        amount = _number(_cell(row, amount_col), warnings, source, row_no, "合价")
+        if qty is None and unit_price is None and amount is None:
+            warnings.append(
+                f"{source} 第{row_no}行：组合件行缺少数量/单价/合价，已跳过（{name[:20]}）"
+            )
+            continue
+        items.append(
+            _make_item(
+                name=name,
+                spec="",
+                unit=unit,
+                qty=qty,
+                unit_price=unit_price,
+                amount=amount,
+                code=code,
+                section=section,
+                item_type="组合件",
+                supply="",
+                source=source,
+                note="组合件汇总表",
+            )
+        )
+        if amount is not None:
+            summed_total += amount
+            has_amount = True
+    total = declared_total if declared_total is not None else (
+        round(summed_total, 2) if has_amount else None
+    )
+    return items, total
+
+
+# ---------------------------------------------------------------------------
 # 其他辅助（标题 / 施工费明细 / 材料汇总表统计）
 # ---------------------------------------------------------------------------
 
@@ -862,10 +1007,14 @@ def _parse_material_summary_stats(
 
 
 def matches(sheet_names: list[str], filename: str = "") -> bool:
-    """结算书特征：工作表名含“检修工程总表”或“设备检修单位工程表”。"""
+    """结算书特征：工作表名含“检修工程总表/设备检修单位工程表”，或仅含“组合件汇总表”。"""
     for sheet_name in sheet_names or []:
         compact = _compact(sheet_name)
-        if "检修工程总表" in compact or "设备检修单位工程表" in compact:
+        if (
+            "检修工程总表" in compact
+            or "设备检修单位工程表" in compact
+            or "组合件汇总表" in compact
+        ):
             return True
     compact_file = _compact(str(filename))
     return any(
@@ -874,30 +1023,103 @@ def matches(sheet_names: list[str], filename: str = "") -> bool:
 
 
 def load(path: str | Path) -> dict[str, Any]:
-    """解析检修结算书工作簿，返回契约 4.2 规定的 dict。"""
+    """解析检修结算书工作簿，返回契约 4.2 规定的 dict。
+
+    支持三类版式（meta.format 标记）：
+    - ``full``：含表一/表三甲的完整结算书，meta.is_full=True；
+    - ``assembly_only``：只有“组合件汇总表”的轻量结算书，meta.is_full=False，
+      totals 的施工费/组合件合计/final_amount 取组合件合价合计；
+    - ``partial``：表不全的残缺工作簿，按可用表尽量解析，meta.is_full=False。
+
+    表一若标注“金额单位:万元”，只对表一金额字段 ×10000（meta.unit_scale 记录倍率），
+    同工作簿的表二甲/表三甲/材料表仍按元解析。
+    """
     path = Path(path)
     sheets = load_sheets(path)
     names = list(sheets)
     filename = path.name
     warnings: list[str] = []
 
-    # --- 表一：总结算金额 --------------------------------------------------
+    # --- 识别工作表 ---------------------------------------------------------
     summary_name = (
         _find_sheet(names, "检修工程总表")
         or _find_sheet(names, "表一")
-        or _find_sheet(names, "总表")
+        or _find_sheet(names, "总表", exclude=("组合件",))
     )
-    totals: dict[str, float | None] = {key: None for key in _TOTALS_KEYS}
+    table3_name = _find_sheet(names, "设备检修单位工程表") or _find_sheet(
+        names, "单位工程表"
+    )
+    table2_name = _find_sheet(names, "专业汇总表") or _find_sheet(names, "表二甲")
+    assembly_name = _find_sheet(names, "组合件汇总表") or _find_sheet(names, "组合件")
+    is_full = bool(summary_name and table3_name)
+    summary_scale = (
+        _detect_summary_unit_scale(sheets[summary_name]) if summary_name else 1.0
+    )
+
+    # --- 仅“组合件汇总表”的轻量结算书（无表一/表三甲）---------------------
+    if assembly_name and not summary_name and not table3_name:
+        source = f"{filename}{SOURCE_SEP}{assembly_name}"
+        items, assembly_total = _parse_assembly_sheet(
+            sheets[assembly_name], assembly_name, source, warnings
+        )
+        if not items:
+            warnings.append(f"{filename}：组合件汇总表未解析到任何明细行")
+        warnings.append(
+            f"{filename}：仅组合件汇总表，无表一/表三甲，施工费口径以组合件合价合计为准"
+        )
+        totals: dict[str, float | None] = {key: None for key in _TOTALS_KEYS}
+        totals["施工费"] = assembly_total
+        totals["组合件合计"] = assembly_total
+        totals["final_amount"] = assembly_total
+        meta = {
+            "file": filename,
+            "sheets": names,
+            "title": _extract_title(sheets, path),
+            "sheet_map": {
+                "表一": None,
+                "表二甲": None,
+                "表三甲": None,
+                "组合件汇总表": assembly_name,
+            },
+            "categories_source": "",
+            "format": "assembly_only",
+            "is_full": False,
+            "unit_scale": 1.0,
+            "counts": {
+                "items": len(items),
+                "categories": 0,
+                "materials": 0,
+            },
+        }
+        return {
+            "kind": KIND,
+            "items": items,
+            "totals": totals,
+            "categories": [],
+            "materials": {
+                "items": [],
+                "totals": {
+                    "乙供合计": None,
+                    "甲供合计": None,
+                    "配件合计": None,
+                    "甲供配件合计": None,
+                },
+            },
+            "meta": meta,
+            "warnings": warnings,
+        }
+
+    # --- 表一：总结算金额 --------------------------------------------------
+    totals = {key: None for key in _TOTALS_KEYS}
     if summary_name:
         source = f"{filename}{SOURCE_SEP}{summary_name}"
-        totals = _parse_summary_totals(sheets[summary_name], warnings, source)
+        totals = _parse_summary_totals(
+            sheets[summary_name], warnings, source, scale=summary_scale
+        )
     else:
         warnings.append(f"{filename}：未找到“检修工程总表(表一)”，无法提取总结算金额")
 
     # --- 表三甲：items / 项目划分 / 类型列 ---------------------------------
-    table3_name = _find_sheet(names, "设备检修单位工程表") or _find_sheet(
-        names, "单位工程表"
-    )
     items: list[dict[str, Any]] = []
     table3_categories: list[dict[str, Any]] = []
     if table3_name:
@@ -913,7 +1135,6 @@ def load(path: str | Path) -> dict[str, Any]:
     # --- 表二甲：categories（优先） ---------------------------------------
     categories: list[dict[str, Any]] = []
     categories_source = ""
-    table2_name = _find_sheet(names, "专业汇总表") or _find_sheet(names, "表二甲")
     if table2_name:
         source = f"{filename}{SOURCE_SEP}{table2_name}"
         categories = _parse_table2_categories(sheets[table2_name], source, warnings)
@@ -1034,9 +1255,13 @@ def load(path: str | Path) -> dict[str, Any]:
             "表一": summary_name,
             "表二甲": table2_name,
             "表三甲": table3_name,
+            "组合件汇总表": assembly_name,
             **material_sheets,
         },
         "categories_source": categories_source,
+        "format": "full" if is_full else "partial",
+        "is_full": is_full,
+        "unit_scale": summary_scale,
         "counts": {
             "items": len(items),
             "categories": len(categories),

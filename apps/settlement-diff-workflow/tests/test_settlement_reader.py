@@ -273,6 +273,35 @@ def _write_parts_sheets(wb: Workbook) -> None:
         _append(ws, row)
 
 
+def _write_assembly_sheet(wb: Workbook, *, with_total: bool = True) -> None:
+    """写入“组合件汇总表”（部分轻量结算书只有该表，无表一/表三甲）。"""
+    ws = wb.create_sheet("组合件汇总表")
+    rows = [
+        ["组合件汇总表"],
+        [None, None, None, None, None, None, None, "金额单位:元"],
+        ["序号", "编码", "项目名称", "单位", "计算式", "数量", "单价", "合价"],
+        ["1", "ZHJ002", "架空线工程-架空导线-JKLGYJ-120", "km", "1.5", 1.5, 1000.0, 1500.0],
+        # 分节标题行：只作为 section，不计入 items
+        ["2", "ZHJ013", "一、新建部分", None, "1", 1.0, None, None],
+        ["3", "ZHJ013", "接地网(圆钢15m,4条角钢)", "套", "2", 2.0, 500.0, 1000.0],
+        # 缺少单价的组合件行：仍保留为 item（数量有效）
+        ["4", "ZHJ004", "金具", "项", "1", 1.0, None, None],
+    ]
+    if with_total:
+        rows.append([None, None, "合计：", None, None, None, None, 2500.0])
+    for row in rows:
+        _append(ws, row)
+
+
+def _make_assembly_only_workbook(path: Path, *, with_total: bool = True) -> Path:
+    wb = Workbook()
+    wb.remove(wb.active)
+    _write_assembly_sheet(wb, with_total=with_total)
+    wb.save(path)
+    wb.close()
+    return path
+
+
 def _write_cover_sheet(wb: Workbook) -> None:
     ws = wb.create_sheet("封面", 0)
     ws.append(["检  索  号"])
@@ -291,6 +320,7 @@ def _make_workbook(
     with_parts: bool = True,
     with_bad_row: bool = False,
     with_cover: bool = True,
+    with_assembly: bool = False,
 ) -> Path:
     wb = Workbook()
     wb.remove(wb.active)
@@ -304,6 +334,8 @@ def _make_workbook(
         _write_supply_materials(wb)
     if with_parts:
         _write_parts_sheets(wb)
+    if with_assembly:
+        _write_assembly_sheet(wb)
     wb.save(path)
     wb.close()
     return path
@@ -335,6 +367,9 @@ def test_load_contract_shape(tmp_path: Path) -> None:
         "warnings",
     }
     assert doc["kind"] == "settlement_workbook"
+    assert doc["meta"]["format"] == "full"
+    assert doc["meta"]["is_full"] is True
+    assert doc["meta"]["unit_scale"] == 1.0
     assert json.loads(json.dumps(doc))  # JSON 可序列化
 
 
@@ -504,30 +539,177 @@ def test_final_amount_fallback(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 新格式：表一“金额单位:万元” / 仅“组合件汇总表” / is_full 标记
+# ---------------------------------------------------------------------------
+
+
+def test_summary_unit_wan_yuan_scaled_only_for_table_one(tmp_path: Path) -> None:
+    """表一标注“金额单位:万元”时只放大表一金额；表二甲/表三甲仍是元。"""
+    wb = Workbook()
+    wb.remove(wb.active)
+    ws = wb.create_sheet("检修工程总表(表一)")
+    for row in (
+        ["电网检修工程总结算表"],
+        ["表一", None, None, "金额单位:万元"],
+        ["序号", "工程或费用名称", "金额", "占合计总费用的比例(%)"],
+        ["二", "设备检修费", 42.57, 100],
+        [None, "其中：编制基准期价差", 2.01, 4.72],
+        [None, "其中：甲供配件材料费", 7.28, 17.1],
+        [None, "其中：可抵扣增值税金额", 5.22],
+        [None, "其中：施工费", 42.57, 100],
+    ):
+        _append(ws, row)
+    _write_category_sheet(wb)  # 表二甲仍是元
+    _write_detail_sheet(wb)  # 表三甲仍是元
+    path = tmp_path / "万元项目.xlsx"
+    wb.save(path)
+    wb.close()
+
+    doc = settlement.load(path)
+    assert doc["meta"]["unit_scale"] == 10000.0
+    assert doc["meta"]["format"] == "full"
+    assert doc["meta"]["is_full"] is True
+
+    totals = doc["totals"]
+    assert totals["设备检修费"] == pytest.approx(425700.0, abs=0.01)
+    assert totals["施工费"] == pytest.approx(425700.0, abs=0.01)
+    assert totals["编制基准期价差"] == pytest.approx(20100.0, abs=0.01)
+    assert totals["甲供配件材料费"] == pytest.approx(72800.0, abs=0.01)
+    assert totals["可抵扣增值税"] == pytest.approx(52200.0, abs=0.01)
+    assert totals["final_amount"] == pytest.approx(425700.0, abs=0.01)
+
+    # categories / items 来自表二甲/表三甲，不应被万元倍率放大
+    root = next(c for c in doc["categories"] if c["name"] == "设备检修工程")
+    assert root["检修费"] == pytest.approx(900.0)
+    quota = next(item for item in doc["items"] if item["code"] == "JYX2-1")
+    assert quota["amount"] == pytest.approx(975.84)
+
+
+def test_assembly_only_workbook(tmp_path: Path) -> None:
+    """只有“组合件汇总表”的结算书：items=组合件，施工费=合价合计，is_full=False。"""
+    path = _make_assembly_only_workbook(tmp_path / "组合件项目.xlsx")
+    doc = settlement.load(path)
+
+    assert settlement.matches(["组合件汇总表"], path.name)
+    assert doc["meta"]["format"] == "assembly_only"
+    assert doc["meta"]["is_full"] is False
+    assert doc["meta"]["unit_scale"] == 1.0
+
+    items = doc["items"]
+    # 3 个组合件（“一、新建部分”是分节标题，不计入 items）
+    assert len(items) == 3
+    assert all(item["item_type"] == "组合件" for item in items)
+    by_name = {item["name"]: item for item in items}
+    wire = by_name["架空线工程-架空导线-JKLGYJ-120"]
+    assert wire["code"] == "ZHJ002"
+    assert wire["unit"] == "km"
+    assert wire["qty"] == pytest.approx(1.5)
+    assert wire["unit_price"] == pytest.approx(1000.0)
+    assert wire["amount"] == pytest.approx(1500.0)
+    assert wire["section"] == ""
+    mesh = by_name["接地网(圆钢15m,4条角钢)"]
+    assert mesh["section"] == "新建部分"
+    fitting = by_name["金具"]
+    assert fitting["qty"] == pytest.approx(1.0)
+    assert fitting["amount"] is None  # 缺少单价的组合件行仍保留
+
+    # totals：施工费/组合件合计/final_amount = 组合件合价合计（有“合计”行时取该值）
+    assert doc["totals"]["施工费"] == pytest.approx(2500.0)
+    assert doc["totals"]["组合件合计"] == pytest.approx(2500.0)
+    assert doc["totals"]["final_amount"] == pytest.approx(2500.0)
+    assert doc["totals"]["设备检修费"] is None
+    assert doc["categories"] == []
+    assert doc["materials"]["items"] == []
+    assert all(value is None for value in doc["materials"]["totals"].values())
+    assert any("仅组合件汇总表" in warning for warning in doc["warnings"])
+    assert any("施工费口径" in warning for warning in doc["warnings"])
+    json.loads(json.dumps(doc))
+
+
+def test_assembly_only_total_falls_back_to_summed_amount(tmp_path: Path) -> None:
+    """组合件表没有“合计”行时，施工费回退为合价逐项求和（缺合价行不计）。"""
+    path = _make_assembly_only_workbook(tmp_path / "组合件无合计.xlsx", with_total=False)
+    doc = settlement.load(path)
+    assert doc["items"]
+    assert doc["totals"]["施工费"] == pytest.approx(2500.0)
+    assert doc["totals"]["组合件合计"] == pytest.approx(2500.0)
+
+
+def test_full_workbook_with_assembly_sheet_no_double_count(tmp_path: Path) -> None:
+    """完整结算书里同时带“组合件汇总表”时，优先完整口径，组合件明细不重复计入。"""
+    path = _make_workbook(tmp_path / "项目A.xlsx", with_assembly=True)
+    doc = settlement.load(path)
+
+    assert doc["meta"]["format"] == "full"
+    assert doc["meta"]["is_full"] is True
+    assert doc["meta"]["sheet_map"]["组合件汇总表"] == "组合件汇总表"
+    # items 只来自表三甲，5 条；组合件明细（如“架空线工程-架空导线-JKLGYJ-120”）不并入
+    assert len(doc["items"]) == 5
+    assert all(item["item_type"] != "组合件" for item in doc["items"])
+    assembly_names = {"架空线工程-架空导线-JKLGYJ-120", "接地网(圆钢15m,4条角钢)", "金具"}
+    assert assembly_names.isdisjoint({item["name"] for item in doc["items"]})
+    # totals 用表一口径，而不是组合件合价合计
+    assert doc["totals"]["final_amount"] == pytest.approx(950.0)
+    assert doc["warnings"] == []
+
+
+# ---------------------------------------------------------------------------
 # 真实样例只读冒烟（文件不存在时跳过；不把真实项目名写进仓库）
 # ---------------------------------------------------------------------------
 
 
-def _find_real_settlement(directory: Path) -> Path | None:
-    if not directory.is_dir():
-        return None
-    from diffworkflow.readers.excel_utils import list_sheets
-
-    for candidate in sorted(directory.glob("*.xlsx")):
-        try:
-            if settlement.matches(list_sheets(candidate), candidate.name):
-                return candidate
-        except Exception:  # noqa: BLE001 - 非结算书/损坏文件直接跳过
-            continue
-    return None
+_REAL_DOC_CACHE: dict[str, list[dict]] = {}
 
 
-def test_real_old_settlement_smoke() -> None:
-    path = _find_real_settlement(REAL_DATA_BASE / "2025年资料")
-    if path is None:
-        pytest.skip("本机没有 2025 年真实结算书样例")
-    doc = settlement.load(path)
+def _real_settlement_docs(directory: Path) -> list[dict]:
+    """读取真实目录下全部结算书（只读、模块内缓存；目录不存在返回空列表）。"""
+    key = str(directory)
+    if key in _REAL_DOC_CACHE:
+        return _REAL_DOC_CACHE[key]
+    docs: list[dict] = []
+    if directory.is_dir():
+        from diffworkflow.readers.excel_utils import list_sheets
 
+        for candidate in sorted(directory.glob("*.xlsx")):
+            try:
+                if not settlement.matches(list_sheets(candidate), candidate.name):
+                    continue
+                docs.append(settlement.load(candidate))
+            except Exception:  # noqa: BLE001 - 非结算书/损坏文件直接跳过
+                continue
+    _REAL_DOC_CACHE[key] = docs
+    return docs
+
+
+def _real_docs_where(directory: Path, predicate) -> list[dict]:
+    return [doc for doc in _real_settlement_docs(directory) if predicate(doc)]
+
+
+def _amount_is(value, expected: float, abs_tol: float = 0.01) -> bool:
+    return value is not None and abs(float(value) - expected) <= abs_tol
+
+
+def _is_full_doc(doc: dict) -> bool:
+    return (doc.get("meta") or {}).get("is_full") is True
+
+
+REAL_OLD_DIR = REAL_DATA_BASE / "2025年资料"
+REAL_NEW_DIR = REAL_DATA_BASE / "2026年资料"
+
+
+def test_real_full_settlement_old_smoke() -> None:
+    docs = _real_docs_where(
+        REAL_OLD_DIR,
+        lambda doc: _is_full_doc(doc)
+        and _amount_is(doc["totals"].get("final_amount"), 417940.58),
+    )
+    if not docs:
+        pytest.skip("本机没有 2025 年完整结算书样例")
+    doc = docs[0]
+
+    assert doc["meta"]["format"] == "full"
+    assert doc["meta"]["is_full"] is True
+    assert doc["meta"]["unit_scale"] == 1.0
     assert doc["totals"]["设备检修费"] == pytest.approx(417940.58, abs=0.01)
     assert doc["totals"]["final_amount"] == pytest.approx(417940.58, abs=0.01)
     assert doc["totals"]["可抵扣增值税"] == pytest.approx(32887.28, abs=0.01)
@@ -544,12 +726,18 @@ def test_real_old_settlement_smoke() -> None:
     assert doc["warnings"] == []
 
 
-def test_real_new_settlement_smoke() -> None:
-    path = _find_real_settlement(REAL_DATA_BASE / "2026年资料")
-    if path is None:
-        pytest.skip("本机没有 2026 年真实送审结算书样例")
-    doc = settlement.load(path)
+def test_real_full_settlement_new_smoke() -> None:
+    docs = _real_docs_where(
+        REAL_NEW_DIR,
+        lambda doc: _is_full_doc(doc)
+        and _amount_is(doc["totals"].get("final_amount"), 365816.86),
+    )
+    if not docs:
+        pytest.skip("本机没有 2026 年完整送审结算书样例")
+    doc = docs[0]
 
+    assert doc["meta"]["format"] == "full"
+    assert doc["meta"]["is_full"] is True
     assert doc["totals"]["设备检修费"] == pytest.approx(373120.5, abs=0.01)
     assert doc["totals"]["下浮后送审金额"] == pytest.approx(365816.86, abs=0.01)
     assert doc["totals"]["final_amount"] == pytest.approx(365816.86, abs=0.01)
@@ -566,3 +754,129 @@ def test_real_new_settlement_smoke() -> None:
     assert doc["materials"]["totals"]["配件合计"] == pytest.approx(87459.0, abs=0.01)
     assert any(item["supply"] == "甲供" for item in doc["materials"]["items"])
     assert doc["warnings"] == []
+
+
+def test_real_duplicate_full_files_consistent() -> None:
+    """同一目录里若存在内容重复的完整结算书（原件/另存），解析结果应一致。"""
+    docs = _real_docs_where(
+        REAL_OLD_DIR,
+        lambda doc: _is_full_doc(doc)
+        and _amount_is(doc["totals"].get("final_amount"), 417940.58),
+    )
+    if len(docs) < 2:
+        pytest.skip("本机没有重复的完整结算书样例")
+    first, second = docs[0], docs[1]
+    assert first["meta"]["is_full"] is True
+    assert second["meta"]["is_full"] is True
+    for key in ("设备检修费", "施工费", "final_amount"):
+        assert first["totals"][key] == pytest.approx(second["totals"][key], abs=0.01)
+    assert len(first["items"]) == len(second["items"])
+    assert first["materials"]["totals"] == second["materials"]["totals"]
+
+
+def test_real_wan_yuan_summary_smoke() -> None:
+    """真实万元版结算书：表一“金额单位:万元”→ 只放大表一金额（×10000）。"""
+    docs = _real_docs_where(
+        REAL_OLD_DIR,
+        lambda doc: (doc.get("meta") or {}).get("unit_scale") == 10000.0,
+    )
+    if not docs:
+        pytest.skip("本机没有万元版真实结算书样例")
+    doc = docs[0]
+
+    assert doc["meta"]["format"] == "full"
+    assert doc["meta"]["is_full"] is True
+    assert doc["meta"]["unit_scale"] == 10000.0
+    totals = doc["totals"]
+    assert totals["设备检修费"] == pytest.approx(425700.0, abs=0.01)
+    assert totals["施工费"] == pytest.approx(425700.0, abs=0.01)
+    assert totals["编制基准期价差"] == pytest.approx(20100.0, abs=0.01)
+    assert totals["甲供配件材料费"] == pytest.approx(72800.0, abs=0.01)
+    assert totals["可抵扣增值税"] == pytest.approx(52200.0, abs=0.01)
+    assert totals["final_amount"] == pytest.approx(425700.0, abs=0.01)
+    # 表二甲/材料表仍是元：乙供未计价材料合计 77183（万元放大不应影响这里）
+    assert doc["materials"]["totals"]["乙供合计"] == pytest.approx(77183.0, abs=0.01)
+    assert len(doc["items"]) >= 100
+    assert doc["categories"]
+    assert doc["warnings"] == []
+
+
+def test_real_full_settlements_matrix_smoke() -> None:
+    """其余两对真实完整结算书（设备检修费量级不同）的关键数字。"""
+    old_large = _real_docs_where(
+        REAL_OLD_DIR,
+        lambda doc: _is_full_doc(doc)
+        and _amount_is(doc["totals"].get("设备检修费"), 733914.01),
+    )
+    new_mid = _real_docs_where(
+        REAL_NEW_DIR,
+        lambda doc: _is_full_doc(doc)
+        and _amount_is(doc["totals"].get("设备检修费"), 268334.15),
+    )
+    new_small = _real_docs_where(
+        REAL_NEW_DIR,
+        lambda doc: _is_full_doc(doc)
+        and _amount_is(doc["totals"].get("设备检修费"), 28425.7),
+    )
+    if not old_large and not new_mid and not new_small:
+        pytest.skip("本机没有其余项目的真实完整结算书样例")
+
+    if old_large:
+        doc = old_large[0]
+        assert doc["meta"]["format"] == "full"
+        assert doc["totals"]["施工费"] == pytest.approx(733914.01, abs=0.01)
+        assert doc["totals"]["final_amount"] == pytest.approx(733914.01, abs=0.01)
+        assert doc["totals"]["可抵扣增值税"] == pytest.approx(66270.26, abs=0.01)
+        assert len(doc["items"]) >= 100
+        assert doc["warnings"] == []
+
+    if new_mid:
+        doc = new_mid[0]
+        assert doc["meta"]["format"] == "full"
+        assert doc["totals"]["下浮后送审金额"] == pytest.approx(263062.7, abs=0.01)
+        assert doc["totals"]["final_amount"] == pytest.approx(263062.7, abs=0.01)
+        assert doc["totals"]["甲供配件材料费"] == pytest.approx(29775.0, abs=0.01)
+        assert len(doc["items"]) >= 100
+        assert doc["warnings"] == []
+
+    if new_small:
+        doc = new_small[0]
+        assert doc["meta"]["format"] == "full"
+        assert doc["meta"]["is_full"] is True
+        assert doc["totals"]["施工费"] == pytest.approx(28425.7, abs=0.01)
+        # 有“下浮后送审金额”时 final_amount 取下浮后口径
+        assert doc["totals"]["下浮后送审金额"] == pytest.approx(27870.73, abs=0.01)
+        assert doc["totals"]["final_amount"] == pytest.approx(27870.73, abs=0.01)
+        assert doc["totals"]["可抵扣增值税"] == pytest.approx(3101.3, abs=0.01)
+        # 该工作簿同时带“组合件汇总表”，完整口径优先，不混入组合件明细
+        assert all(item["item_type"] != "组合件" for item in doc["items"])
+        assert doc["warnings"] == []
+
+
+def test_real_assembly_only_settlements_smoke() -> None:
+    """仅“组合件汇总表”的真实结算书：施工费口径=组合件合价合计，is_full=False。"""
+    old_docs = _real_docs_where(
+        REAL_OLD_DIR,
+        lambda doc: (doc.get("meta") or {}).get("format") == "assembly_only",
+    )
+    new_docs = _real_docs_where(
+        REAL_NEW_DIR,
+        lambda doc: (doc.get("meta") or {}).get("format") == "assembly_only",
+    )
+    cases: list[tuple[dict, int, float]] = []
+    cases.extend((doc, 76, 951640.0) for doc in old_docs if len(doc["items"]) == 76)
+    cases.extend((doc, 163, 202608.0) for doc in new_docs if len(doc["items"]) == 163)
+    cases.extend((doc, 116, 373122.0) for doc in new_docs if len(doc["items"]) == 116)
+    if not cases:
+        pytest.skip("本机没有仅组合件汇总表的真实结算书样例")
+
+    for doc, expected_count, expected_total in cases:
+        assert doc["meta"]["format"] == "assembly_only"
+        assert doc["meta"]["is_full"] is False
+        assert len(doc["items"]) == expected_count
+        assert all(item["item_type"] == "组合件" for item in doc["items"])
+        assert doc["totals"]["施工费"] == pytest.approx(expected_total, abs=0.01)
+        assert doc["totals"]["组合件合计"] == pytest.approx(expected_total, abs=0.01)
+        assert doc["totals"]["final_amount"] == pytest.approx(expected_total, abs=0.01)
+        assert any("仅组合件汇总表" in warning for warning in doc["warnings"])
+        assert any("施工费口径" in warning for warning in doc["warnings"])

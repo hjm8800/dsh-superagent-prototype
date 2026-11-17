@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from datetime import datetime
@@ -15,10 +16,15 @@ from .diff import (
     RISK_HIGH,
     RISK_MID,
     STATUS_NEW,
+    STATUS_QTY_DOWN,
+    STATUS_QTY_UP,
     STATUS_REMOVED,
     STATUS_SAME,
+    STATUS_SPEC,
+    STATUS_UNIT,
     compare_items,
     compare_texts,
+    item_amount,
     merge_summaries,
     summarize,
     top_diffs,
@@ -28,6 +34,8 @@ from .normalize import (
     format_money,
     format_number,
     format_ratio,
+    normalize_name,
+    normalize_unit,
 )
 from .readers import excel_utils
 
@@ -46,20 +54,45 @@ def _report_reader():
     return report
 
 
-def list_workbook_files(directory: str | Path) -> list[Path]:
-    """列出目录下可解析的工作簿文件（忽略临时文件/隐藏文件），按文件名排序。"""
+def _file_md5(path: Path) -> str | None:
+    try:
+        digest = hashlib.md5()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def list_workbook_files(directory: str | Path, files: list[str | Path] | None = None) -> list[Path]:
+    """列出目录下可解析的工作簿文件（忽略临时/隐藏文件），按内容哈希去重。
+
+    files 不为空时只使用给定文件列表（batch 场景按项目分组后传入）。
+    """
     directory = Path(directory)
-    if not directory.exists():
-        raise FileNotFoundError(f"目录不存在：{directory}")
-    files: list[Path] = []
-    for path in sorted(directory.iterdir()):
-        if not path.is_file():
+    if files is not None:
+        candidates = [Path(item) for item in files]
+    else:
+        if not directory.exists():
+            raise FileNotFoundError(f"目录不存在：{directory}")
+        candidates = [
+            path for path in sorted(directory.iterdir())
+            if path.is_file() and not path.name.startswith("~$") and not path.name.startswith(".")
+            and path.suffix.lower() in WORKBOOK_SUFFIXES
+        ]
+    result: list[Path] = []
+    seen_hash: dict[str, Path] = {}
+    for path in candidates:
+        if path.suffix.lower() not in WORKBOOK_SUFFIXES:
             continue
-        if path.name.startswith("~$") or path.name.startswith("."):
+        digest = _file_md5(path)
+        if digest and digest in seen_hash:
             continue
-        if path.suffix.lower() in WORKBOOK_SUFFIXES:
-            files.append(path)
-    return files
+        if digest:
+            seen_hash[digest] = path
+        result.append(path)
+    return result
 
 
 def classify_file(path: str | Path) -> str | None:
@@ -81,11 +114,50 @@ def classify_file(path: str | Path) -> str | None:
     return None
 
 
-def load_side(directory: str | Path) -> dict:
-    """读取一个版本的目录。"""
+def _doc_signature(doc: dict) -> str:
+    """解析结果内容签名：用于识别“同一文件被复制/另存为两个文件名”的重复资料。"""
+    import hashlib as _hashlib
+    import json as _json
+
+    def clean_items(items):
+        cleaned = []
+        for item in items or []:
+            cleaned.append({key: value for key, value in item.items() if key not in ("source", "raw")})
+        return cleaned
+
+    payload = {
+        "kind": doc.get("kind"),
+        "totals": doc.get("totals"),
+        "categories": doc.get("categories"),
+        "materials": doc.get("materials"),
+        "items": clean_items(doc.get("items")),
+        "texts": doc.get("texts"),
+        "tables": doc.get("tables"),
+    }
+    raw = _json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    return _hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+
+def _dedupe_docs(docs: list[dict]) -> list[dict]:
+    seen: set[str] = set()
+    result: list[dict] = []
+    for doc in docs:
+        signature = _doc_signature(doc)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        result.append(doc)
+    return result
+
+
+def load_side(directory: str | Path, files: list[str | Path] | None = None) -> dict:
+    """读取一个版本的文件集合：完整结算书优先，只有组合件汇总表时作为主口径。"""
     directory = Path(directory)
-    loaded: dict[str, Any] = {"directory": str(directory), "settlement": [], "report": [], "unknown": [], "errors": []}
-    for path in list_workbook_files(directory):
+    loaded: dict[str, Any] = {
+        "directory": str(directory), "settlement": [], "settlement_assembly": [],
+        "report": [], "unknown": [], "errors": [],
+    }
+    for path in list_workbook_files(directory, files=files):
         kind = classify_file(path)
         if kind is None:
             loaded["unknown"].append(path.name)
@@ -97,6 +169,14 @@ def load_side(directory: str | Path) -> dict:
                 loaded["report"].append(_report_reader().load(path))
         except Exception as exc:  # 单个文件失败不影响整体流程
             loaded["errors"].append(f"{path.name}: {exc}")
+    # 同一文件被复制/另存为多个文件名时，按解析内容去重
+    loaded["settlement"] = _dedupe_docs(loaded["settlement"])
+    loaded["report"] = _dedupe_docs(loaded["report"])
+    # 完整结算书（表一/表三甲）优先；仅组合件汇总表的工作簿作为补充/回退
+    full = [doc for doc in loaded["settlement"] if (doc.get("meta") or {}).get("is_full", True)]
+    assembly = [doc for doc in loaded["settlement"] if not (doc.get("meta") or {}).get("is_full", True)]
+    loaded["settlement_assembly"] = assembly
+    loaded["settlement"] = full if full else assembly
     return loaded
 
 
@@ -136,17 +216,26 @@ def _merge_items(loaded_docs: list[dict]) -> list[dict]:
 
 def build_settlement_docset(loaded: dict, side: str) -> dict:
     docs = loaded.get("settlement") or []
+    meta_docs = [doc.get("meta") or {} for doc in docs]
+    format_name = next((meta.get("format") for meta in meta_docs if meta.get("format")), "full")
+    is_full = all(meta.get("is_full", True) for meta in meta_docs) if meta_docs else True
+    unit_scale = next((meta.get("unit_scale") for meta in meta_docs if meta.get("unit_scale")), 1.0)
     return {
         "category": "settlement",
         "side": side,
-        "files": [doc.get("meta", {}) for doc in docs],
+        "files": meta_docs,
         "items": _merge_items(docs),
         "totals": _merge_totals([doc.get("totals") or {} for doc in docs]),
         "categories": [category for doc in docs for category in (doc.get("categories") or [])],
         "texts": [],
         "tables": [],
         "warnings": _merge_warnings(docs),
-        "meta": {"files": [doc.get("meta", {}).get("file", "") for doc in docs]},
+        "meta": {
+            "files": [meta.get("file", "") for meta in meta_docs],
+            "format": format_name,
+            "is_full": is_full,
+            "unit_scale": unit_scale,
+        },
     }
 
 
@@ -222,15 +311,16 @@ def _clean_project_token(stem: str) -> str:
     """去掉文件名里的年份、类别后缀，得到项目名候选。"""
     text = stem
     text = re.sub(r"[-_\s]*\d{2,4}\s*年(?:度)?", " ", text)
-    for _ in range(3):
+    for _ in range(5):
         new_text = re.sub(
-            r"[-_\s]*(送审|结算书|竣工报告|竣工资料|结算|资料|对比分析?|原版|新版|清单)\s*$", " ", text
+            r"[-_\s]*(旧年|新年|旧版|新版|送审|结算书|竣工报告|竣工资料|结算|资料|对比分析?|原版|新版|清单|旧|新)\s*$",
+            " ", text,
         )
         if new_text == text:
             break
         text = new_text
     text = re.sub(r"[-_\s]+", " ", text)
-    return text.strip(" -_（）()")
+    return text.strip(" -_")
 
 
 def _guess_project_name(old_files: list[Path], new_files: list[Path]) -> str:
@@ -312,6 +402,270 @@ def _diff_summary_of_items(old_items: list[dict], new_items: list[dict], categor
     return {"diffs": diffs, "summary": summarize(diffs)}
 
 
+def _price_and_amount(item: dict | None) -> tuple[float | None, float | None]:
+    if not item:
+        return None, None
+    amount = item_amount(item)
+    price = item.get("unit_price")
+    qty = item.get("qty")
+    if price is None and amount is not None and qty not in (None, 0):
+        price = amount / qty
+    return price, amount
+
+
+def _category_amount(category: dict) -> float | None:
+    for key in ("合计", "检修费", "amount"):
+        value = category.get(key)
+        if isinstance(value, (int, float)):
+            return float(value)
+    return None
+
+
+def _effect_stats(diffs: list[dict], predicate, label: str) -> dict:
+    """按条目子集做量差/价差/新增/删除拆分。"""
+    stats = {
+        "label": label,
+        "qty_effect": 0.0, "price_effect": 0.0, "added": 0.0, "removed": 0.0,
+        "other": 0.0, "count": 0, "computed": 0, "causes": [],
+    }
+    for diff in diffs:
+        old, new = diff.get("old"), diff.get("new")
+        if not old and not new:
+            continue
+        if not predicate(diff):
+            continue
+        status = diff.get("status")
+        old_price, old_amount = _price_and_amount(old)
+        new_price, new_amount = _price_and_amount(new)
+        stats["count"] += 1
+        qty_effect_i = price_effect_i = None
+        effect = ""
+        if status == STATUS_NEW:
+            stats["added"] += new_amount or 0.0
+            effect = "新增"
+        elif status == STATUS_REMOVED:
+            stats["removed"] += old_amount or 0.0
+            effect = "删除"
+        else:
+            same_unit = normalize_unit((old or {}).get("unit", "")) == normalize_unit((new or {}).get("unit", ""))
+            qty_delta = diff.get("qty_delta")
+            if (
+                same_unit and qty_delta is not None and old_price is not None
+                and old_amount is not None and new_amount is not None
+            ):
+                qty_effect_i = qty_delta * old_price
+                price_effect_i = new_amount - old_amount - qty_effect_i
+                stats["qty_effect"] += qty_effect_i
+                stats["price_effect"] += price_effect_i
+                stats["computed"] += 1
+                effect = "量差主导" if abs(qty_effect_i) >= abs(price_effect_i) else "价差主导"
+            elif old_amount is not None and new_amount is not None:
+                stats["other"] += new_amount - old_amount
+                effect = "单位/规格/其他"
+        if effect and (status in (STATUS_NEW, STATUS_REMOVED) or qty_effect_i is not None):
+            stats["causes"].append({
+                "name": diff.get("name", ""),
+                "spec": diff.get("spec", ""),
+                "unit": diff.get("unit", ""),
+                "status": status,
+                "risk": diff.get("risk", ""),
+                "old_qty": (old or {}).get("qty"),
+                "new_qty": (new or {}).get("qty"),
+                "qty_delta": diff.get("qty_delta"),
+                "qty_ratio": diff.get("qty_ratio"),
+                "qtys_effect": qty_effect_i,
+                "price_effect": price_effect_i,
+                "amount_delta": diff.get("amount_delta"),
+                "effect_kind": f"{label}{effect}",
+            })
+    stats["net"] = (
+        stats["qty_effect"] + stats["price_effect"] + stats["added"] - stats["removed"] + stats["other"]
+    )
+    return stats
+
+
+def construction_fee_analysis(comparison: dict) -> dict:
+    """施工费差异成因：按定额直接费/乙供材料/甲供材料/配件/取费残差拆分。"""
+    settlement = comparison["documents"]["settlement"]
+    material = comparison["documents"]["material"]
+    totals = _settlement_totals_pair(settlement["old"], settlement["new"])
+    old_fee = totals.get("old_equipment") if totals.get("old_equipment") is not None else totals.get("old_final")
+    new_fee = totals.get("new_equipment") if totals.get("new_equipment") is not None else totals.get("new_final")
+    fee_delta = (new_fee - old_fee) if (old_fee is not None and new_fee is not None) else None
+    diffs = settlement.get("diffs") or []
+
+    def is_direct(diff: dict) -> bool:
+        item_type = ((diff.get("new") or {}).get("item_type") or (diff.get("old") or {}).get("item_type") or "")
+        return item_type in {"定额", "组合件"}
+
+    def supply_of(diff: dict) -> str:
+        return ((diff.get("new") or {}).get("supply") or (diff.get("old") or {}).get("supply") or "")
+
+    def is_yigong_material(diff: dict) -> bool:
+        item_type = ((diff.get("new") or {}).get("item_type") or (diff.get("old") or {}).get("item_type") or "")
+        return item_type in {"主材", "材料"} and supply_of(diff) != "甲供"
+
+    def is_agong_material(diff: dict) -> bool:
+        item_type = ((diff.get("new") or {}).get("item_type") or (diff.get("old") or {}).get("item_type") or "")
+        return item_type in {"主材", "材料"} and supply_of(diff) == "甲供"
+
+    def is_parts(diff: dict) -> bool:
+        item_type = ((diff.get("new") or {}).get("item_type") or (diff.get("old") or {}).get("item_type") or "")
+        return item_type == "配件"
+
+    direct = _effect_stats(diffs, is_direct, "定额")
+    yigong = _effect_stats(diffs, is_yigong_material, "乙供材料")
+    agong = _effect_stats(diffs, is_agong_material, "甲供材料")
+    parts = _effect_stats(diffs, is_parts, "配件")
+
+    direct_old = direct_new = 0.0
+    for diff in diffs:
+        if is_direct(diff):
+            direct_old += item_amount(diff.get("old")) or 0.0
+            direct_new += item_amount(diff.get("new")) or 0.0
+
+    in_fee_effect = direct["net"] + yigong["net"]
+    residual = (fee_delta - in_fee_effect) if fee_delta is not None else None
+    causes = direct["causes"] + yigong["causes"]
+    causes.sort(key=lambda item: abs(item.get("amount_delta") or 0.0), reverse=True)
+    all_causes = direct["causes"] + yigong["causes"] + agong["causes"] + parts["causes"]
+    top_added = sorted(
+        [cause for cause in all_causes if cause.get("status") == STATUS_NEW],
+        key=lambda item: abs(item.get("amount_delta") or 0.0), reverse=True,
+    )[:5]
+    top_removed = sorted(
+        [cause for cause in all_causes if cause.get("status") == STATUS_REMOVED],
+        key=lambda item: abs(item.get("amount_delta") or 0.0), reverse=True,
+    )[:5]
+
+    old_yigong = (material["old"].get("totals") or {}).get("乙供合计")
+    new_yigong = (material["new"].get("totals") or {}).get("乙供合计")
+    old_ag = (material["old"].get("totals") or {}).get("甲供合计")
+    new_ag = (material["new"].get("totals") or {}).get("甲供合计")
+
+    old_categories = settlement["old"].get("categories") or []
+    new_categories = settlement["new"].get("categories") or []
+    old_map: dict[str, float] = {}
+    for category in old_categories:
+        amount = _category_amount(category)
+        name = normalize_name(category.get("name") or category.get("section") or "")
+        if name and amount is not None:
+            old_map[name] = amount
+    new_map: dict[str, float] = {}
+    for category in new_categories:
+        amount = _category_amount(category)
+        name = normalize_name(category.get("name") or category.get("section") or "")
+        if name and amount is not None:
+            new_map[name] = amount
+    section_rows = []
+    for name in set(old_map) | set(new_map):
+        old_value = old_map.get(name)
+        new_value = new_map.get(name)
+        delta = (new_value - old_value) if (old_value is not None and new_value is not None) else None
+        if delta is None or abs(delta) < 1:
+            continue
+        section_rows.append({
+            "name": name,
+            "old": old_value,
+            "new": new_value,
+            "delta": delta,
+            "ratio": (delta / old_value) if old_value else None,
+        })
+    section_rows.sort(key=lambda row: abs(row["delta"]), reverse=True)
+
+    fmt = ((settlement["old"].get("meta") or {}).get("format")
+           or (settlement["new"].get("meta") or {}).get("format") or "full")
+    components = {
+        "编制基准期价差": (totals.get("old_price_diff"), totals.get("new_price_diff")),
+        "可抵扣增值税": (totals.get("old_vat"), totals.get("new_vat")),
+        "甲供配件材料费": (totals.get("old_ag_parts"), totals.get("new_ag_parts")),
+        "下浮后送审金额": (None, totals.get("new_discount_final")),
+        "乙供未计价材料": (old_yigong, new_yigong),
+        "甲供未计价材料": (old_ag, new_ag),
+    }
+    component_rows = []
+    for name, (old_value, new_value) in components.items():
+        if old_value is None and new_value is None:
+            continue
+        delta = (new_value - old_value) if (old_value is not None and new_value is not None) else None
+        component_rows.append({"name": name, "old": old_value, "new": new_value, "delta": delta})
+
+    return {
+        "old_fee": old_fee,
+        "new_fee": new_fee,
+        "fee_delta": fee_delta,
+        "fee_ratio": (fee_delta / old_fee) if (fee_delta is not None and old_fee) else None,
+        "direct": direct,
+        "yigong_material": yigong,
+        "agong_material": agong,
+        "parts": parts,
+        "direct_old": direct_old,
+        "direct_new": direct_new,
+        "in_fee_effect": in_fee_effect,
+        "residual_vs_effects": residual,
+        "item_causes": causes[:20],
+        "top_added": top_added,
+        "top_removed": top_removed,
+        "sections": section_rows[:12],
+        "components": component_rows,
+        "old_yigong": old_yigong,
+        "new_yigong": new_yigong,
+        "yigong_delta": (new_yigong - old_yigong) if (old_yigong is not None and new_yigong is not None) else None,
+        "format": fmt,
+    }
+
+
+def quantity_analysis(comparison: dict) -> dict:
+    """工程量差异：数量变化 TOP、新增/删除、单位/规格变化、竣工工程量勾稽。"""
+    settlement = comparison["documents"]["settlement"]
+    boq = comparison["documents"]["boq"]
+    diffs = settlement.get("diffs") or []
+    qty_diffs = [diff for diff in diffs if diff.get("status") in (STATUS_QTY_UP, STATUS_QTY_DOWN)]
+    qty_diffs.sort(key=lambda diff: abs(diff.get("qty_delta") or 0.0), reverse=True)
+    added = [diff for diff in diffs if diff.get("status") == STATUS_NEW]
+    removed = [diff for diff in diffs if diff.get("status") == STATUS_REMOVED]
+    unit_changes = [diff for diff in diffs if diff.get("status") == STATUS_UNIT]
+    spec_changes = [diff for diff in diffs if diff.get("status") == STATUS_SPEC]
+
+    def brief(diff: dict) -> dict:
+        old, new = diff.get("old") or {}, diff.get("new") or {}
+        return {
+            "name": diff.get("name", ""),
+            "spec": diff.get("spec", ""),
+            "unit": diff.get("unit", ""),
+            "status": diff.get("status", ""),
+            "old_qty": old.get("qty"),
+            "new_qty": new.get("qty"),
+            "qty_delta": diff.get("qty_delta"),
+            "qty_ratio": diff.get("qty_ratio"),
+            "amount_delta": diff.get("amount_delta"),
+        }
+
+    added.sort(key=lambda diff: abs(diff.get("amount_delta") or 0.0), reverse=True)
+    removed.sort(key=lambda diff: abs(diff.get("amount_delta") or 0.0), reverse=True)
+    grounding_old = _boq_grounding_totals(boq["old"])
+    grounding_new = _boq_grounding_totals(boq["new"])
+    return {
+        "qty_changed_count": len(qty_diffs),
+        "qty_increase_count": sum(1 for diff in qty_diffs if diff.get("status") == STATUS_QTY_UP),
+        "qty_decrease_count": sum(1 for diff in qty_diffs if diff.get("status") == STATUS_QTY_DOWN),
+        "added_count": len(added),
+        "removed_count": len(removed),
+        "unit_change_count": len(unit_changes),
+        "spec_change_count": len(spec_changes),
+        "top_qty_changes": [brief(diff) for diff in qty_diffs[:12]],
+        "top_added": [brief(diff) for diff in added[:8]],
+        "top_removed": [brief(diff) for diff in removed[:8]],
+        "unit_changes": [brief(diff) for diff in unit_changes[:10]],
+        "spec_changes": [brief(diff) for diff in spec_changes[:10]],
+        "grounding": {"old": grounding_old, "new": grounding_new},
+        "boq_item_counts": {
+            "old": len(boq["old"].get("items") or []),
+            "new": len(boq["new"].get("items") or []),
+        },
+    }
+
+
 def analyze(comparison: dict) -> dict:
     """规则生成中文结论、风险清单、发现项。"""
     documents = comparison["documents"]
@@ -334,6 +688,7 @@ def analyze(comparison: dict) -> dict:
     # ---- 审核结算 ----
     settlement_totals = _settlement_totals_pair(settlement["old"], settlement["new"])
     s_summary = settlement["summary"]
+    fee_analysis = construction_fee_analysis(comparison)
     old_equipment = settlement_totals["old_equipment"] if settlement_totals["old_equipment"] is not None else settlement_totals["old_final"]
     new_equipment = settlement_totals["new_equipment"] if settlement_totals["new_equipment"] is not None else settlement_totals["new_final"]
     if old_equipment is not None and new_equipment is not None:
@@ -382,16 +737,13 @@ def analyze(comparison: dict) -> dict:
             f"高风险 {s_summary['risk_counts'].get(RISK_HIGH, 0)} 项、中风险 {s_summary['risk_counts'].get(RISK_MID, 0)} 项。"
         )
 
-        top_settlement = top_diffs(settlement["diffs"], limit=5)
-        if top_settlement:
-            parts = []
-            for diff in top_settlement:
-                amount = diff.get("amount_delta")
-                if amount is None:
-                    continue
-                parts.append(f"{diff['name']}（{format_delta(amount)} 元）")
-            if parts:
-                conclusions.append("审核结算金额影响最大的项目：" + "、".join(parts) + "。")
+        top_causes = fee_analysis.get("item_causes") or []
+        cause_parts = [
+            f"{cause['name']}（{format_delta(cause['amount_delta'])} 元，{cause['effect_kind']}）"
+            for cause in top_causes[:5] if cause.get("amount_delta") is not None
+        ]
+        if cause_parts:
+            conclusions.append("施工费金额影响最大的项目：" + "、".join(cause_parts) + "。")
 
         for key, label in (
             ("old_vat", "可抵扣增值税"),
@@ -408,6 +760,56 @@ def analyze(comparison: dict) -> dict:
             findings.append(
                 f"新版表一另列甲供配件材料费 {format_money(settlement_totals['new_ag_parts'])} 元，"
                 "但未计入工程总费用合计；两版表一“配件购置费/甲供配件材料费”列示与合计口径不一致，对外口径需统一。"
+            )
+
+        # 施工费差异成因
+        if fee_analysis.get("fee_delta") is not None:
+            direct = fee_analysis.get("direct") or {}
+            yigong = fee_analysis.get("yigong_material") or {}
+            conclusions.append(
+                f"施工费差异成因（表一口径）："
+                f"定额直接费 {format_delta(direct.get('net'))} 元"
+                f"（量差 {format_delta(direct.get('qty_effect'))}、价差 {format_delta(direct.get('price_effect'))}、"
+                f"新增 {format_delta(direct.get('added'))}、删除 {format_delta(-(direct.get('removed') or 0))}）；"
+                f"乙供材料 {format_delta(yigong.get('net'))} 元"
+                f"（量差 {format_delta(yigong.get('qty_effect'))}、价差 {format_delta(yigong.get('price_effect'))}、"
+                f"新增 {format_delta(yigong.get('added'))}、删除 {format_delta(-(yigong.get('removed') or 0))}）；"
+                f"取费与汇总口径残差 {format_delta(fee_analysis.get('residual_vs_effects'))} 元；"
+                f"合计与施工费变化 {format_delta(fee_analysis['fee_delta'])} 元相符。"
+            )
+            agong = fee_analysis.get("agong_material") or {}
+            if abs(agong.get("net") or 0) > 1:
+                conclusions.append(
+                    f"甲供材料（不计入施工费）变化 {format_delta(agong.get('net'))} 元，属供料口径调整，"
+                    "需结合甲供清单与含配件口径理解。"
+                )
+            parts = fee_analysis.get("parts") or {}
+            if abs(parts.get("net") or 0) > 1:
+                conclusions.append(f"配件（配件购置费口径）变化 {format_delta(parts.get('net'))} 元。")
+        sections = fee_analysis.get("sections") or []
+        if sections:
+            conclusions.append(
+                "分部金额变化最大的方向："
+                + "、".join(f"{section['name'] or '（未命名分部）'} {format_delta(section['delta'])} 元"
+                           for section in sections[:4])
+                + "。"
+            )
+        if fee_analysis.get("yigong_delta") is not None:
+            conclusions.append(
+                f"乙供未计价材料 {format_money(fee_analysis['old_yigong'])} 元 → "
+                f"{format_money(fee_analysis['new_yigong'])} 元"
+                f"（{format_delta(fee_analysis['yigong_delta'])} 元）。乙供材料规模变化会直接影响施工费"
+                "（含少量改列甲供）；旧版甲供材料规模也可能同步变化，判断施工费降幅时需结合甲供清单与含配件口径。"
+            )
+        if fee_analysis.get("format") == "assembly_only":
+            conclusions.append(
+                "结算资料仅有“组合件汇总表”（无表一/表二甲/表三甲/材料表），"
+                "施工费按组合件合价合计口径比较，取费构成与甲供/乙供材料无法拆分，资料完整性不足。"
+            )
+        if fee_analysis.get("format") == "assembly_only":
+            findings.append(
+                "本版本结算书仅有“组合件汇总表”（无表一/表二甲/表三甲），施工费按组合件合价合计比较，"
+                "取费构成与甲供/乙供材料无法拆分，建议补齐完整结算书后再做正式对比。"
             )
     else:
         findings.append("审核结算总额未能从文件中完整提取，请人工核对表一。")
@@ -552,6 +954,29 @@ def analyze(comparison: dict) -> dict:
         )
         findings.append(detail)
 
+    # ---- 工程量差异 ----
+    quantity = quantity_analysis(comparison)
+    if quantity["qty_changed_count"] or quantity["added_count"] or quantity["removed_count"]:
+        conclusions.append(
+            f"工程量差异：数量变化 {quantity['qty_changed_count']} 项（增加 {quantity['qty_increase_count']}、"
+            f"减少 {quantity['qty_decrease_count']}），新增 {quantity['added_count']} 项、删除 {quantity['removed_count']} 项；"
+            f"单位变化 {quantity['unit_change_count']} 项、规格变化 {quantity['spec_change_count']} 项。"
+        )
+        top_qty = quantity.get("top_qty_changes") or []
+        if top_qty:
+            parts = []
+            for item in top_qty[:4]:
+                old_qty = format_number(item.get("old_qty"), 3) if item.get("old_qty") is not None else "—"
+                new_qty = format_number(item.get("new_qty"), 3) if item.get("new_qty") is not None else "—"
+                parts.append(f"{item['name']} {old_qty}→{new_qty} {item.get('unit', '')}"
+                             f"（{format_ratio(item.get('qty_ratio'))}）")
+            conclusions.append("工程量变化最大的项目：" + "、".join(parts) + "。")
+    if quantity.get("unit_change_count") or quantity.get("spec_change_count"):
+        findings.append(
+            f"结算工程量存在单位变化 {quantity['unit_change_count']} 项、规格变化 {quantity['spec_change_count']} 项，"
+            "需核对换算与规格依据，避免把单位/规格变化误判为数量增减。"
+        )
+
     # ---- 风险清单：从各类差异中提炼高/中风险 ----
     for category, payload in (("审核结算", settlement), ("材料清册", material), ("竣工工程量", boq)):
         for diff in payload.get("diffs") or []:
@@ -584,14 +1009,21 @@ def analyze(comparison: dict) -> dict:
         "findings": findings,
         "risks": risks,
         "totals": totals,
+        "construction_fee": fee_analysis,
+        "quantity": quantity,
     }
 
 
-def build_comparison(old_dir: str | Path, new_dir: str | Path, project_name: str | None = None) -> dict:
-    """构建完整 Comparison。"""
+def build_comparison(old_dir: str | Path, new_dir: str | Path, project_name: str | None = None,
+                     old_files: list[str | Path] | None = None,
+                     new_files: list[str | Path] | None = None) -> dict:
+    """构建完整 Comparison。
+
+    old_files/new_files 不为空时只比较给定文件（batch 按项目分组后使用）。
+    """
     old_dir, new_dir = Path(old_dir), Path(new_dir)
-    old_loaded = load_side(old_dir)
-    new_loaded = load_side(new_dir)
+    old_loaded = load_side(old_dir, files=old_files)
+    new_loaded = load_side(new_dir, files=new_files)
 
     old_settlement = build_settlement_docset(old_loaded, "old")
     new_settlement = build_settlement_docset(new_loaded, "new")
@@ -631,7 +1063,7 @@ def build_comparison(old_dir: str | Path, new_dir: str | Path, project_name: str
 
     if project_name is None or not str(project_name).strip():
         project_name = _guess_project_name(
-            list_workbook_files(old_dir), list_workbook_files(new_dir)
+            list_workbook_files(old_dir, old_files), list_workbook_files(new_dir, new_files)
         ) or "未命名项目"
 
     documents = {

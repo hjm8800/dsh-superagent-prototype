@@ -110,6 +110,13 @@ def _build_parser() -> argparse.ArgumentParser:
     demo_parser.add_argument("--out", default=None, help="输出目录（缺省 apps/settlement-diff-workflow/demo-output）")
     demo_parser.add_argument("--demo-root", default=None, help="演示资料目录（缺省 examples/demo）")
 
+    batch_parser = sub.add_parser("batch", help="按文件名自动分组多个项目并批量对比")
+    batch_parser.add_argument("--old", required=True, help="原版资料目录（可混放多个项目文件）")
+    batch_parser.add_argument("--new", required=True, help="新版资料目录（可混放多个项目文件）")
+    batch_parser.add_argument("--out", default=None, help="输出目录（缺省 ./对比结果）")
+    batch_parser.add_argument("--project", default=None, help="只跑包含该关键字的项目")
+    batch_parser.add_argument("--no-docx", action="store_true", help="不生成 Word 报告")
+
     make_parser = sub.add_parser("make-demo", help="生成/刷新匿名演示资料")
     make_parser.add_argument("--out", default=None, help="演示资料目录（缺省 examples/demo）")
     return parser
@@ -127,6 +134,12 @@ def main(argv: Iterable[str] | None = None) -> int:
         return 0
     if args.command == "demo":
         run_demo(out_dir=args.out, demo_root=args.demo_root)
+        return 0
+    if args.command == "batch":
+        from diffworkflow.batch import run_batch
+
+        run_batch(args.old, args.new, args.out or str(Path.cwd() / "对比结果"),
+                  project_filter=args.project, write_docx=not args.no_docx)
         return 0
     if args.command == "make-demo":
         make_demo(out_dir=args.out)

@@ -63,6 +63,185 @@ DIFF_HEADERS = ["状态", "风险", "名称", "单位", "原数量", "新数量"
 DIFF_LIMITS = [8, 6, 40, 8, 12, 12, 16, 12, 80]
 
 
+def _construction_fee_section(comparison: dict) -> list[str]:
+    analysis = comparison.get("analysis") or {}
+    fee = analysis.get("construction_fee") or {}
+    lines: list[str] = ["## 三、施工费差异成因", ""]
+    if fee.get("old_fee") is None and fee.get("new_fee") is None:
+        lines.append("未从资料中提取到施工费总额，无法拆解成因。")
+        lines.append("")
+        return lines
+    fee_label = "组合件合价合计口径" if fee.get("format") == "assembly_only" else "表一口径"
+    lines.append(
+        f"施工费（{fee_label}）由 {_fmt_amount(fee.get('old_fee'))} 元变为 {_fmt_amount(fee.get('new_fee'))} 元"
+        f"（{format_delta(fee.get('fee_delta'))} 元，{_fmt_ratio(fee.get('fee_ratio'))}）。"
+    )
+    lines.append("")
+    direct = fee.get("direct") or {}
+    yigong = fee.get("yigong_material") or {}
+    agong = fee.get("agong_material") or {}
+    parts = fee.get("parts") or {}
+    rows = [
+        ["施工费（表一口径）", _fmt_amount(fee.get("old_fee")), _fmt_amount(fee.get("new_fee")),
+         _fmt_amount(fee.get("fee_delta")), _fmt_ratio(fee.get("fee_ratio"))],
+        ["定额直接费合计", _fmt_amount(fee.get("direct_old")), _fmt_amount(fee.get("direct_new")),
+         _fmt_amount(direct.get("net")), "—"],
+        ["  其中：量差效应", "—", "—", _fmt_amount(direct.get("qty_effect")), "—"],
+        ["  其中：价差效应", "—", "—", _fmt_amount(direct.get("price_effect")), "—"],
+        ["  其中：新增项", "—", "—", _fmt_amount(direct.get("added")), "—"],
+        ["  其中：删除项", "—", "—", _fmt_amount(-(direct.get("removed") or 0)) if direct.get("removed") else "—", "—"],
+        ["  其中：单位/规格/其他", "—", "—", _fmt_amount(direct.get("other")), "—"],
+        ["乙供未计价材料（计入施工费）", "—", "—", _fmt_amount(yigong.get("net")), "—"],
+        ["  其中：量差/价差", "—", "—",
+         _fmt_amount((yigong.get("qty_effect") or 0) + (yigong.get("price_effect") or 0)), "—"],
+        ["  其中：新增-删除", "—", "—",
+         _fmt_amount((yigong.get("added") or 0) - (yigong.get("removed") or 0)), "—"],
+        ["取费与汇总口径残差", "—", "—", _fmt_amount(fee.get("residual_vs_effects")), "—"],
+        ["（口径参考）甲供材料变化", "—", "—", _fmt_amount(agong.get("net")), "—"],
+        ["（口径参考）配件变化", "—", "—", _fmt_amount(parts.get("net")), "—"],
+    ]
+    lines.append(_table(["分解项", "原版（元）", "新版（元）", "变化（元）", "变化率"], rows,
+                        [22, 16, 16, 16, 10]))
+    lines.append("")
+    lines.append("口径说明：量差/价差按匹配条目逐项拆分（Δ金额≈Δ数量×原单价 + 新数量×Δ单价）；"
+                 "残差 = 一笔性费用（费用类条目）+ 取费构成（措施费/规费/利润/价差/税金等）+ 损耗 + 条目匹配差异，"
+                 "不能全部归因于取费。单项差异按名称+规格匹配，名称/规格改写可能放大单项；"
+                 "分部数据含层级（父子项不可直接相加），判断金额影响时以分部/类别净额与汇总表为准。")
+    lines.append("")
+
+    components = fee.get("components") or []
+    if components:
+        rows = [[c.get("name"), _fmt_amount(c.get("old")), _fmt_amount(c.get("new")), _fmt_amount(c.get("delta"))]
+                for c in components]
+        lines.append("费用构成变化：")
+        lines.append("")
+        lines.append(_table(["费用项", "原版（元）", "新版（元）", "变化（元）"], rows, [22, 16, 16, 16]))
+        lines.append("")
+
+    sections = fee.get("sections") or []
+    if sections:
+        rows = [[s.get("name") or "（未命名分部）", _fmt_amount(s.get("old")), _fmt_amount(s.get("new")),
+                 _fmt_amount(s.get("delta")), _fmt_ratio(s.get("ratio"))] for s in sections]
+        lines.append("分部贡献（按金额变化排序）：")
+        lines.append("")
+        lines.append(_table(["分部", "原版（元）", "新版（元）", "变化（元）", "变化率"], rows,
+                            [24, 16, 16, 16, 10]))
+        lines.append("")
+
+    causes = fee.get("item_causes") or []
+    if causes:
+        rows = [[c.get("name"), c.get("effect_kind"), _fmt_amount(c.get("old_qty")) if c.get("old_qty") is not None else "—",
+                 _fmt_amount(c.get("new_qty")) if c.get("new_qty") is not None else "—",
+                 _fmt_ratio(c.get("qty_ratio")), _fmt_amount(c.get("amount_delta"))] for c in causes[:12]]
+        lines.append("项目级 TOP 成因（量差主导/价差主导/新增/删除）：")
+        lines.append("")
+        lines.append(_table(["名称", "成因类型", "原数量", "新数量", "数量变化率", "金额差（元）"], rows,
+                            [36, 12, 12, 12, 10, 16]))
+        lines.append("")
+
+    if fee.get("yigong_delta") is not None:
+        lines.append(
+            f"供料口径提示：乙供未计价材料 {_fmt_amount(fee.get('old_yigong'))} 元 → "
+            f"{_fmt_amount(fee.get('new_yigong'))} 元（{format_delta(fee.get('yigong_delta'))} 元）。"
+            "乙供材料规模变化会直接影响施工费（含少量改列甲供）；旧版甲供材料规模也可能同步变化，"
+            "判断施工费降幅时须同时看甲供清单与含配件完整口径。"
+        )
+        lines.append("")
+
+    top_added = fee.get("top_added") or []
+    top_removed = fee.get("top_removed") or []
+    if top_added or top_removed:
+        rows = []
+        for label, items in (("新增", top_added), ("删除", top_removed)):
+            for item in items[:4]:
+                rows.append([label, item.get("name"), item.get("effect_kind"),
+                             _fmt_amount(item.get("amount_delta"))])
+        lines.append("新增 / 删除金额最大的条目：")
+        lines.append("")
+        lines.append(_table(["类型", "名称", "归类", "金额差（元）"], rows, [8, 40, 14, 16]))
+        lines.append("")
+    if fee.get("format") == "assembly_only":
+        lines.append("注意：本版本结算书仅有“组合件汇总表”（无表一/表二甲/表三甲），施工费按组合件合价合计比较，"
+                     "取费构成与甲供/乙供材料无法拆分，建议补齐完整结算书后再做正式对比。")
+        lines.append("")
+    return lines
+
+
+def _quantity_section(comparison: dict) -> list[str]:
+    analysis = comparison.get("analysis") or {}
+    quantity = analysis.get("quantity") or {}
+    lines: list[str] = ["## 四、工程量差异", ""]
+    lines.append(
+        f"结算明细中数量变化 {quantity.get('qty_changed_count', 0)} 项"
+        f"（增加 {quantity.get('qty_increase_count', 0)}、减少 {quantity.get('qty_decrease_count', 0)}），"
+        f"新增 {quantity.get('added_count', 0)} 项、删除 {quantity.get('removed_count', 0)} 项；"
+        f"单位变化 {quantity.get('unit_change_count', 0)} 项、规格变化 {quantity.get('spec_change_count', 0)} 项。"
+    )
+    lines.append("")
+    lines.append(
+        "注：单项差异按“名称+规格+单位”匹配，名称/规格改写可能使单项数量或金额差异被放大；"
+        "判断工程量影响时以分部/类别净额为准，并人工核对名称相似/疑似改名条目。"
+    )
+    lines.append("")
+    top_qty = quantity.get("top_qty_changes") or []
+    if top_qty:
+        rows = []
+        for item in top_qty[:12]:
+            old_qty = _fmt_amount(item.get("old_qty")) if item.get("old_qty") is not None else "—"
+            new_qty = _fmt_amount(item.get("new_qty")) if item.get("new_qty") is not None else "—"
+            rows.append([item.get("name"), item.get("unit"), old_qty, new_qty,
+                         _fmt_amount(item.get("qty_delta")), _fmt_ratio(item.get("qty_ratio")),
+                         _fmt_amount(item.get("amount_delta"))])
+        lines.append("数量变化 TOP：")
+        lines.append("")
+        lines.append(_table(["名称", "单位", "原数量", "新数量", "数量差", "变化率", "金额差（元）"], rows,
+                            [34, 8, 12, 12, 12, 10, 16]))
+        lines.append("")
+
+    added = quantity.get("top_added") or []
+    removed = quantity.get("top_removed") or []
+    if added or removed:
+        rows = []
+        for label, items, qty_key in (("新增", added, "new_qty"), ("删除", removed, "old_qty")):
+            for item in items[:5]:
+                rows.append([label, item.get("name"), item.get("unit"),
+                             _fmt_amount(item.get(qty_key)) if item.get(qty_key) is not None else "—",
+                             _fmt_amount(item.get("amount_delta"))])
+        lines.append("新增 / 删除条目 TOP：")
+        lines.append("")
+        lines.append(_table(["类型", "名称", "单位", "数量", "金额差（元）"], rows, [8, 36, 8, 12, 16]))
+        lines.append("")
+
+    unit_changes = quantity.get("unit_changes") or []
+    spec_changes = quantity.get("spec_changes") or []
+    if unit_changes or spec_changes:
+        rows = []
+        for kind, items in (("单位变化", unit_changes), ("规格变化", spec_changes)):
+            for item in items[:8]:
+                rows.append([kind, item.get("name"), item.get("spec"), item.get("unit"),
+                             _fmt_amount(item.get("old_qty")) if item.get("old_qty") is not None else "—",
+                             _fmt_amount(item.get("new_qty")) if item.get("new_qty") is not None else "—"])
+        lines.append("单位 / 规格变化（需人工确认换算与依据）：")
+        lines.append("")
+        lines.append(_table(["类型", "名称", "规格", "单位", "原数量", "新数量"], rows, [10, 30, 18, 8, 12, 12]))
+        lines.append("")
+
+    grounding = quantity.get("grounding") or {}
+    old_grounding = grounding.get("old") or {}
+    new_grounding = grounding.get("new") or {}
+    if old_grounding or new_grounding:
+        rows = []
+        for name in sorted(set(old_grounding) | set(new_grounding)):
+            old_value = old_grounding.get(name, 0.0)
+            new_value = new_grounding.get(name, 0.0)
+            rows.append([name, format_number(old_value, 2), format_number(new_value, 2), format_delta(new_value - old_value)])
+        lines.append("竣工资料接地工程量（可与结算量勾稽）：")
+        lines.append("")
+        lines.append(_table(["材料", "原版", "新版", "差值"], rows, [24, 14, 14, 14]))
+        lines.append("")
+    return lines
+
+
 def _settlement_section(comparison: dict) -> list[str]:
     lines: list[str] = []
     analysis = comparison.get("analysis") or {}
@@ -70,7 +249,7 @@ def _settlement_section(comparison: dict) -> list[str]:
     totals = analysis_totals.get("settlement") or {}
     material_totals = analysis_totals.get("material") or {}
     settlement = comparison["documents"]["settlement"]
-    lines.append("## 三、审核结算差异")
+    lines.append("## 五、审核结算差异")
     lines.append("")
     fee_rows = [
         ["设备检修费（表一口径）", _fmt_amount(totals.get("old_equipment")), _fmt_amount(totals.get("new_equipment")),
@@ -114,7 +293,7 @@ def _material_section(comparison: dict) -> list[str]:
     analysis = comparison.get("analysis") or {}
     totals = (analysis.get("totals") or {}).get("material") or {}
     material = comparison["documents"]["material"]
-    lines.append("## 四、材料清册差异")
+    lines.append("## 六、材料清册差异")
     lines.append("")
     rows = [
         ["乙供未计价材料", _fmt_amount(totals.get("old_yigong")), _fmt_amount(totals.get("new_yigong"))],
@@ -160,7 +339,7 @@ def _boq_section(comparison: dict) -> list[str]:
     lines: list[str] = []
     boq = comparison["documents"]["boq"]
     analysis = comparison.get("analysis") or {}
-    lines.append("## 五、竣工资料工程量差异")
+    lines.append("## 七、竣工资料工程量差异")
     lines.append("")
     changes = boq.get("text_changes") or []
     changed = [change for change in changes if change["status"] != STATUS_SAME]
@@ -217,7 +396,7 @@ def _boq_section(comparison: dict) -> list[str]:
 def _risk_section(comparison: dict) -> list[str]:
     lines: list[str] = []
     analysis = comparison.get("analysis") or {}
-    lines.append("## 六、重点风险与建议")
+    lines.append("## 八、重点风险与建议")
     lines.append("")
     risks = analysis.get("risks") or []
     risk_rows = []
@@ -287,6 +466,14 @@ def build_markdown(comparison: dict) -> str:
     lines.append("")
     lines.append("审核结算金额口径：原版采用表一“设备检修费/施工费”；新版优先采用“下浮后送审金额”，无则采用设备检修费。")
     lines.append("")
+    fee_meta = (analysis.get("construction_fee") or {})
+    if fee_meta.get("format") == "assembly_only":
+        lines.append(
+            "> **资料范围提示**：本项目结算资料仅有“组合件汇总表”（无表一/表二甲/表三甲/材料表），"
+            "施工费按组合件合价合计口径比较，取费构成与甲供/乙供材料无法拆分，资料完整性不足，"
+            "正式核减前需补齐完整结算书。"
+        )
+        lines.append("")
 
     lines.append("## 二、总体结论")
     lines.append("")
@@ -303,6 +490,8 @@ def build_markdown(comparison: dict) -> str:
     )
     lines.append("")
 
+    lines.extend(_construction_fee_section(comparison))
+    lines.extend(_quantity_section(comparison))
     lines.extend(_settlement_section(comparison))
     lines.extend(_material_section(comparison))
     lines.extend(_boq_section(comparison))
@@ -362,7 +551,59 @@ def build_docx(comparison: dict) -> bytes:
     settlement_totals = analysis_totals.get("settlement") or {}
     material_totals = analysis_totals.get("material") or {}
 
-    doc.add_heading("二、审核结算差异", level=1)
+    fee = analysis.get("construction_fee") or {}
+    doc.add_heading("二、施工费差异成因", level=1)
+    if fee.get("old_fee") is not None or fee.get("new_fee") is not None:
+        doc.add_paragraph(
+            f"施工费（表一口径）由 {_fmt_amount(fee.get('old_fee'))} 元变为 "
+            f"{_fmt_amount(fee.get('new_fee'))} 元"
+            f"（{format_delta(fee.get('fee_delta'))} 元，{_fmt_ratio(fee.get('fee_ratio'))}）。"
+        )
+        direct = fee.get("direct") or {}
+        yigong = fee.get("yigong_material") or {}
+        doc.add_paragraph(
+            f"拆分：定额直接费 {_fmt_amount(direct.get('net'))} 元、乙供材料 {_fmt_amount(yigong.get('net'))} 元、"
+            f"取费与汇总口径残差 {_fmt_amount(fee.get('residual_vs_effects'))} 元。"
+            f"定额直接费中：量差 {_fmt_amount(direct.get('qty_effect'))} 元、价差 {_fmt_amount(direct.get('price_effect'))} 元、"
+            f"新增 {_fmt_amount(direct.get('added'))} 元、删除 "
+            f"{_fmt_amount(-(direct.get('removed') or 0)) if direct.get('removed') else '—'} 元；"
+            f"乙供材料中：量差 {_fmt_amount(yigong.get('qty_effect'))} 元、价差 {_fmt_amount(yigong.get('price_effect'))} 元。"
+        )
+        causes = fee.get("item_causes") or []
+        if causes:
+            doc.add_paragraph("施工费金额影响最大的项目（前 10 项）：")
+            rows = [[c.get("name"), c.get("effect_kind"),
+                     _fmt_amount(c.get("old_qty")) if c.get("old_qty") is not None else "—",
+                     _fmt_amount(c.get("new_qty")) if c.get("new_qty") is not None else "—",
+                     _fmt_ratio(c.get("qty_ratio")), _fmt_amount(c.get("amount_delta"))] for c in causes[:10]]
+            _add_docx_table(doc, ["名称", "成因类型", "原数量", "新数量", "数量变化率", "金额差（元）"], rows)
+        if fee.get("yigong_delta") is not None:
+            doc.add_paragraph(
+                f"供料口径：乙供未计价材料 {_fmt_amount(fee.get('old_yigong'))} 元 → "
+                f"{_fmt_amount(fee.get('new_yigong'))} 元（{format_delta(fee.get('yigong_delta'))} 元）；"
+                "乙供转甲供会直接减少施工费，需结合甲供清单与含配件口径判断可比性。"
+            )
+        if fee.get("format") == "assembly_only":
+            doc.add_paragraph("注意：本版本结算书仅有组合件汇总表，无表一/表二甲/表三甲，取费构成无法拆分。")
+
+    quantity = analysis.get("quantity") or {}
+    doc.add_heading("三、工程量差异", level=1)
+    doc.add_paragraph(
+        f"数量变化 {quantity.get('qty_changed_count', 0)} 项（增加 {quantity.get('qty_increase_count', 0)}、"
+        f"减少 {quantity.get('qty_decrease_count', 0)}），新增 {quantity.get('added_count', 0)} 项、"
+        f"删除 {quantity.get('removed_count', 0)} 项；单位变化 {quantity.get('unit_change_count', 0)} 项、"
+        f"规格变化 {quantity.get('spec_change_count', 0)} 项。"
+    )
+    top_qty = quantity.get("top_qty_changes") or []
+    if top_qty:
+        rows = [[item.get("name"), item.get("unit"),
+                 _fmt_amount(item.get("old_qty")) if item.get("old_qty") is not None else "—",
+                 _fmt_amount(item.get("new_qty")) if item.get("new_qty") is not None else "—",
+                 _fmt_amount(item.get("qty_delta")), _fmt_ratio(item.get("qty_ratio")),
+                 _fmt_amount(item.get("amount_delta"))] for item in top_qty[:10]]
+        _add_docx_table(doc, ["名称", "单位", "原数量", "新数量", "数量差", "变化率", "金额差（元）"], rows)
+
+    doc.add_heading("四、审核结算差异", level=1)
     doc.add_paragraph(
         f"原版 {_fmt_amount(settlement_totals.get('old_final'))} 元 → "
         f"新版 {_fmt_amount(settlement_totals.get('new_final'))} 元，"
@@ -377,7 +618,7 @@ def build_docx(comparison: dict) -> bytes:
         doc.add_paragraph("金额影响最大的差异项（前 10 项）：")
         _add_docx_table(doc, DIFF_HEADERS, _diff_rows(top, limit=10))
 
-    doc.add_heading("三、材料清册差异", level=1)
+    doc.add_heading("五、材料清册差异", level=1)
     doc.add_paragraph(
         f"乙供未计价材料：{_fmt_amount(material_totals.get('old_yigong'))} 元 → "
         f"{_fmt_amount(material_totals.get('new_yigong'))} 元；"
@@ -392,7 +633,7 @@ def build_docx(comparison: dict) -> bytes:
         doc.add_paragraph("乙供材料金额影响最大的差异项（前 10 项）：")
         _add_docx_table(doc, DIFF_HEADERS, _diff_rows(top_material, limit=10))
 
-    doc.add_heading("四、竣工资料工程量差异", level=1)
+    doc.add_heading("六、竣工资料工程量差异", level=1)
     boq = documents["boq"]
     changes = boq.get("text_changes") or []
     doc.add_paragraph(
@@ -414,7 +655,7 @@ def build_docx(comparison: dict) -> bytes:
         for index, finding in enumerate(findings, start=1):
             doc.add_paragraph(f"{index}. {finding}")
 
-    doc.add_heading("五、重点风险与建议", level=1)
+    doc.add_heading("七、重点风险与建议", level=1)
     risks = analysis.get("risks") or []
     if risks:
         rows = [[risk.get("level", ""), risk.get("category", ""), risk.get("title", ""),
@@ -481,6 +722,24 @@ def build_console_summary(comparison: dict) -> str:
                 f"（{format_delta(settlement_totals.get('complete_delta'))}，"
                 f"{_fmt_ratio(settlement_totals.get('complete_ratio'))}）"
             )
+    fee = analysis.get("construction_fee") or {}
+    if fee.get("fee_delta") is not None:
+        direct = fee.get("direct") or {}
+        yigong = fee.get("yigong_material") or {}
+        lines.append(
+            "施工费差异成因："
+            f"定额直接费 {format_delta(direct.get('net'))}（量差 {format_delta(direct.get('qty_effect'))}、"
+            f"价差 {format_delta(direct.get('price_effect'))}）、"
+            f"乙供材料 {format_delta(yigong.get('net'))}、"
+            f"取费与汇总口径残差 {format_delta(fee.get('residual_vs_effects'))} 元"
+        )
+    quantity = analysis.get("quantity") or {}
+    if quantity.get("qty_changed_count") or quantity.get("added_count") or quantity.get("removed_count"):
+        lines.append(
+            f"工程量：数量变化 {quantity.get('qty_changed_count', 0)} 项"
+            f"（增 {quantity.get('qty_increase_count', 0)}/减 {quantity.get('qty_decrease_count', 0)}），"
+            f"新增 {quantity.get('added_count', 0)} 项、删除 {quantity.get('removed_count', 0)} 项"
+        )
     if material_totals.get("old_yigong") is not None or material_totals.get("new_yigong") is not None:
         lines.append(
             "材料清册（乙供）："
