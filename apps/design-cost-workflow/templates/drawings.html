@@ -29,6 +29,36 @@
 {% endset %}
 {{ stage_banner(stage, p, keep_as, can_edit, can_review, extra_buttons) }}
 
+<section class="card td-card">
+  <div class="card-head">
+    <h2>典型设计（典设）匹配</h2>
+    <span class="muted small">南网 V3.1 典设图纸库 ↔ 项目设计图纸 · 图纸解析阶段辅助能力（不单独设置门禁）</span>
+  </div>
+  {% if td_stats.modules %}
+  <div class="mini-stats">
+    <div class="mini-stat"><span>目录模块</span><strong>{{ td_stats.modules }}</strong><em>已导入</em></div>
+    <div class="mini-stat"><span>已匹配</span><strong>{{ td_stats.matched }}</strong><em>匹配率 {{ td_stats.rate|pct2 }}%</em></div>
+    <div class="mini-stat"><span>待确认</span><strong class="{{ 'warn' if td_stats.pending else 'ok' }}">{{ td_stats.pending }}</strong><em>需人工确认</em></div>
+    <div class="mini-stat"><span>已确认</span><strong class="ok">{{ td_stats.confirmed }}</strong><em>可作建模参考</em></div>
+    <div class="mini-stat"><span>应用率</span><strong>{{ td_stats.rate|pct2 }}%</strong><em>已匹配 / 目录</em></div>
+  </div>
+  <div class="card-actions-row">
+    {% if can_edit %}
+    <form method="post" action="/project/{{ p.id }}/typdesign/match{{ keep_as }}" class="inline-form">
+      <button class="btn primary" type="submit">执行匹配</button>
+    </form>
+    {% endif %}
+    <a class="btn" href="/project/{{ p.id }}/typdesign{{ keep_as }}">查看明细 →</a>
+  </div>
+  {% else %}
+  <div class="empty">
+    尚未导入典设目录。典设匹配可基于已识别的图纸证据自动匹配南网 V3.1 典型设计模块，人工确认后作为建模与附件6-1 的图纸依据。
+    <a class="link" href="/project/{{ p.id }}/typdesign{{ keep_as }}">前往导入典设目录 →</a>
+  </div>
+  {% endif %}
+  <div class="hint">匹配为规则算法结果，需人工逐项确认；演示目录为“演示用典设目录节选（40 条，非完整 V3.1 库）”。</div>
+</section>
+
 <div class="grid-2 wide-left">
   <section class="card">
     <div class="card-head">

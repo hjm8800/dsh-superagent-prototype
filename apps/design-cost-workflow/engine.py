@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Any
 
 import rates
+import typdesign
 
 #: 四阶段定义（顺序即流程顺序）
 STAGES = [
@@ -876,7 +877,7 @@ def material_compare(conn, project_id: int) -> list[dict]:
 
 
 def project_stats(conn, project_id: int) -> dict:
-    """项目统计卡数据：线路数、杆塔数、设备数、工程量行数、主材金额。"""
+    """项目统计卡数据：线路数、杆塔数、设备数、工程量行数、主材金额、典设统计。"""
     lines = _rows(conn, "SELECT * FROM model_lines WHERE project_id=?", (project_id,))
     equipment = _rows(conn, "SELECT * FROM model_equipment WHERE project_id=?", (project_id,))
     quantity_count = _one(conn, "SELECT COUNT(*) AS n FROM quantities WHERE project_id=?", (project_id,))["n"]
@@ -884,10 +885,17 @@ def project_stats(conn, project_id: int) -> dict:
     for equip in equipment:
         if equip.get("category") == "主材":
             material_amount += float(equip.get("qty") or 0) * float(equip.get("unit_price") or 0)
+    typdesign_stats = typdesign.typdesign_stats(conn, project_id)
     return {
         "lines": len(lines),
         "poles": int(sum(int(line.get("poles") or 0) for line in lines)),
         "equipment": int(sum(1 for equip in equipment if equip.get("category") == "设备")),
         "quantities": int(quantity_count),
         "material_amount": round(material_amount, 2),
+        # v2：典型设计匹配统计（工作台/项目页/图纸页统计卡）
+        "typdesign_modules": typdesign_stats["modules"],
+        "typdesign_matched": typdesign_stats["matched"],
+        "typdesign_confirmed": typdesign_stats["confirmed"],
+        "typdesign_pending": typdesign_stats["pending"],
+        "typdesign_rate": typdesign_stats["rate"],
     }

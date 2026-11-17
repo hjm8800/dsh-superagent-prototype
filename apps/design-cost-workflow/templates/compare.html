@@ -179,5 +179,14 @@
       {% endif %}
     </div>
   </div>
+  {% if td_stats and td_stats.pending %}
+  <div class="hint warn" style="margin-top:14px">
+    典型设计待确认（{{ td_stats.pending }} 项）：请到<a class="link" href="/project/{{ p.id }}/typdesign{{ keep_as }}">典型设计匹配</a>页逐项确认应用或忽略；未确认前“典型设计应用匹配已完成”送审条件不满足。
+  </div>
+  {% elif td_stats and td_stats.modules == 0 %}
+  <div class="hint" style="margin-top:14px">
+    尚未导入典设目录：可在<a class="link" href="/project/{{ p.id }}/typdesign{{ keep_as }}">典型设计匹配</a>页导入南网 V3.1 典设目录并执行匹配。
+  </div>
+  {% endif %}
 </section>
 {% endblock %}

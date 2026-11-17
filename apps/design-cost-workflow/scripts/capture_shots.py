@@ -4,15 +4,22 @@
 
 用法（在仓库根或 apps/design-cost-workflow 下运行；Windows 如 python 为应用商店别名，请改用完整解释器路径）：
   python ^
-      apps/design-cost-workflow/scripts/capture_shots.py [--base-url URL] [--only 01,02] ...
+      apps/design-cost-workflow/scripts/capture_shots.py [--base-url URL] [--only v2|01,02|v2-03]
 
-前置条件：应用已在 http://127.0.0.1:8091 运行（WORKFLOW_DEMO=1，可用 ?as=admin 演示身份）。
+  --only 支持：
+    "v2"          只抓第二轮新增的 v2-01…v2-06（典型设计匹配）
+    "01,02"       只抓 after-01/after-02（第一轮页面截图）
+    "v2-03,v2-05" 只抓指定 v2 截图（v2-05 会先执行项目C 的“执行匹配”演示动作）
+    不传则抓全部 after-01…after-09 + v2-01…v2-06
+
+前置条件：应用已在 http://127.0.0.1:8091 运行（WORKFLOW_DEMO=1，可用 ?as=admin 演示身份），
+第二轮需包含典型设计匹配能力（/project/{pid}/typdesign 路由）。
 每张图一次 Edge 调用：
   msedge --headless=new --disable-gpu --hide-scrollbars --window-size=1440,H ^
-         --screenshot=docs/shots/design-cost/after-xx.png --virtual-time-budget=4000 URL
+         --screenshot=docs/shots/design-cost/*.png --virtual-time-budget=4000 URL
 截图后用 Pillow 裁掉底部空白（页面背景色）；若内容超出视口则自动增大高度重试。
 注意：本机由 Python 启动的 Edge 只能写工作区内路径，因此截图直接写入 docs/shots/design-cost/，
-本脚本不产生任何临时文件，也不修改应用数据。
+本脚本不产生任何临时/profile 文件；v2-05 前的“执行匹配”是契约允许的演示动作（只改项目C 典设匹配数据）。
 """
 
 from __future__ import annotations
@@ -47,6 +54,17 @@ SHOTS = [
     ("after-07-pricing-a.png", "/project/1/pricing?as=admin", 7800),
     ("after-08-compare-b.png", "/project/2/compare?as=admin", 2600),
     ("after-09-demo.png", "/demo?as=admin", 2000),
+]
+
+# v2 第二轮新增（典型设计匹配，contract2 §7）：(文件名, 路径, 初始高度, 前置演示动作)
+# 顺序有意为之：v2-05 之前才执行“项目C 执行匹配”，使 v2-01 保持干净 seed 的未匹配状态。
+V2_SHOTS = [
+    ("v2-01-drawings-c-typdesign.png", "/project/3/drawings?as=admin", 1900, None),
+    ("v2-02-project-a-typdesign.png", "/project/1?as=admin", 1900, None),
+    ("v2-03-typdesign-a.png", "/project/1/typdesign?as=admin", 2800, None),
+    ("v2-04-typdesign-b.png", "/project/2/typdesign?as=admin", 2800, None),
+    ("v2-05-typdesign-c-after-match.png", "/project/3/typdesign?as=admin", 2800, "match_c"),
+    ("v2-06-model-a-typdesign.png", "/project/1/model?as=admin", 3000, None),
 ]
 
 
@@ -148,40 +166,84 @@ def _height(path: Path) -> int:
         return image.size[1]
 
 
+def run_v2_prep(action, base_url: str) -> None:
+    """执行 v2 截图前需要的演示动作（仅项目C 典设匹配，不改变四阶段状态）。"""
+    import httpx
+
+    if not action:
+        return
+    if action != "match_c":
+        raise RuntimeError(f"未知的演示动作：{action}")
+    url = base_url.rstrip("/") + "/project/3/typdesign/match?as=zaojia"
+    print("      [演示动作] 项目C：执行典型设计匹配（POST /project/3/typdesign/match）…")
+    with httpx.Client(follow_redirects=True, timeout=25) as client:
+        response = client.post(url)
+    if response.status_code != 200:
+        raise RuntimeError(f"执行匹配失败：HTTP {response.status_code}")
+    if "匹配" not in response.text:
+        raise RuntimeError("执行匹配后页面未出现匹配结果")
+    print("      [演示动作] 执行匹配完成")
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="抓取 After（原型应用）截图，1440px 宽")
     parser.add_argument("--base-url", default=BASE_URL, help="应用地址（默认 http://127.0.0.1:8091）")
     parser.add_argument("--out-dir", type=Path, default=OUT_DIR, help="PNG 输出目录")
-    parser.add_argument("--only", default="", help="只抓指定编号，如 01,02")
+    parser.add_argument(
+        "--only", default="",
+        help='只抓指定截图："v2"=全部第二轮 v2-01…v2-06；"01,02"=第一轮；"v2-03,v2-05"=指定 v2')
     args = parser.parse_args(argv)
     if not Path(EDGE).exists():
         print(f"[错误] 未找到 Edge：{EDGE}")
         return 2
     out_dir = args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
-    only = {x.strip().lstrip("0") or "0" for x in args.only.split(",") if x.strip()}
-    shots = [(n, p, h) for n, p, h in SHOTS if not only or n.split("-")[1].lstrip("0") in only]
+    tokens = [x.strip().lower() for x in args.only.split(",") if x.strip()]
+
+    def after_selected(name: str) -> bool:
+        if not tokens:
+            return True
+        code = name.split("-")[1].lstrip("0") or "0"
+        return any((t.replace("after-", "").lstrip("0") or "0") == code for t in tokens)
+
+    def v2_selected(name: str) -> bool:
+        if not tokens:
+            return True
+        code = name.split("-")[1].lstrip("0") or "0"
+        for token in tokens:
+            if token == "v2":
+                return True
+            if token.startswith("v2-") and (token[3:].lstrip("0") or "0") == code:
+                return True
+        return False
+
+    # (类型, 文件名, 路径, 初始高度, 前置动作)
+    shots = [("after", n, p, h, None) for n, p, h in SHOTS if after_selected(n)]
+    shots += [("v2", n, p, h, a) for n, p, h, a in V2_SHOTS if v2_selected(n)]
     if not shots:
         print(f"[错误] --only={args.only} 未匹配任何截图")
         return 2
+    v2_selected_any = any(kind == "v2" for kind, *_ in shots)
 
     print("=" * 78)
     print(f"After 截图抓取 · {args.base_url}")
     print(f"输出目录：{out_dir}")
+    print(f"截图数量：{len(shots)}（{'含' if v2_selected_any else '不含'} v2 典型设计匹配截图）")
     failures = []
-    for i, (name, path, height) in enumerate(shots, 1):
+    for i, (kind, name, path, height, action) in enumerate(shots, 1):
         url = args.base_url.rstrip("/") + path
+        tag = f"[{i}/{len(shots)}]"
         try:
+            run_v2_prep(action, args.base_url)
             status = preflight(args.base_url, path)
             if status != 200:
                 raise RuntimeError(f"页面返回 HTTP {status}")
             info = capture(url, out_dir / name, height)
             mark = "（可能截断）" if info["cut"] else ""
-            print(f"[{i}/{len(shots)}] {name}  {WIDTH}×{info['height']}px  "
-                  f"{info['bytes']:,} bytes  {mark}")
+            print(f"{tag} {name}  {WIDTH}×{info['height']}px  {info['bytes']:,} bytes  {mark}")
         except Exception as exc:  # noqa: BLE001 - 单张失败不影响其余
             failures.append((name, str(exc)))
-            print(f"[{i}/{len(shots)}] {name}  失败：{exc}")
+            print(f"{tag} {name}  失败：{exc}")
     print("-" * 78)
     if failures:
         print(f"[完成] {len(shots) - len(failures)}/{len(shots)} 张成功，失败 {len(failures)} 张")

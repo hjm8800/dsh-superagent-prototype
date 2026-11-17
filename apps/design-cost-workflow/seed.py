@@ -19,6 +19,7 @@ from pathlib import Path
 import engine
 import pricing
 import rates
+import typdesign
 
 # ---------------------------------------------------------------------------
 # 数据库结构（与内部契约第 4 节完全一致）
@@ -122,6 +123,27 @@ CREATE TABLE IF NOT EXISTS reviews (
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, user_id INTEGER,
   action TEXT, detail TEXT, created_at TEXT);
+
+CREATE TABLE IF NOT EXISTS typdesign_modules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  volume TEXT, chapter TEXT, category TEXT,
+  code TEXT NOT NULL, name TEXT, unit TEXT, note TEXT);
+
+CREATE TABLE IF NOT EXISTS typdesign_imports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL,
+  filename TEXT, modules INTEGER DEFAULT 0, imported_by INTEGER, imported_at TEXT);
+
+CREATE TABLE IF NOT EXISTS typdesign_matches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL,
+  module_id INTEGER, code TEXT NOT NULL, name TEXT, volume TEXT, category TEXT, unit TEXT,
+  match_type TEXT,
+  confidence TEXT,
+  evidence TEXT,
+  applied INTEGER DEFAULT 0,
+  status TEXT DEFAULT '待确认',
+  qty REAL DEFAULT 0, note TEXT, updated_at TEXT,
+  UNIQUE(project_id, code));
 """
 
 # ---------------------------------------------------------------------------
@@ -174,7 +196,11 @@ def check_pw(password: str, stored: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def init_db(db_path: str | Path) -> None:
-    """建库建表并在空库时写入演示数据；可重复调用（幂等）。"""
+    """建库建表并在空库时写入演示数据；可重复调用（幂等）。
+
+    v2 起同时兼容已存在的 v1 数据库：新表以 IF NOT EXISTS 建立；某项目
+    typdesign_imports 为空时补种典设目录/演示匹配，重复调用不重复插入。
+    """
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = connect(path)
@@ -183,6 +209,7 @@ def init_db(db_path: str | Path) -> None:
         project_count = conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
         if project_count == 0:
             _seed_demo(conn)
+        _ensure_typdesign_demo(conn)
         conn.commit()
     finally:
         conn.close()
@@ -594,3 +621,266 @@ def _seed_audit(conn: sqlite3.Connection, project_ids: dict[str, int],
             "project_id": project_id, "user_id": user_id, "action": action,
             "detail": detail, "created_at": created_at,
         })
+
+
+# ---------------------------------------------------------------------------
+# v2：典型设计（典设）演示目录与匹配种子（契约2 §4.2）
+# ---------------------------------------------------------------------------
+
+_TYP_DESIGN_VOLUMES = {
+    "台架变": "第三册 台架变",
+    "架空线路": "第四册 架空线路",
+    "低压线路": "第七册 低压线路",
+    "配电站": "第一册 配电站",
+    "通信": "第六册 通信",
+}
+
+#: 演示用典设目录节选（40 条，非完整 V3.1 库）：(volume, chapter, category, code, name, unit)
+_TYP_DESIGN_CATALOG = [
+    # 第三册 台架变（15）
+    (_TYP_DESIGN_VOLUMES["台架变"], "", "台架变", "CSG-GD-10B-TB-GZ-Z-Ⅰ", "Ⅰ型台架安装总图", "座"),
+    (_TYP_DESIGN_VOLUMES["台架变"], "", "台架变", "CSG-GD-10B-TB-GZ-Z-Ⅱ", "Ⅱ型台架安装总图", "座"),
+    (_TYP_DESIGN_VOLUMES["台架变"], "", "台架变", "CSG-GD-10B-TB-GT-SB", "配电箱系统结线图", "套"),
+    (_TYP_DESIGN_VOLUMES["台架变"], "", "台架变", "CSG-GD-10B-TB-GT-BZP", "台架变标志牌号安装图", "套"),
+    (_TYP_DESIGN_VOLUMES["台架变"], "", "台架变", "CSG-GD-10B-TB-GT-JD", "台架变地网图", "处"),
+    (_TYP_DESIGN_VOLUMES["台架变"], "", "台架变", "CSG-GD-10B-TB-GT-BJ", "变压器固定拉线安装图", "处"),
+    (_TYP_DESIGN_VOLUMES["台架变"], "", "台架变", "CSG-GD-10B-TB-ZY-PZ", "配电箱安装总图", "台"),
+    (_TYP_DESIGN_VOLUMES["台架变"], "", "台架变", "CSG-GD-10B-TB-ZY-PVC", "台架变PVC管安装总图", "处"),
+    (_TYP_DESIGN_VOLUMES["台架变"], "", "台架变", "CSG-GD-10B-TB-ZY-TJ", "配电箱横担加工图", "处"),
+    (_TYP_DESIGN_VOLUMES["台架变"], "", "台架变", "CSG-GD-10B-TB-CK-TGJC", "台架变电杆基础图", "座"),
+    (_TYP_DESIGN_VOLUMES["台架变"], "", "台架变", "CSG-GD-10B-TB-CK-PC", "台变操作平台图", "处"),
+    (_TYP_DESIGN_VOLUMES["台架变"], "", "台架变", "CSG-GD-10B-TB-CK-HNT", "配电箱基础图", "座"),
+    (_TYP_DESIGN_VOLUMES["台架变"], "", "台架变", "CSG-GD-10B-HWG-WF", "台架变围网图", "套"),
+    (_TYP_DESIGN_VOLUMES["台架变"], "", "台架变", "CSG-GD-10B-TB-ZN-M01", "M01型台架变智能设备方案图", "套"),
+    (_TYP_DESIGN_VOLUMES["台架变"], "", "台架变", "CSG-GD-10B-TB-GT-JD2", "台架变接地装置安装图", "处"),
+    # 第四册 架空线路（10）
+    (_TYP_DESIGN_VOLUMES["架空线路"], "", "架空线路", "CSG-GD-10K-S1-Z", "单回路直线杆（小档距）", "根"),
+    (_TYP_DESIGN_VOLUMES["架空线路"], "", "架空线路", "CSG-GD-10K-S1-F", "单回路分歧杆（小档距）", "根"),
+    (_TYP_DESIGN_VOLUMES["架空线路"], "", "架空线路", "CSG-GD-10K-S1-J", "单回路耐张杆（小档距）", "根"),
+    (_TYP_DESIGN_VOLUMES["架空线路"], "", "架空线路", "CSG-GD-10K-S1-D", "单回路终端杆（小档距）", "根"),
+    (_TYP_DESIGN_VOLUMES["架空线路"], "", "架空线路", "CSG-GD-10K-S2-Z", "双回直线杆", "根"),
+    (_TYP_DESIGN_VOLUMES["架空线路"], "", "架空线路", "CSG-GD-10K-HF41-J", "单回路耐张焊接塔", "座"),
+    (_TYP_DESIGN_VOLUMES["架空线路"], "", "架空线路", "CSG-GD-10K-HF42-J", "双回路耐张焊接塔", "座"),
+    (_TYP_DESIGN_VOLUMES["架空线路"], "", "架空线路", "CSG-GD-10K-LG42-J", "双回路耐张螺栓塔", "座"),
+    (_TYP_DESIGN_VOLUMES["架空线路"], "", "架空线路", "CSG-GD-10K-DNJ", "四回路耐张螺栓塔", "座"),
+    (_TYP_DESIGN_VOLUMES["架空线路"], "", "架空线路", "CSG-GD-10K-JD-LX", "带绝缘子拉线组装", "处"),
+    # 第七册 低压线路（8）
+    (_TYP_DESIGN_VOLUMES["低压线路"], "", "低压线路", "CSG-GD-0.4K-HD", "横担架线", "套"),
+    (_TYP_DESIGN_VOLUMES["低压线路"], "", "低压线路", "CSG-GD-0.4K-JM", "街码架线", "套"),
+    (_TYP_DESIGN_VOLUMES["低压线路"], "", "低压线路", "CSG-GD-0.4K-JK-YQ", "沿墙架线", "套"),
+    (_TYP_DESIGN_VOLUMES["低压线路"], "", "低压线路", "CSG-GD-0.4K-JK-CD", "重复接地", "处"),
+    (_TYP_DESIGN_VOLUMES["低压线路"], "", "低压线路", "CSG-GD-0.4K-JK-AJ", "安健环", "套"),
+    (_TYP_DESIGN_VOLUMES["低压线路"], "", "低压线路", "CSG-GD-0.4K-HB", "户表", "套"),
+    (_TYP_DESIGN_VOLUMES["低压线路"], "", "低压线路", "CSG-GD-0.4K-LX", "拉线", "处"),
+    (_TYP_DESIGN_VOLUMES["低压线路"], "", "低压线路", "CSG-GD-0.4D-FD", "电缆防堵", "处"),
+    # 第一册 配电站（4）
+    (_TYP_DESIGN_VOLUMES["配电站"], "", "配电站", "CSG-GD-10B-NZ-G01", "SF6全绝缘断路器柜", "面"),
+    (_TYP_DESIGN_VOLUMES["配电站"], "", "配电站", "CSG-GD-10B-NZ-D01", "GGD3型低压配电柜", "面"),
+    (_TYP_DESIGN_VOLUMES["配电站"], "", "配电站", "CSG-GD-10B-NZ-JⅠ", "JⅠ型标准电房", "座"),
+    (_TYP_DESIGN_VOLUMES["配电站"], "", "配电站", "CSG-GD-10B-NZ-ZNⅠ", "Ⅰ型配电站智能化", "套"),
+    # 第六册 通信（3）
+    (_TYP_DESIGN_VOLUMES["通信"], "", "通信", "CSG-ZPW-TX-GXS-WL", "光纤通信网络", "套"),
+    (_TYP_DESIGN_VOLUMES["通信"], "", "通信", "CSG-ZPW-TX-GXL-PG", "OPGW光缆", "km"),
+    (_TYP_DESIGN_VOLUMES["通信"], "", "通信", "CSG-ZPW-TX-BDS", "北斗卫星通信", "套"),
+]
+
+#: 演示导入记录：项目编码 → (文件名, 导入时间)
+_TYP_DESIGN_IMPORTS = {
+    "DEMO-A": ("演示用典设目录节选（40条，非完整V3.1库）.xlsx", "2026-11-12 09:20"),
+    "DEMO-B": ("演示用典设目录节选（40条，非完整V3.1库）.xlsx", "2026-11-12 09:20"),
+    "DEMO-C": ("演示用典设目录节选（40条，非完整V3.1库）.xlsx", "2026-11-16 15:40"),
+}
+
+#: 演示匹配执行时间与确认时间
+_TYP_DESIGN_MATCH_AT = {"DEMO-A": "2026-11-13 10:30", "DEMO-B": "2026-11-15 16:50"}
+
+#: 写入项目图纸 summary 的典设编号证据（契约2 §4.2）：项目编码 → 图纸名称 → 编号列表
+_TYP_DESIGN_EVIDENCE = {
+    "DEMO-A": {
+        "杆塔明细表": [
+            "CSG-GD-10K-S1-Z", "CSG-GD-10K-S1-F", "CSG-GD-10K-S1-J",
+            "CSG-GD-10K-S1-D", "CSG-GD-10K-JD-LX",
+        ],
+        "台架变安装图": [
+            "CSG-GD-10B-TB-GZ-Z-Ⅰ", "CSG-GD-10B-TB-GT-SB", "CSG-GD-10B-TB-GT-JD",
+            "CSG-GD-10B-TB-GT-BJ", "CSG-GD-10B-TB-ZY-PZ", "CSG-GD-10B-TB-ZY-PVC",
+            "CSG-GD-10B-TB-ZY-TJ", "CSG-GD-10B-TB-CK-TGJC", "CSG-GD-10B-TB-CK-PC",
+            "CSG-GD-10B-TB-CK-HNT", "CSG-GD-10B-HWG-WF", "CSG-GD-10B-TB-ZN-M01",
+        ],
+        "0.4kV线路平面图": [
+            "CSG-GD-0.4K-HD", "CSG-GD-0.4K-JM", "CSG-GD-0.4K-JK-YQ",
+            "CSG-GD-0.4K-JK-CD", "CSG-GD-0.4K-JK-AJ", "CSG-GD-0.4K-HB",
+            "CSG-GD-0.4K-LX", "CSG-GD-0.4D-FD",
+        ],
+    },
+    "DEMO-B": {
+        "杆塔明细表": [
+            "CSG-GD-10K-S1-Z", "CSG-GD-10K-S1-F", "CSG-GD-10K-S1-J",
+            "CSG-GD-10K-S2-Z", "CSG-GD-10K-HF41-J", "CSG-GD-10K-LG42-J",
+        ],
+        "台架变安装图": [
+            "CSG-GD-10B-TB-GZ-Z-Ⅰ", "CSG-GD-10B-TB-GT-SB", "CSG-GD-10B-TB-GT-JD",
+            "CSG-GD-10B-TB-GT-BJ", "CSG-GD-10B-TB-ZY-PZ", "CSG-GD-10B-TB-ZY-PVC",
+            "CSG-GD-10B-TB-ZY-TJ", "CSG-GD-10B-TB-CK-TGJC", "CSG-GD-10B-TB-CK-PC",
+            "CSG-GD-10B-TB-CK-HNT", "CSG-GD-10B-HWG-WF", "CSG-GD-10B-TB-ZN-M01",
+        ],
+        "0.4kV线路平面图": [
+            "CSG-GD-0.4K-HD", "CSG-GD-0.4K-JM", "CSG-GD-0.4K-LX", "CSG-GD-0.4K-JK-CD",
+        ],
+    },
+    "DEMO-C": {
+        "杆塔明细表": [
+            "CSG-GD-10K-S1-Z", "CSG-GD-10K-S1-F", "CSG-GD-10K-S1-D", "CSG-GD-10K-JD-LX",
+        ],
+        "台架变安装图": [
+            "CSG-GD-10B-TB-GZ-Z-Ⅰ", "CSG-GD-10B-TB-GT-SB", "CSG-GD-10B-TB-GT-JD",
+            "CSG-GD-10B-TB-GT-BJ", "CSG-GD-10B-TB-ZY-PZ", "CSG-GD-10B-HWG-WF",
+        ],
+        "0.4kV线路平面图": [
+            "CSG-GD-0.4K-HD", "CSG-GD-0.4K-LX",
+        ],
+    },
+}
+
+#: 项目A 已确认匹配中应用数量为 2 的模块（演示数量字段）
+_TYP_DESIGN_HIGH_QTY_2 = {"CSG-GD-10B-TB-GZ-Z-Ⅰ", "CSG-GD-10K-JD-LX"}
+
+
+def _ensure_typdesign_demo(conn: sqlite3.Connection) -> None:
+    """兼容新库/已有 v1 库：补种典设演示目录、图纸证据与匹配状态（幂等）。"""
+    admin = _user_dict(conn, "admin")
+    rows = conn.execute("SELECT id, code FROM projects ORDER BY id").fetchall()
+    for row in rows:
+        project_id = int(row["id"])
+        project_code = row["code"]
+        if project_code not in _TYP_DESIGN_EVIDENCE:
+            continue
+        # 已有 v1 数据库的图纸 summary 没有典设编号，按演示数据补写（幂等，只补缺失编号）
+        _patch_typdesign_evidence(conn, project_id, project_code)
+        imported = conn.execute(
+            "SELECT COUNT(*) FROM typdesign_imports WHERE project_id=?", (project_id,)
+        ).fetchone()[0]
+        if imported:
+            # 已存在演示库（含 v2 早期种子）：把旧口径“未匹配=待确认”迁移为“未匹配”状态
+            _migrate_typdesign_demo_statuses(conn, project_id, project_code)
+            continue
+        filename, imported_at = _TYP_DESIGN_IMPORTS[project_code]
+        _insert_typdesign_catalog(conn, project_id, filename, imported_at, admin)
+        if project_code in _TYP_DESIGN_MATCH_AT:
+            typdesign.match_project(conn, project_id, admin)
+            # 演示种子不计入“审计动态”条数（原契约 §5.5 要求项目A 6–8 条）
+            conn.execute(
+                "DELETE FROM audit WHERE project_id=? AND action='执行典型设计匹配'", (project_id,)
+            )
+            _seed_typdesign_statuses(conn, project_id, project_code)
+    conn.commit()
+
+
+def _patch_typdesign_evidence(conn: sqlite3.Connection, project_id: int, project_code: str) -> None:
+    """把典设编号追加到对应图纸 summary（重复调用不会重复追加）。"""
+    for drawing_name, codes in _TYP_DESIGN_EVIDENCE[project_code].items():
+        rows = conn.execute(
+            "SELECT id, summary FROM drawings WHERE project_id=? AND name=? ORDER BY id",
+            (project_id, drawing_name),
+        ).fetchall()
+        for row in rows:
+            summary = row["summary"] or ""
+            missing = [code for code in codes if code not in summary]
+            if not missing:
+                continue
+            marker = "典型设计匹配编号："
+            if marker in summary:
+                new_summary = summary + "、" + "、".join(missing)
+            else:
+                new_summary = summary + "；" + marker + "、".join(missing)
+            conn.execute("UPDATE drawings SET summary=? WHERE id=?", (new_summary, row["id"]))
+
+
+def _insert_typdesign_catalog(conn: sqlite3.Connection, project_id: int, filename: str,
+                              imported_at: str, user: dict) -> None:
+    """写入一条导入记录 + 40 条演示典设模块。"""
+    _insert(conn, "typdesign_imports", {
+        "project_id": project_id,
+        "filename": filename,
+        "modules": len(_TYP_DESIGN_CATALOG),
+        "imported_by": user.get("id"),
+        "imported_at": imported_at,
+    })
+    for volume, chapter, category, code, name, unit in _TYP_DESIGN_CATALOG:
+        _insert(conn, "typdesign_modules", {
+            "project_id": project_id, "volume": volume, "chapter": chapter,
+            "category": category, "code": code, "name": name, "unit": unit, "note": "",
+        })
+
+
+def _seed_typdesign_statuses(conn: sqlite3.Connection, project_id: int, project_code: str) -> None:
+    """按最终演示口径设置匹配状态。
+
+    项目A：高置信已确认（个别数量 2）、中/低置信已忽略（note=低置信未采用）、
+    未匹配=未匹配（pending 为 0，体现“计价定稿”完成态）。
+    项目B：已匹配行全部待确认，未匹配行=未匹配。
+    """
+    timestamp = _TYP_DESIGN_MATCH_AT.get(project_code) or typdesign.now()
+    # 未匹配行统一状态（不计入待确认）
+    conn.execute(
+        "UPDATE typdesign_matches SET status='未匹配', confidence='', applied=0, qty=0, updated_at=? "
+        "WHERE project_id=? AND match_type='未匹配'",
+        (timestamp, project_id),
+    )
+    if project_code == "DEMO-A":
+        conn.execute(
+            "UPDATE typdesign_matches SET status='已确认', applied=1, qty=1, updated_at=? "
+            "WHERE project_id=? AND confidence='高'",
+            (timestamp, project_id),
+        )
+        for code in _TYP_DESIGN_HIGH_QTY_2:
+            conn.execute(
+                "UPDATE typdesign_matches SET qty=2 WHERE project_id=? AND code=?", (project_id, code)
+            )
+        conn.execute(
+            "UPDATE typdesign_matches SET status='已忽略', applied=0, qty=0, note='低置信未采用', "
+            "updated_at=? WHERE project_id=? AND confidence IN ('中','低')",
+            (timestamp, project_id),
+        )
+        conn.execute(
+            "UPDATE typdesign_matches SET updated_at=? WHERE project_id=?",
+            (timestamp, project_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE typdesign_matches SET status='待确认', applied=0, qty=0, updated_at=? "
+            "WHERE project_id=? AND match_type<>'未匹配'",
+            (timestamp, project_id),
+        )
+        conn.execute(
+            "UPDATE typdesign_matches SET updated_at=? WHERE project_id=?",
+            (timestamp, project_id),
+        )
+
+
+def _migrate_typdesign_demo_statuses(conn: sqlite3.Connection, project_id: int,
+                                     project_code: str) -> None:
+    """演示库旧状态口径的一次性迁移（幂等）。
+
+    仅当检测到“未匹配行仍为待确认”时执行：未匹配行改“未匹配”；项目A 的中/低
+    置信行改“已忽略”；已确认/已忽略等人工状态保持不动。新口径库不会触发。
+    """
+    stale = conn.execute(
+        "SELECT COUNT(*) FROM typdesign_matches "
+        "WHERE project_id=? AND match_type='未匹配' AND status='待确认'",
+        (project_id,),
+    ).fetchone()[0]
+    if not stale:
+        return
+    timestamp = _TYP_DESIGN_MATCH_AT.get(project_code) or typdesign.now()
+    conn.execute(
+        "UPDATE typdesign_matches SET status='未匹配', confidence='', applied=0, qty=0, updated_at=? "
+        "WHERE project_id=? AND match_type='未匹配' AND status='待确认'",
+        (timestamp, project_id),
+    )
+    if project_code == "DEMO-A":
+        conn.execute(
+            "UPDATE typdesign_matches SET status='已忽略', applied=0, qty=0, note='低置信未采用', "
+            "updated_at=? WHERE project_id=? AND confidence IN ('中','低') AND status='待确认'",
+            (timestamp, project_id),
+        )

@@ -39,6 +39,12 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 import engine
 import pricing
 import seed
+
+try:  # 典型设计（典设）匹配引擎（engine-dev 维护；并行开发期允许暂时缺失，页面降级为空态）
+    import typdesign
+except ImportError:  # pragma: no cover - 仅在 typdesign.py 未就绪时触发
+    typdesign = None  # type: ignore[assignment]
+
 from parsers import guess_meta, parse_drawing
 
 # --------------------------------------------------------------------------- #
@@ -144,6 +150,7 @@ BADGE_MAP = {
     "未开始": "muted", "待识别": "muted", "待确认": "muted", "已提交": "info",
     "解析失败": "danger", "异常": "danger", "高": "danger", "中": "warn", "低": "info",
     "甲供": "info", "乙供": "muted", "退回": "danger", "设备": "info", "主材": "muted",
+    "已确认": "ok", "已忽略": "muted", "待确认": "warn", "未匹配": "muted",
 }
 
 
@@ -359,6 +366,74 @@ def can_autofill(conn: sqlite3.Connection, pid: int) -> bool:
     drawings = stage_of(conn, pid, "drawings")
     model = stage_of(conn, pid, "model")
     return str(drawings.get("status")) != "未开始" and str(model.get("status")) != "已完成"
+
+
+# --------------------------------------------------------------------------- #
+# 典型设计（典设）匹配辅助（v2，辅助“图纸解析”阶段，不新增阶段门禁）
+# --------------------------------------------------------------------------- #
+def typdesign_ready() -> bool:
+    """typdesign.py 是否已就绪。"""
+    return typdesign is not None and hasattr(typdesign, "typdesign_summary")
+
+
+def empty_typdesign_summary() -> dict:
+    """typdesign 模块未就绪 / 未导入目录时的空态结构（页面渲染兜底）。"""
+    return {
+        "imports": [],
+        "modules": 0,
+        "matched": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "pending": 0,
+        "confirmed": 0,
+        "ignored": 0,
+        "unmatched": 0,
+        "rate": 0.0,
+        "matches": [],
+        "last_run": "",
+    }
+
+
+def td_summary(conn: sqlite3.Connection, pid: int) -> dict:
+    """项目典设匹配汇总（页面上下文）。"""
+    if not typdesign_ready():
+        return empty_typdesign_summary()
+    data = typdesign.typdesign_summary(conn, pid) or {}
+    base = empty_typdesign_summary()
+    base.update(data)
+    return base
+
+
+def td_stats(conn: sqlite3.Connection, pid: int) -> dict:
+    """工作台/项目页/图纸页用的典设统计（轻量）。"""
+    if not typdesign_ready():
+        return {
+            "modules": 0,
+            "matched": 0,
+            "confirmed": 0,
+            "pending": 0,
+            "ignored": 0,
+            "unmatched": 0,
+            "rate": 0.0,
+        }
+    data = typdesign.typdesign_stats(conn, pid) or {}
+    return {
+        "modules": int(_num(data.get("modules"))),
+        "matched": int(_num(data.get("matched"))),
+        "confirmed": int(_num(data.get("confirmed"))),
+        "pending": int(_num(data.get("pending"))),
+        "ignored": int(_num(data.get("ignored"))),
+        "unmatched": int(_num(data.get("unmatched"))),
+        "rate": _num(data.get("rate")),
+    }
+
+
+def td_confirmed(conn: sqlite3.Connection, pid: int) -> list[dict]:
+    """已确认的典设模块（建模页只读参考面板）。"""
+    if not typdesign_ready():
+        return []
+    return list(typdesign.confirmed_modules(conn, pid) or [])
 
 
 # --------------------------------------------------------------------------- #
@@ -603,6 +678,7 @@ def project_home(pid: int, request: Request, conn: sqlite3.Connection = Depends(
         design_total=design_total,
         model_total=model_total,
         diff_rate=((model_total - design_total) / design_total * 100) if design_total else 0.0,
+        td_stats=td_stats(conn, pid),
         **ctx,
     )
 
@@ -639,6 +715,8 @@ def drawings_page(pid: int, request: Request, conn: sqlite3.Connection = Depends
         editable=editable,
         autofill_ok=can_edit_role(user) and can_autofill(conn, pid),
         stage=ctx["stage_map"].get("drawings", {}),
+        td_stats=td_stats(conn, pid),
+        td_ready=typdesign_ready(),
         **ctx,
     )
 
@@ -917,6 +995,8 @@ def model_page(pid: int, request: Request, conn: sqlite3.Connection = Depends(ge
         svg=build_model_svg(project, lines, equipment),
         model_stats=stats,
         stage=ctx["stage_map"].get("model", {}),
+        td_stats=td_stats(conn, pid),
+        td_confirmed=td_confirmed(conn, pid),
         **ctx,
     )
 
@@ -1299,8 +1379,16 @@ async def pricing_change_quota(pid: int, iid: int, request: Request, conn: sqlit
 # --------------------------------------------------------------------------- #
 # 对比分析
 # --------------------------------------------------------------------------- #
-def submission_conditions(conn: sqlite3.Connection, pid: int, stages: list[dict], checks, materials, compare_rows) -> list[dict]:
-    """送审条件检查清单。"""
+def submission_conditions(
+    conn: sqlite3.Connection,
+    pid: int,
+    stages: list[dict],
+    checks,
+    materials,
+    compare_rows,
+    td: dict | None = None,
+) -> list[dict]:
+    """送审条件检查清单（含 v2 典设匹配条件）。"""
     stages_by_key = {str(s.get("key")): s for s in stages}
     done = sum(1 for s in stages if s.get("status") == "已完成")
     high = sum(1 for c in checks if str(c.get("level")) == "高")
@@ -1309,6 +1397,17 @@ def submission_conditions(conn: sqlite3.Connection, pid: int, stages: list[dict]
     static_row = next((row for row in compare_rows if str(row.get("item")) == "静态投资"), None)
     max_rate = abs(_num(static_row.get("rate"))) if static_row else 0.0
     pricing_done = str(stages_by_key.get("pricing", {}).get("status")) == "已完成"
+    td = td or {}
+    td_modules = int(_num(td.get("modules")))
+    td_pending = int(_num(td.get("pending")))
+    td_confirmed_count = int(_num(td.get("confirmed")))
+    td_ok = td_modules > 0 and td_pending == 0 and td_confirmed_count >= 1
+    if td_modules == 0:
+        td_detail = "尚未导入典设目录"
+    elif td_pending:
+        td_detail = f"待确认 {td_pending} 个模块（已确认 {td_confirmed_count}/{td_modules}）"
+    else:
+        td_detail = f"已确认 {td_confirmed_count}/{td_modules} 个模块"
     conditions = [
         {
             "name": "四阶段全部完成",
@@ -1339,6 +1438,11 @@ def submission_conditions(conn: sqlite3.Connection, pid: int, stages: list[dict]
             "ok": pricing_done,
             "detail": f"计价阶段状态：{stages_by_key.get('pricing', {}).get('status', '未开始')}",
         },
+        {
+            "name": "典型设计应用匹配已完成",
+            "ok": td_ok,
+            "detail": td_detail,
+        },
     ]
     return conditions
 
@@ -1363,7 +1467,10 @@ def compare_page(pid: int, request: Request, conn: sqlite3.Connection = Depends(
     design_total = _num(project["design_total"])
     model_total = _num(summary.get("static_total"))
     static_row = next((dict(row) for row in compare_rows if str(row.get("item")) == "静态投资"), None)
-    conditions = submission_conditions(conn, pid, ctx["stages"], checks, materials, compare_rows)
+    td_data = td_stats(conn, pid)
+    conditions = submission_conditions(
+        conn, pid, ctx["stages"], checks, materials, compare_rows, td=td_data
+    )
     return page(
         request,
         "compare.html",
@@ -1385,8 +1492,243 @@ def compare_page(pid: int, request: Request, conn: sqlite3.Connection = Depends(
         model_total=model_total,
         static_row=static_row,
         diff_rate=((model_total - design_total) / design_total * 100) if design_total else 0.0,
+        td_stats=td_data,
         **ctx,
     )
+
+
+# --------------------------------------------------------------------------- #
+# 典型设计（典设）匹配（v2）
+# --------------------------------------------------------------------------- #
+TYPEDESIGN_UPLOAD_EXTS = {".xlsx", ".xlsm", ".csv"}
+TYPEDESIGN_MAX_BYTES = 20 * 1024 * 1024
+TYPEDESIGN_FILTERS = {
+    "all": ("全部", None),
+    "pending": ("待确认", "status:待确认"),
+    "confirmed": ("已确认", "status:已确认"),
+    "ignored": ("已忽略", "status:已忽略"),
+    "unmatched": ("未匹配", "unmatched"),
+}
+
+
+def _is_unmatched(match: dict) -> bool:
+    """未匹配行：新口径 status='未匹配'，兼容旧数据 match_type='未匹配'。"""
+    status = str(match.get("status") or "")
+    if status in ("已确认", "已忽略"):
+        return False
+    return status == "未匹配" or str(match.get("match_type") or "") == "未匹配"
+
+
+def _typdesign_filtered(summary: dict, filter_key: str) -> list[dict]:
+    """按状态/匹配方式筛选匹配明细。"""
+    matches = list(summary.get("matches") or [])
+    kind = TYPEDESIGN_FILTERS.get(filter_key, TYPEDESIGN_FILTERS["all"])[1]
+    if not kind:
+        return matches
+    if kind == "unmatched":
+        return [m for m in matches if _is_unmatched(m)]
+    field, value = kind.split(":", 1)
+    if field == "status":
+        return [m for m in matches if str(m.get("status")) == value]
+    return [m for m in matches if str(m.get("match_type")) == value]
+
+
+def _typdesign_counts(summary: dict) -> dict:
+    matches = list(summary.get("matches") or [])
+    return {
+        "all": len(matches),
+        "pending": sum(1 for m in matches if str(m.get("status")) == "待确认"),
+        "confirmed": sum(1 for m in matches if str(m.get("status")) == "已确认"),
+        "ignored": sum(1 for m in matches if str(m.get("status")) == "已忽略"),
+        "unmatched": sum(1 for m in matches if _is_unmatched(m)),
+    }
+
+
+@app.get("/project/{pid}/typdesign")
+def typdesign_page(pid: int, request: Request, conn: sqlite3.Connection = Depends(get_db)):
+    """典型设计（典设）匹配页：统计 + 导入目录 + 执行匹配 + 明细确认 + 导出。"""
+    user = require_user(request, conn)
+    project = get_project(conn, pid, user)
+    ctx = workflow_ctx(conn, pid)
+    summary = td_summary(conn, pid)
+    filter_key = str(request.query_params.get("filter") or "all")
+    if filter_key not in TYPEDESIGN_FILTERS:
+        filter_key = "all"
+    return page(
+        request,
+        "typdesign.html",
+        user,
+        active="typdesign",
+        pid=pid,
+        p=project,
+        summary=summary,
+        matches=_typdesign_filtered(summary, filter_key),
+        filter_key=filter_key,
+        filter_counts=_typdesign_counts(summary),
+        filters=[(key, label) for key, (label, _) in TYPEDESIGN_FILTERS.items()],
+        editable=can_edit_role(user),
+        td_ready=typdesign_ready(),
+        drawings_stage=ctx["stage_map"].get("drawings", {}),
+        **ctx,
+    )
+
+
+@app.post("/project/{pid}/typdesign/import")
+async def typdesign_import(pid: int, request: Request, conn: sqlite3.Connection = Depends(get_db)):
+    """上传典设模块目录（.xlsx/.csv）→ 重建项目典设目录。"""
+    user = require_user(request, conn)
+    get_project(conn, pid, user)
+    require_role(user, CAN_EDIT_ROLES, "导入典设目录")
+    if not typdesign_ready():
+        return redirect_msg(
+            request, f"/project/{pid}/typdesign", "典设匹配引擎尚未就绪，请稍后重试", "error"
+        )
+
+    form = await request.form()
+    uploads = [
+        item
+        for item in form.getlist("file")
+        if hasattr(item, "filename") and hasattr(item, "read") and (item.filename or "").strip()
+    ]
+    if not uploads:
+        return redirect_msg(
+            request, f"/project/{pid}/typdesign", "请选择典设目录文件（.xlsx / .csv）再导入", "error"
+        )
+    upload = uploads[0]
+    filename = Path(upload.filename or "").name
+    ext = Path(filename).suffix.lower()
+    if ext not in TYPEDESIGN_UPLOAD_EXTS:
+        return redirect_msg(
+            request, f"/project/{pid}/typdesign", "仅支持 .xlsx / .xlsm / .csv 格式的典设目录", "error"
+        )
+    content = await upload.read()
+    if not content:
+        return redirect_msg(request, f"/project/{pid}/typdesign", "文件为空，请重新选择", "error")
+    if len(content) > TYPEDESIGN_MAX_BYTES:
+        return redirect_msg(request, f"/project/{pid}/typdesign", "文件超过 20MB，请拆分后导入", "error")
+
+    dest_dir = UPLOAD_DIR / str(pid) / "typdesign"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / f"{datetime.now():%Y%m%d%H%M%S}_{uuid.uuid4().hex[:6]}{ext}"
+    try:
+        dest.write_bytes(content)
+    except OSError as exc:
+        return redirect_msg(request, f"/project/{pid}/typdesign", f"文件保存失败：{exc}", "error")
+
+    ok, result = engine_call(
+        typdesign.import_catalog, conn, pid, str(dest), filename, as_user_dict(user)
+    )
+    if not ok:
+        return redirect_msg(request, f"/project/{pid}/typdesign", f"导入失败：{result}", "error")
+    data = result if isinstance(result, dict) else {}
+    if data.get("ok") is False:
+        return redirect_msg(
+            request,
+            f"/project/{pid}/typdesign",
+            f"导入失败：{data.get('message') or '未识别到有效典设模块'}",
+            "error",
+        )
+    modules = int(_num(data.get("modules")))
+    msg = data.get("message") or f"已导入典设目录：{filename}，共 {modules} 个模块"
+    return redirect_msg(request, f"/project/{pid}/typdesign", msg)
+
+
+@app.post("/project/{pid}/typdesign/match")
+async def typdesign_match(pid: int, request: Request, conn: sqlite3.Connection = Depends(get_db)):
+    """一键执行典设匹配（重写匹配明细，保留已确认/已忽略状态）。"""
+    user = require_user(request, conn)
+    get_project(conn, pid, user)
+    require_role(user, CAN_EDIT_ROLES, "执行典设匹配")
+    if not typdesign_ready():
+        return redirect_msg(
+            request, f"/project/{pid}/typdesign", "典设匹配引擎尚未就绪，请稍后重试", "error"
+        )
+    ok, result = engine_call(typdesign.match_project, conn, pid, as_user_dict(user))
+    if not ok:
+        return redirect_msg(request, f"/project/{pid}/typdesign", f"执行匹配失败：{result}", "error")
+    data = result if isinstance(result, dict) else {}
+    modules = int(_num(data.get("modules")))
+    matched = int(_num(data.get("matched")))
+    if modules == 0:
+        return redirect_msg(
+            request,
+            f"/project/{pid}/typdesign",
+            "尚未导入典设目录，无法执行匹配；请先上传/导入典设目录文件",
+            "error",
+        )
+    msg = (
+        f"已执行典型设计匹配：目录 {modules} 个模块，匹配 {matched} 个"
+        f"（高 {int(_num(data.get('high')))} / 中 {int(_num(data.get('medium')))} / "
+        f"低 {int(_num(data.get('low')))}），待确认 {int(_num(data.get('pending')))} 个"
+    )
+    return redirect_msg(request, f"/project/{pid}/typdesign", msg)
+
+
+async def _typdesign_change(pid: int, mid: int, request: Request, conn, status: str):
+    """确认应用 / 忽略 共用的状态变更处理。"""
+    user = require_user(request, conn)
+    get_project(conn, pid, user)
+    action = "确认典设应用" if status == "已确认" else "忽略典设匹配"
+    require_role(user, CAN_EDIT_ROLES, action)
+    if not typdesign_ready():
+        return redirect_msg(
+            request, f"/project/{pid}/typdesign", "典设匹配引擎尚未就绪，请稍后重试", "error"
+        )
+    form = await request.form()
+    qty_raw = str(form.get("qty") or "").strip()
+    try:
+        qty = float(qty_raw) if qty_raw else 0.0
+    except ValueError:
+        return redirect_msg(request, f"/project/{pid}/typdesign", "应用数量必须为数字", "error")
+    note = str(form.get("note") or "").strip()
+    ok, result = engine_call(
+        typdesign.confirm_match, conn, pid, mid, as_user_dict(user), qty, note, status
+    )
+    if not ok:
+        return redirect_msg(request, f"/project/{pid}/typdesign", f"{action}失败：{result}", "error")
+    ok2, msg = _unpack_engine_result(result, f"{action}成功")
+    return redirect_msg(
+        request,
+        f"/project/{pid}/typdesign",
+        msg if ok2 else f"{action}失败：{msg}",
+        "ok" if ok2 else "error",
+    )
+
+
+@app.api_route("/project/{pid}/typdesign/{mid}/confirm", methods=["GET", "POST"])
+async def typdesign_confirm(pid: int, mid: int, request: Request, conn: sqlite3.Connection = Depends(get_db)):
+    """确认应用（POST）；GET 访问不存在的确认资源返回 404，避免误触写操作。"""
+    if request.method != "POST":
+        require_user(request, conn)
+        raise HTTPException(status_code=404, detail="确认操作需在典设匹配页通过“确认应用”按钮提交。")
+    return await _typdesign_change(pid, mid, request, conn, "已确认")
+
+
+@app.api_route("/project/{pid}/typdesign/{mid}/ignore", methods=["GET", "POST"])
+async def typdesign_ignore(pid: int, mid: int, request: Request, conn: sqlite3.Connection = Depends(get_db)):
+    """忽略匹配（POST）；GET 访问返回 404。"""
+    if request.method != "POST":
+        require_user(request, conn)
+        raise HTTPException(status_code=404, detail="忽略操作需在典设匹配页通过“忽略”按钮提交。")
+    return await _typdesign_change(pid, mid, request, conn, "已忽略")
+
+
+@app.get("/project/{pid}/typdesign/export.xlsx")
+def typdesign_export(pid: int, request: Request, conn: sqlite3.Connection = Depends(get_db)):
+    """导出典型设计匹配清单（Excel，单 sheet）。"""
+    user = require_user(request, conn)
+    project = get_project(conn, pid, user)
+    if not typdesign_ready():
+        return redirect_msg(
+            request, f"/project/{pid}/typdesign", "典设匹配引擎尚未就绪，无法导出", "error"
+        )
+    summary = td_summary(conn, pid)
+    if int(_num(summary.get("modules"))) == 0:
+        return redirect_msg(
+            request, f"/project/{pid}/typdesign", "尚未导入典设目录，暂无可导出的匹配清单", "error"
+        )
+    workbook = build_typdesign_workbook(conn, project)
+    return _xlsx_response(workbook, _export_filename("典型设计匹配清单", project))
 
 
 # --------------------------------------------------------------------------- #
@@ -1398,7 +1740,13 @@ def demo_page(request: Request, conn: sqlite3.Connection = Depends(get_db)):
     project = conn.execute("SELECT * FROM projects ORDER BY id LIMIT 1").fetchone()
     demo_project = conn.execute("SELECT * FROM projects WHERE code='DEMO-C'").fetchone() or project
     finished = conn.execute("SELECT * FROM projects WHERE code='DEMO-A'").fetchone() or project
+    pending = conn.execute("SELECT * FROM projects WHERE code='DEMO-B'").fetchone() or project
     stages = get_stages(conn, int(demo_project["id"])) if demo_project else []
+    demo_td = {
+        "c": td_stats(conn, int(demo_project["id"])) if demo_project else {},
+        "a": td_stats(conn, int(finished["id"])) if finished else {},
+        "b": td_stats(conn, int(pending["id"])) if pending else {},
+    }
     return page(
         request,
         "demo.html",
@@ -1406,7 +1754,9 @@ def demo_page(request: Request, conn: sqlite3.Connection = Depends(get_db)):
         active="demo",
         demo_project=demo_project,
         finished_project=finished,
+        pending_project=pending,
         demo_stages={str(s["key"]): s for s in stages},
+        demo_td=demo_td,
         demo_accounts=[("admin", "admin123", "管理员"), ("zaojia", "123456", "造价员"), ("fuhe", "123456", "复核员")],
     )
 
@@ -1874,6 +2224,47 @@ def build_pricing_workbook(conn: sqlite3.Connection, project) -> Workbook:
         compare_rows,
         [6, 24, 18, 18, 16, 11, 40],
         {3: "#,##0.00", 4: "#,##0.00", 5: "#,##0.00", 6: "0.00"},
+    )
+    return workbook
+
+
+TYPEDESIGN_EXPORT_WIDTHS = {
+    "序号": 6, "卷册": 20, "类别": 12, "模块编号": 32, "模块名称": 34, "模块单位": 9,
+    "匹配方式": 11, "置信度": 9, "证据摘要": 52, "状态": 9, "应用数量": 10, "备注": 22,
+}
+
+
+def build_typdesign_workbook(conn: sqlite3.Connection, project) -> Workbook:
+    """典型设计匹配清单导出（单 sheet“典型设计匹配清单”）。"""
+    rows = typdesign.export_rows(conn, int(project["id"])) if typdesign_ready() else []
+    header = (
+        list(rows[0])
+        if rows
+        else ["序号", "卷册", "类别", "模块编号", "模块名称", "模块单位",
+              "匹配方式", "置信度", "证据摘要", "状态", "应用数量", "备注"]
+    )
+    data = [list(row) for row in rows[1:]] if len(rows) > 1 else []
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "典型设计匹配清单"
+    subtitle = (
+        f"项目编码：{project['code']}    工程类型：{project['ptype'] or '—'}    "
+        f"导出时间：{now_text()}    说明：演示用典设目录节选（40 条，非完整 V3.1 库），"
+        "可作为附件6-1《标准设计应用情况统计表》的图纸依据底稿"
+    )
+    widths = [TYPEDESIGN_EXPORT_WIDTHS.get(str(item), 14) for item in header]
+    number_formats: dict[int, str] = {}
+    for index, item in enumerate(header, start=1):
+        if str(item) == "应用数量":
+            number_formats[index] = "#,##0.####"
+    _write_sheet(
+        sheet,
+        f"典型设计匹配清单 · {project['name']}",
+        subtitle,
+        [str(item) for item in header],
+        data,
+        widths,
+        number_formats,
     )
     return workbook
 

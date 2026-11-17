@@ -5,10 +5,11 @@
   <div>
     <div class="crumb">演示路线</div>
     <h1>5 分钟演示路线</h1>
-    <p class="sub">用项目C（{{ demo_project.name }}）走完 图纸解析 → 建模 → 算量 → 计价 → 对比 全链路，再用项目A查看完成态与预算对比</p>
+    <p class="sub">用项目C（{{ demo_project.name }}）走完 图纸解析 → 典型设计匹配（v2） → 建模 → 算量 → 计价 → 对比 全链路，再用项目A查看完成态与预算对比、项目B查看典设待确认状态</p>
   </div>
   <div class="head-actions">
     <a class="btn primary" href="/project/{{ demo_project.id }}/drawings?as=zaojia">从图纸解析开始</a>
+    <a class="btn" href="/project/{{ demo_project.id }}/typdesign?as=zaojia">看典设匹配（v2）</a>
     <a class="btn" href="/project/{{ finished_project.id }}?as=zaojia">直接看项目A完成态</a>
   </div>
 </div>
@@ -40,6 +41,18 @@
         <div class="demo-step">
           <div class="step-no">3</div>
           <div class="step-body">
+            <div class="step-title">典型设计匹配（v2 新增）：南网 V3.1 典设目录匹配</div>
+            <div class="muted small">项目C 已导入演示用典设目录（40 条节选）但尚未匹配：进入典设匹配页点击“执行匹配”，系统基于图纸识别结论、模型与算量证据自动匹配并给出匹配方式 / 置信度 / 证据来源；逐项“确认应用 / 忽略”后形成匹配清单，可导出 Excel 作为附件6-1 图纸依据底稿。可对比项目A（已确认完成态）与项目B（待确认）两种状态。</div>
+            <div class="step-links">
+              <a class="btn small primary" href="/project/{{ demo_project.id }}/typdesign?as=zaojia">项目C 执行匹配</a>
+              <a class="btn small" href="/project/{{ finished_project.id }}/typdesign?as=zaojia">项目A 完成态</a>
+              <a class="btn small" href="/project/{{ pending_project.id }}/typdesign?as=zaojia">项目B 待确认</a>
+            </div>
+          </div>
+        </div>
+        <div class="demo-step">
+          <div class="step-no">4</div>
+          <div class="step-body">
             <div class="step-title">提交图纸复核 → 切换复核员通过</div>
             <div class="muted small">造价员点击“提交复核”，阶段进入“待复核”；切换右上角演示身份为复核员，在流程总览页填写复核意见并通过，系统自动把“建模”阶段置为进行中。这就是四阶段复核门禁。</div>
             <div class="step-links">
@@ -49,17 +62,17 @@
           </div>
         </div>
         <div class="demo-step">
-          <div class="step-no">4</div>
+          <div class="step-no">5</div>
           <div class="step-body">
             <div class="step-title">建模：校正模型并执行校验</div>
-            <div class="muted small">建模页提供线路 / 设备 / 主材 / 土建 / 拆除可编辑表格与服务端生成的平面示意图；点击“执行模型校验”查看高/中/低问题；高级问题清零后可提交复核。</div>
+            <div class="muted small">建模页提供线路 / 设备 / 主材 / 土建 / 拆除可编辑表格与服务端生成的平面示意图，顶部“典设匹配参考”面板列出已确认的典设模块；点击“执行模型校验”查看高/中/低问题；高级问题清零后可提交复核。</div>
             <div class="step-links">
               <a class="btn small primary" href="/project/{{ demo_project.id }}/model?as=zaojia">打开建模</a>
             </div>
           </div>
         </div>
         <div class="demo-step">
-          <div class="step-no">5</div>
+          <div class="step-no">6</div>
           <div class="step-body">
             <div class="step-title">算量：一键重算工程量 + 材料量对比</div>
             <div class="muted small">复核通过建模后进入算量：点击“重新计算工程量”，按规则生成工程量清单（含计算式与依据），同时生成设计清册与模型量的对比、差异等级与归因。</div>
@@ -69,7 +82,7 @@
           </div>
         </div>
         <div class="demo-step">
-          <div class="step-no">6</div>
+          <div class="step-no">7</div>
           <div class="step-body">
             <div class="step-title">计价：套价、取费、导出预算书</div>
             <div class="muted small">复核通过算量后进入计价：一键按 2022 版费率与示例定额库生成施工图预算，查看费用汇总、定额套用与主材明细，可更换定额子目并导出中文 Excel 预算书。</div>
@@ -79,10 +92,10 @@
           </div>
         </div>
         <div class="demo-step">
-          <div class="step-no">7</div>
+          <div class="step-no">8</div>
           <div class="step-body">
             <div class="step-title">对比分析：材料量差异 + 设计预算对比 + 送审条件</div>
-            <div class="muted small">对比页汇总材料量差异、设计预算（附件5）与模型预算、风险清单与送审条件；项目A已完成计价定稿，可直接查看完成态效果。</div>
+            <div class="muted small">对比页汇总材料量差异、设计预算（附件5）与模型预算、风险清单与送审条件（含 v2“典型设计应用匹配已完成”条件）；项目A已完成计价定稿与典设确认，可直接查看完成态效果。</div>
             <div class="step-links">
               <a class="btn small" href="/project/{{ demo_project.id }}/compare?as=zaojia">项目C对比</a>
               <a class="btn small" href="/project/{{ finished_project.id }}/compare?as=zaojia">项目A对比</a>
@@ -112,12 +125,15 @@
         <div class="kv"><span class="kv-label">{{ name }}</span><span class="kv-value"><span class="badge {{ badge_class(demo_stages.get(key, {}).get('status', '未开始')) }}">{{ demo_stages.get(key, {}).get('status', '未开始') }}</span></span></div>
         {% endfor %}
         <div class="kv"><span class="kv-label">项目A 当前阶段</span><span class="kv-value">{{ finished_project.stage }}</span></div>
+        <div class="kv"><span class="kv-label">项目B 当前阶段</span><span class="kv-value">{{ pending_project.stage }}</span></div>
+        <div class="kv"><span class="kv-label">典设匹配</span><span class="kv-value small">C 已匹配 {{ demo_td.c.matched }} · A 已确认 {{ demo_td.a.confirmed }} · B 待确认 {{ demo_td.b.pending }}</span></div>
       </div>
     </section>
     <section class="card">
       <div class="card-head"><h2>演示说明</h2></div>
       <ul class="notes">
         <li>项目A/B/C 均为匿名示例数据，不代表真实工程。</li>
+        <li>典型设计匹配（v2）为图纸解析阶段的辅助能力，不新增阶段门禁；典设目录为演示节选（40 条，非完整 V3.1 库）。</li>
         <li>示例定额库与材料价为演示数据，费率按 2022 版编制规定演示取值。</li>
         <li>AI 只做识别、提示与差异说明，不签章、不定价，金额由人工复核确认。</li>
         <li>数据仅存本地 SQLite（data/workflow.db），不上传外网。</li>

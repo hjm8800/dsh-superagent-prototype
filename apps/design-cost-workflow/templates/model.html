@@ -37,6 +37,38 @@
 </div>
 {% endif %}
 
+<section class="card td-ref-card">
+  <div class="card-head">
+    <h2>典设匹配参考</h2>
+    <span class="muted small">已确认 {{ td_confirmed|length }} 个典设模块可作为建模初稿参考 · 只读</span>
+  </div>
+  {% if td_confirmed %}
+  <div class="td-ref-list">
+    {% for m in td_confirmed[:6] %}
+    <div class="td-ref-item">
+      <span class="mono small td-ref-code">{{ m.code }}</span>
+      <span class="td-ref-name">{{ m.name }}</span>
+      <span class="muted small">{{ m.unit or '—' }}{% if m.qty %} × {{ m.qty|num }}{% endif %}</span>
+    </div>
+    {% endfor %}
+    {% if td_confirmed|length > 6 %}
+    <div class="td-ref-item muted small">… 另有 {{ td_confirmed|length - 6 }} 个已确认模块</div>
+    {% endif %}
+  </div>
+  <div class="hint">已确认典设模块仅作为人工建模的参考提示，不自动改变建模规则；“由图纸生成模型初稿”仍按图纸识别结果生成。完整清单见<a class="link" href="/project/{{ p.id }}/typdesign{{ keep_as }}">典型设计匹配</a>。</div>
+  {% else %}
+  <div class="empty">
+    暂无已确认的典设模块。
+    {% if td_stats.modules %}
+    请到<a class="link" href="/project/{{ p.id }}/typdesign{{ keep_as }}">典型设计匹配</a>页确认应用模块；
+    {% else %}
+    可先在<a class="link" href="/project/{{ p.id }}/typdesign{{ keep_as }}">典型设计匹配</a>页导入南网 V3.1 典设目录并匹配；
+    {% endif %}
+    “由图纸生成模型初稿”仍按图纸识别结果生成。
+  </div>
+  {% endif %}
+</section>
+
 <section class="card">
   <div class="card-head">
     <h2>模型平面示意图</h2>

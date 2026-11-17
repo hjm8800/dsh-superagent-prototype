@@ -109,6 +109,7 @@ def test_demo_page():
     assert response.status_code == 200
     assert "5 分钟演示路线" in response.text
     assert "图纸解析" in response.text
+    assert "典型设计匹配（v2 新增）" in response.text
     assert "计价" in response.text
 
 
@@ -379,7 +380,10 @@ def test_full_workflow_project_c():
     assert "材料量对比" in compare_page.text
     assert "预算对比" in compare_page.text
     assert "送审条件检查" in compare_page.text
-    assert "已满足送审条件" in compare_page.text
+    # v2：新增“典型设计应用匹配已完成”辅助条件；项目C 演示数据为“仅导入目录未匹配”，
+    # 因此该条件不满足（其余条件仍应满足），与 contract2 §5 一致
+    assert "典型设计应用匹配已完成" in compare_page.text
+    assert "已确认 0/40 个模块" in compare_page.text
     conn.close()
     client.get("/logout")
 
@@ -423,3 +427,179 @@ def test_not_found_project():
     assert response.status_code == 404
     assert "不存在" in response.text
     client.get("/logout")
+
+
+# ---------------------------------------------------------------------------
+# v2：典型设计（典设）匹配
+# ---------------------------------------------------------------------------
+def test_typdesign_page_project_a():
+    login("admin", "admin123")
+    response = client.get("/project/1/typdesign")
+    assert response.status_code == 200
+    assert "典型设计匹配" in response.text
+    assert "CSG-GD" in response.text
+    assert "匹配明细" in response.text
+    assert "已确认" in response.text
+    assert "未匹配" in response.text
+    assert "导出匹配清单" in response.text
+    # 状态筛选
+    response = client.get("/project/1/typdesign?filter=confirmed")
+    assert response.status_code == 200
+    assert "已确认" in response.text
+    client.get("/logout")
+
+
+def test_typdesign_readonly_for_reviewer():
+    login("fuhe", "123456")
+    page = client.get("/project/1/typdesign")
+    assert page.status_code == 200
+    assert "只读" in page.text
+    # 复核员越权：执行匹配 / 确认 / 导入 → 403
+    response = client.post("/project/1/typdesign/match", follow_redirects=False)
+    assert response.status_code == 403
+    response = client.post(
+        "/project/1/typdesign/1/confirm", data={"qty": "1"}, follow_redirects=False
+    )
+    assert response.status_code == 403
+    response = client.post(
+        "/project/1/typdesign/import",
+        files=[("file", ("t.csv", b"x", "text/csv"))],
+        follow_redirects=False,
+    )
+    assert response.status_code == 403
+    client.get("/logout")
+
+
+def test_typdesign_integrations_visible():
+    login("admin", "admin123")
+    # 图纸解析页：典设匹配状态卡
+    drawings = client.get("/project/3/drawings")
+    assert drawings.status_code == 200
+    assert "典型设计（典设）匹配" in drawings.text
+    assert "执行匹配" in drawings.text
+    # 项目工作流页：典设匹配卡片
+    project_page = client.get("/project/1")
+    assert project_page.status_code == 200
+    assert "典型设计匹配" in project_page.text
+    # 建模页：典设参考面板（项目A 已确认 25 个模块）
+    model_page = client.get("/project/1/model")
+    assert model_page.status_code == 200
+    assert "典设匹配参考" in model_page.text
+    assert "CSG-GD" in model_page.text
+    # 对比页：送审条件 + 风险清单（项目B 已匹配 25 条待确认，未匹配不计入 pending）
+    compare_page = client.get("/project/2/compare")
+    assert compare_page.status_code == 200
+    assert "典型设计应用匹配已完成" in compare_page.text
+    assert "典型设计待确认" in compare_page.text
+    assert "待确认 25 个模块" in compare_page.text
+    client.get("/logout")
+
+
+def test_typdesign_import_match_confirm_export():
+    login("zaojia", "123456")
+    # 项目C 种子：目录已导入、尚未匹配
+    page = client.get("/project/3/typdesign")
+    assert page.status_code == 200
+    assert "尚未执行匹配" in page.text
+
+    csv_text = (
+        "序号,卷册,类别,模块编号,模块名称,模块单位\n"
+        "1,第三册 台架变,台架变,CSG-GD-10B-TB-GZ-Z-Ⅰ,Ⅰ型台架安装总图,座\n"
+        "2,第三册 台架变,台架变,CSG-GD-10B-TB-GT-SB,配电箱系统结线图,套\n"
+        "3,第七册 低压线路,低压线路,CSG-GD-0.4K-HD,横担架线,套\n"
+    )
+    response = client.post(
+        "/project/3/typdesign/import",
+        files=[("file", ("演示典设目录节选.csv", csv_text.encode("utf-8"), "text/csv"))],
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    page = client.get("/project/3/typdesign")
+    assert "演示典设目录节选" in page.text
+    assert "3" in page.text  # 目录模块数
+
+    # 执行匹配
+    response = client.post("/project/3/typdesign/match", follow_redirects=False)
+    assert response.status_code == 303
+    page = client.get("/project/3/typdesign")
+    assert "匹配明细" in page.text
+    assert "CSG-GD-0.4K-HD" in page.text
+    assert "已匹配" in page.text
+
+    # 确认一项（写数量与备注）
+    conn = db_conn()
+    row = conn.execute(
+        "SELECT id FROM typdesign_matches WHERE project_id=3 AND status='待确认' ORDER BY id LIMIT 1"
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    match_id = int(row["id"])
+    response = client.post(
+        f"/project/3/typdesign/{match_id}/confirm",
+        data={"qty": "2", "note": "演示确认应用"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    conn = db_conn()
+    confirmed = conn.execute(
+        "SELECT status, qty, note FROM typdesign_matches WHERE id=?", (match_id,)
+    ).fetchone()
+    assert confirmed["status"] == "已确认"
+    assert float(confirmed["qty"]) == 2.0
+    assert "演示确认应用" in confirmed["note"]
+    # 忽略另一项
+    row = conn.execute(
+        "SELECT id FROM typdesign_matches WHERE project_id=3 AND status='待确认' ORDER BY id LIMIT 1"
+    ).fetchone()
+    conn.close()
+    response = client.post(
+        f"/project/3/typdesign/{int(row['id'])}/ignore",
+        data={"note": "演示忽略该模块"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    conn = db_conn()
+    ignored = conn.execute(
+        "SELECT status FROM typdesign_matches WHERE id=?", (int(row["id"]),)
+    ).fetchone()
+    conn.close()
+    assert ignored["status"] == "已忽略"
+
+    # 导出典型设计匹配清单 xlsx
+    export = client.get("/project/3/typdesign/export.xlsx")
+    assert export.status_code == 200
+    assert "spreadsheet" in export.headers["content-type"]
+    assert "filename*=UTF-8" in export.headers["content-disposition"]
+    assert "典型设计匹配清单" in unquote(export.headers["content-disposition"])
+    workbook = load_workbook(BytesIO(export.content))
+    assert "典型设计匹配清单" in workbook.sheetnames
+    sheet = workbook["典型设计匹配清单"]
+    headers = [cell.value for cell in sheet[3]]
+    assert "模块编号" in headers and "状态" in headers and "应用数量" in headers
+    assert sheet.max_row == 3 + 3  # 标题 + 说明 + 表头 + 3 个模块
+
+    # GET 确认路径（非 POST）→ 404；不存在的项目 → 403
+    response = client.get("/project/3/typdesign/999/confirm", follow_redirects=False)
+    assert response.status_code in (403, 404)
+    response = client.get("/project/999/typdesign", follow_redirects=False)
+    assert response.status_code in (403, 404)
+    client.get("/logout")
+
+
+def test_typdesign_pending_blocks_submission_condition():
+    """项目B（待确认 25）对比页的典设送审条件不满足；项目A 已完成匹配不再有风险提示。"""
+    login("admin", "admin123")
+    compare_b = client.get("/project/2/compare")
+    assert compare_b.status_code == 200
+    assert "典型设计应用匹配已完成" in compare_b.text
+    assert "待确认 25 个模块" in compare_b.text
+    assert "典型设计待确认" in compare_b.text
+
+    # 项目A：A 的中/低置信匹配已忽略、pending=0 → 典设送审条件满足、无风险提示
+    compare_a = client.get("/project/1/compare")
+    assert compare_a.status_code == 200
+    assert "典型设计应用匹配已完成" in compare_a.text
+    assert "已确认 25/40 个模块" in compare_a.text
+    assert "典型设计待确认（" not in compare_a.text
+    client.get("/logout")
+

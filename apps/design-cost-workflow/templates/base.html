@@ -11,7 +11,7 @@
   <a class="brand" href="/{{ keep_as }}">设计<span>造价</span>工作台</a>
   <nav class="topnav">
     <a href="/{{ keep_as }}" class="{{ 'active' if active == 'dashboard' else '' }}">工作台</a>
-    <a href="/project/1{{ keep_as }}" class="{{ 'active' if active in ('flow','drawings','model','quantities','pricing','compare') else '' }}">项目工作流</a>
+    <a href="/project/1{{ keep_as }}" class="{{ 'active' if active in ('flow','drawings','model','quantities','pricing','compare','typdesign') else '' }}">项目工作流</a>
     <a href="/demo{{ keep_as }}" class="{{ 'active' if active == 'demo' else '' }}">演示路线</a>
   </nav>
   {% if demo %}
@@ -46,6 +46,9 @@
     <a href="/project/{{ nav_p.id }}/{{ s.key }}{{ keep_as }}" class="{{ 'active' if active == s.key else '' }}">
       <span class="dot {{ badge_class(s.status) }}"></span>{{ s.name }}
     </a>
+    {% if s.key == 'drawings' %}
+    <a href="/project/{{ nav_p.id }}/typdesign{{ keep_as }}" class="nav-aux {{ 'active' if active == 'typdesign' else '' }}">典型设计</a>
+    {% endif %}
     {% endfor %}
     <a href="/project/{{ nav_p.id }}/compare{{ keep_as }}" class="{{ 'active' if active == 'compare' else '' }}">对比分析</a>
   </nav>
