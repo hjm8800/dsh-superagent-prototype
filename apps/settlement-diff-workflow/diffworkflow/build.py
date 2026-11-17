@@ -694,8 +694,11 @@ def analyze(comparison: dict) -> dict:
     if old_equipment is not None and new_equipment is not None:
         equipment_delta = new_equipment - old_equipment
         equipment_ratio = equipment_delta / old_equipment if old_equipment else None
+        fee_scope_label = (
+            "组合件合价合计口径" if fee_analysis.get("format") == "assembly_only" else "表一口径·设备检修费"
+        )
         conclusions.append(
-            f"审核结算（表一口径·设备检修费）：原版 {format_money(old_equipment)} 元 → "
+            f"审核结算（{fee_scope_label}）：原版 {format_money(old_equipment)} 元 → "
             f"新版 {format_money(new_equipment)} 元，变化 {format_delta(equipment_delta)} 元"
             f"（{format_ratio(equipment_ratio)}）。"
         )
@@ -766,8 +769,9 @@ def analyze(comparison: dict) -> dict:
         if fee_analysis.get("fee_delta") is not None:
             direct = fee_analysis.get("direct") or {}
             yigong = fee_analysis.get("yigong_material") or {}
+            cost_scope = "组合件直接费口径" if fee_analysis.get("format") == "assembly_only" else "表一口径"
             conclusions.append(
-                f"施工费差异成因（表一口径）："
+                f"施工费差异成因（{cost_scope}）："
                 f"定额直接费 {format_delta(direct.get('net'))} 元"
                 f"（量差 {format_delta(direct.get('qty_effect'))}、价差 {format_delta(direct.get('price_effect'))}、"
                 f"新增 {format_delta(direct.get('added'))}、删除 {format_delta(-(direct.get('removed') or 0))}）；"

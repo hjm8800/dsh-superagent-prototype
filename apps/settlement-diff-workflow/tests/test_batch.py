@@ -44,6 +44,7 @@ class TestBatch:
         assert summary.exists()
         text = summary.read_text(encoding="utf-8")
         assert "施工费差异总览" in text and "项目A" in text
+        assert (out_dir / "施工费与工程量差异成因-汇总.xlsx").exists()
         assert (out_dir / "batch-summary.json").exists()
 
     def test_dedupe_copy(self, tmp_path):

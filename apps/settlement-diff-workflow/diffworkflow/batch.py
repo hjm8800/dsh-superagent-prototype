@@ -79,20 +79,22 @@ def group_projects(old_dir: str | Path, new_dir: str | Path) -> list[dict]:
     return [merged[key] for key in sorted(merged)]
 
 
-def _write_outputs(comparison: dict, folder: Path, write_docx: bool = True) -> dict:
+def _write_outputs(comparison: dict, folder: Path, write_docx: bool = True,
+                   write_json: bool = True) -> dict:
     folder.mkdir(parents=True, exist_ok=True)
     name = _safe_filename(comparison["project"]["name"])
     paths = {
         "excel": folder / f"{name}-数据对比表.xlsx",
         "markdown": folder / f"{name}-对比分析报告.md",
-        "json": folder / f"{name}-summary.json",
     }
     export_excel.write(comparison, paths["excel"])
     export_report.write_markdown(comparison, paths["markdown"])
     if write_docx:
         paths["docx"] = folder / f"{name}-对比分析报告.docx"
         export_report.write_docx(comparison, paths["docx"])
-    paths["json"].write_text(comparison_to_json(comparison), encoding="utf-8")
+    if write_json:
+        paths["json"] = folder / f"{name}-summary.json"
+        paths["json"].write_text(comparison_to_json(comparison), encoding="utf-8")
     return paths
 
 
@@ -203,6 +205,12 @@ def run_batch(old_dir: str | Path, new_dir: str | Path, out_dir: str | Path,
 
     summary_path = out_dir / "施工费与工程量差异成因-汇总.md"
     summary_path.write_text(_summary_markdown(results), encoding="utf-8")
+    try:
+        from .summary_xlsx import write_summary_xlsx
+
+        write_summary_xlsx(results, out_dir / "施工费与工程量差异成因-汇总.xlsx")
+    except Exception as exc:  # 汇总 Excel 失败不影响逐项目结果
+        print(f"汇总 Excel 生成失败（逐项目结果不受影响）：{exc}")
     summary_json = out_dir / "batch-summary.json"
     summary_json.write_text(json.dumps([
         {
