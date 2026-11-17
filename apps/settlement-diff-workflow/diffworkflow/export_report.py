@@ -94,6 +94,11 @@ def _settlement_section(comparison: dict) -> list[str]:
         lines.append("")
         lines.append(_table(DIFF_HEADERS, _diff_rows(top, limit=12), DIFF_LIMITS))
         lines.append("")
+        lines.append(
+            "注：单项差异按“名称+规格+单位”匹配汇总，名称或规格写法改写可能使单项差异被放大；"
+            "判断金额影响时以分部/类别净额与汇总表为准。"
+        )
+        lines.append("")
     status_counts = settlement.get("summary", {}).get("status_counts") or {}
     lines.append(
         f"本期结算明细共 {settlement.get('summary', {}).get('count', 0)} 项，"
@@ -125,6 +130,11 @@ def _material_section(comparison: dict) -> list[str]:
         lines.append("乙供材料金额影响最大的差异项：")
         lines.append("")
         lines.append(_table(DIFF_HEADERS, _diff_rows(top, limit=12), DIFF_LIMITS))
+        lines.append("")
+        lines.append(
+            "注：材料条目按“名称+规格+单位”匹配，名称/规格改写会造成“删除+新增”或单项差异放大；"
+            "类别净额以材料汇总表合计与甲供/乙供汇总为准。"
+        )
         lines.append("")
     if totals.get("old_ag") is None and totals.get("new_ag") is not None:
         lines.append(

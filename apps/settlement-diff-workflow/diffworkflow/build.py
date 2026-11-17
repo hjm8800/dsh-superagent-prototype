@@ -473,11 +473,19 @@ def analyze(comparison: dict) -> dict:
             f"{format_ratio(delta / parts_summary['amount_old'] if parts_summary['amount_old'] else None)}），"
             f"共 {parts_summary['count']} 项、变化 {parts_summary['changed_count']} 项。"
         )
-    ag_summary = (supplementary.get("甲供清单") or {}).get("summary") or {}
-    if (supplementary.get("甲供清单") or {}).get("old_count") == 0 and (supplementary.get("甲供清单") or {}).get("new_count"):
+    ag_info = supplementary.get("甲供清单") or {}
+    if ag_info.get("old_count") == 0 and ag_info.get("new_count"):
+        ag_all_items = material["new"].get("all_items") or material["new"].get("items") or []
+        ag_parts_count = sum(
+            1 for item in ag_all_items
+            if (item.get("supply") or "") == "甲供" and item.get("item_type") == "配件"
+        )
+        ag_material_count = max(0, ag_info.get("new_count", 0) - ag_parts_count)
+        ag_parts_amount = material_totals.get("new_parts")
         conclusions.append(
-            f"甲供未计价材料：新版 {supplementary['甲供清单']['new_count']} 项"
-            f"（合计 {format_money(material_totals['new_ag'])} 元），原版未提供清单，无法逐项对比。"
+            f"甲供材料：新版甲供未计价材料 {ag_material_count} 项（合计 {format_money(material_totals['new_ag'])} 元）、"
+            f"甲供配件 {ag_parts_count} 项（合计 {format_money(ag_parts_amount)} 元）；"
+            "原版未提供清单，无法逐项对比。"
         )
 
     supply_changed = [diff for diff in material["diffs"] if "供料方式变化" in (diff.get("note") or "")]

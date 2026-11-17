@@ -354,7 +354,9 @@ def _sheet_settlement_summary(ws, comparison: dict):
             row += 1
     row = _write_note(ws, row + 1,
                       "说明：原版表二甲为分部汇总；新版若无表二甲，则由表三甲“项目划分”行聚合。"
-                      "最终口径优先采用“下浮后送审金额”，无则采用设备检修费。")
+                      "最终口径优先采用“下浮后送审金额”，无则采用设备检修费；"
+                      "配件购置费/甲供配件材料费是否计入总费用以“含配件完整口径”行为准。"
+                      "单项差异按名称+规格匹配汇总，名称/规格改写可能放大单项差异，类别净额更可靠。")
     return row
 
 
@@ -460,8 +462,13 @@ def _suggestions(comparison: dict) -> list[str]:
     risks = analysis.get("risks") or []
     high_risks = [risk for risk in risks if risk.get("level") == RISK_HIGH]
     if high_risks:
-        names = "、".join(risk.get("title", "") for risk in high_risks[:6])
-        suggestions.append(f"对高风险差异逐项复核并补充依据（设计变更、现场签证、审核意见）：{names}。")
+        names = []
+        for risk in high_risks:
+            title = (risk.get("title") or "").strip()
+            if title and title not in names:
+                names.append(title)
+        if names:
+            suggestions.append(f"对高风险差异逐项复核并补充依据（设计变更、现场签证、审核意见）：{'、'.join(names[:6])}。")
     suggestions.append("将本次差异结果交结算、物资、工程三方会签，差异金额纳入送审核减/核增说明。")
     findings = analysis.get("findings") or []
     if any("甲供" in finding for finding in findings):
