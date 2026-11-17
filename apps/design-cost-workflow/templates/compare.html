@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block title %}对比分析 · {{ p.name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="crumb">项目工作流 / {{ p.code }} / 对比分析</div>
+    <h1>对比分析 <span class="badge {{ badge_class(p.stage) }}">{{ p.stage }}</span></h1>
+    <p class="sub">设计清册与模型算量的材料量对比、设计预算（附件5）与模型预算对比、模型校验风险与送审条件检查</p>
+  </div>
+  <div class="head-actions">
+    <a class="btn" href="/project/{{ p.id }}/quantities{{ keep_as }}">查看工程量清单</a>
+    <a class="btn" href="/project/{{ p.id }}/pricing{{ keep_as }}">查看计价明细</a>
+  </div>
+</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="kpi-label">设计静态投资</div><div class="kpi-value">{{ design_total|wan }}</div><div class="kpi-sub">万元（附件5）</div></div>
+  <div class="kpi">
+    <div class="kpi-label">模型静态投资</div>
+    {% if model_total %}<div class="kpi-value ok">{{ model_total|wan }}</div>{% else %}<div class="kpi-value muted">未计价</div>{% endif %}
+    <div class="kpi-sub">万元（模型预算）</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">预算差异率</div>
+    {% if static_row %}<div class="kpi-value {{ 'warn' if (static_row.rate|abs) > 3 else 'ok' }}">{{ static_row.rate|pct }}</div>{% else %}<div class="kpi-value muted">—</div>{% endif %}
+    <div class="kpi-sub">模型 vs 设计（静态投资）</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">材料量异常</div>
+    <div class="kpi-value {{ 'danger' if materials|selectattr('level', 'equalto', '异常')|list else 'ok' }}">{{ materials|selectattr('level', 'equalto', '异常')|list|length }}</div>
+    <div class="kpi-sub">项（关注 {{ materials|selectattr('level', 'equalto', '关注')|list|length }} 项）</div>
+  </div>
+</div>
+
+<section class="card">
+  <div class="card-head">
+    <h2>送审条件检查</h2>
+    <span class="muted small">
+      {% if conditions|selectattr('ok')|list|length == conditions|length %}
+      <span class="badge ok">已满足送审条件</span>
+      {% else %}
+      <span class="badge warn">{{ conditions|selectattr('ok')|list|length }}/{{ conditions|length }} 项满足</span>
+      {% endif %}
+    </span>
+  </div>
+  <div class="cond-list">
+    {% for c in conditions %}
+    <div class="cond-row {{ 'ok' if c.ok else 'bad' }}">
+      <span class="cond-icon">{{ '✓' if c.ok else '!' }}</span>
+      <div>
+        <div class="strong">{{ c.name }}</div>
+        <div class="muted small">{{ c.detail }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head">
+      <h2>材料量对比</h2>
+      <span class="muted small">设计清册 vs 模型算量</span>
+    </div>
+    {% if materials %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>材料名称</th>
+            <th style="width:110px">规格</th>
+            <th style="width:50px">单位</th>
+            <th class="num" style="width:72px">设计量</th>
+            <th class="num" style="width:72px">模型量</th>
+            <th class="num" style="width:68px">差异</th>
+            <th class="num" style="width:64px">差异率</th>
+            <th style="width:64px">等级</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for m in materials %}
+          <tr>
+            <td>{{ m.name }}</td>
+            <td class="muted small">{{ m.spec or '—' }}</td>
+            <td>{{ m.unit or '—' }}</td>
+            <td class="num">{{ m.design_qty|num }}</td>
+            <td class="num">{{ m.model_qty|num }}</td>
+            <td class="num {{ 'neg' if (m.diff|float) < 0 else 'pos' }}">{{ m.diff|num }}</td>
+            <td class="num">{{ m.rate|pct }}</td>
+            <td><span class="badge {{ badge_class(m.level) }}">{{ m.level }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty">暂无材料量对比数据，请先完成算量。</div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>预算对比</h2>
+      <span class="muted small">单位：万元</span>
+    </div>
+    {% if compare_rows %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>费用构成</th>
+            <th class="num">设计</th>
+            <th class="num">模型</th>
+            <th class="num">差异</th>
+            <th class="num">差异率</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in compare_rows %}
+          <tr>
+            <td>{{ row.item }}</td>
+            <td class="num">{{ row.design_amount|wan }}</td>
+            <td class="num">{{ row.model_amount|wan }}</td>
+            <td class="num {{ 'neg' if (row.diff|float) < 0 else 'pos' }}">{{ row.diff|wan }}</td>
+            <td class="num"><span class="badge {{ 'danger' if (row.rate|abs) >= 3 else 'ok' }}">{{ row.rate|pct }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty">尚未完成计价，暂无预算对比。</div>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head">
+    <h2>风险清单</h2>
+    <span class="muted small">模型校验问题 + 材料量异常项</span>
+  </div>
+  <div class="grid-2 inner-grid">
+    <div>
+      <div class="sub-title">模型校验问题（高 {{ check_counts['高'] }} / 中 {{ check_counts['中'] }} / 低 {{ check_counts['低'] }}）</div>
+      {% if checks %}
+      <div class="check-list compact">
+        {% for c in checks %}
+        <div class="check-item">
+          <span class="badge {{ badge_class(c.level) }}">{{ c.level }}</span>
+          <div>
+            <div class="strong">{{ c.name }}</div>
+            <div class="muted small">{{ c.problem }}</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty ok-empty">模型校验通过，无问题项。</div>
+      {% endif %}
+    </div>
+    <div>
+      <div class="sub-title">材料量差异明细</div>
+      {% if materials %}
+      <div class="check-list compact">
+        {% for m in materials if m.level in ('异常', '关注') %}
+        <div class="check-item">
+          <span class="badge {{ badge_class(m.level) }}">{{ m.level }}</span>
+          <div>
+            <div class="strong">{{ m.name }}：设计 {{ m.design_qty|num }} / 模型 {{ m.model_qty|num }} {{ m.unit or '' }}</div>
+            <div class="muted small">{{ m.reason or '差异待核实' }}</div>
+          </div>
+        </div>
+        {% else %}
+        <div class="empty ok-empty">无异常或关注项。</div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty">暂无材料量对比数据。</div>
+      {% endif %}
+    </div>
+  </div>
+  {% if td_stats and td_stats.pending %}
+  <div class="hint warn" style="margin-top:14px">
+    典型设计待确认（{{ td_stats.pending }} 项）：请到<a class="link" href="/project/{{ p.id }}/typdesign{{ keep_as }}">典型设计匹配</a>页逐项确认应用或忽略；未确认前“典型设计应用匹配已完成”送审条件不满足。
+  </div>
+  {% elif td_stats and td_stats.modules == 0 %}
+  <div class="hint" style="margin-top:14px">
+    尚未导入典设目录：可在<a class="link" href="/project/{{ p.id }}/typdesign{{ keep_as }}">典型设计匹配</a>页导入南网 V3.1 典设目录并执行匹配。
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

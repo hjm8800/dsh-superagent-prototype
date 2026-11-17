@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 · 设计图纸→建模→算量→计价 工作流</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-body">
+<div class="login-wrap">
+  <div class="login-card">
+    <div class="login-brand">设计<span>造价</span>工作台</div>
+    <div class="login-sub">设计图纸 → 建模 → 算量 → 计价 四阶段工作流原型</div>
+    {% if msg %}<div class="flash {{ 'error' if msg_level == 'error' else '' }}">{{ msg }}</div>{% endif %}
+    {% if user %}
+    <div class="login-signed">当前已登录：<strong>{{ user.name }}</strong>（{{ role_names.get(user.role, user.role) }}）</div>
+    {% endif %}
+    <form method="post" action="/login" class="login-form">
+      <label class="field">
+        <span>用户名</span>
+        <input type="text" name="username" value="" autocomplete="username" placeholder="请输入用户名" required autofocus>
+      </label>
+      <label class="field">
+        <span>密码</span>
+        <input type="password" name="password" value="" autocomplete="current-password" placeholder="请输入密码" required>
+      </label>
+      <button class="btn primary login-btn" type="submit">登 录</button>
+    </form>
+    <div class="start-note">登录后：工作台 → <strong>新建项目</strong>（或选择演示项目）→ 从图纸解析开始工作流</div>
+    <div class="demo-accounts">
+      <div class="demo-title">演示账号（数据已匿名化）</div>
+      <div class="demo-row"><code>admin / admin123</code><span>系统管理员（全部权限）</span></div>
+      <div class="demo-row"><code>zaojia / 123456</code><span>造价员（编辑、提交复核）</span></div>
+      <div class="demo-row"><code>fuhe / 123456</code><span>复核员（复核、退回）</span></div>
+    </div>
+    {% if user %}<div class="login-note"><a href="/">直接进入工作台 →</a></div>{% endif %}
+    <div class="login-note">本原型仅用于内部演示；定额库与材料价为示例数据，不构成造价成果。</div>
+  </div>
+  <div class="login-side">
+    <div class="login-side-title">一条链路，四个阶段</div>
+    <ol class="login-steps">
+      <li><strong>图纸解析</strong><span>施工图 / 说明书 / 材料清册导入，自动识别路径、杆塔、配变与材料线索</span></li>
+      <li><strong>建模</strong><span>由图纸识别结果生成配网模型初稿（线路 / 杆塔 / 导线 / 设备 / 土建 / 拆除），人工校正</span></li>
+      <li><strong>算量</strong><span>按规则从模型计算工程量（含计算式与依据），与设计材料清册对比、量差归因</span></li>
+      <li><strong>计价</strong><span>按 2022 版编制规定费率套用示例定额库，与设计预算（附件5）对比并导出 Excel</span></li>
+    </ol>
+    <div class="login-side-foot">演示项目：项目A（计价定稿）· 项目B（算量复核）· 项目C（图纸解析）</div>
+  </div>
+</div>
+</body>
+</html>

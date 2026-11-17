@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ status_code }} · 设计造价工作流</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="error-body">
+<div class="error-wrap">
+  <div class="error-card">
+    <div class="error-brand">设计<span>造价</span>工作台</div>
+    <div class="error-code">{{ status_code }}</div>
+    <div class="error-title">
+      {% if status_code == 403 %}没有访问权限
+      {% elif status_code == 404 %}页面或数据不存在
+      {% elif status_code == 401 %}请先登录
+      {% else %}操作未完成
+      {% endif %}
+    </div>
+    <div class="error-detail">{{ detail }}</div>
+    <div class="error-actions">
+      <a class="btn primary" href="/">返回工作台</a>
+      <a class="btn" href="/login">重新登录</a>
+    </div>
+    {% if demo %}<div class="login-note">演示提示：可在页面右上角“演示身份”切换造价员 / 复核员 / 管理员后再试。</div>{% endif %}
+  </div>
+</div>
+</body>
+</html>

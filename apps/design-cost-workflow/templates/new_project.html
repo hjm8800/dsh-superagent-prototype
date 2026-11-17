@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}新建项目 · 设计造价工作流{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="crumb">工作台 / 新建项目</div>
+    <h1>新建项目 <span class="badge info">从图纸解析开始</span></h1>
+    <p class="sub">创建一个新的配电网工程，系统自动初始化“图纸解析 → 建模 → 算量 → 计价”四阶段工作流；创建后即可上传施工图/说明书开始第一阶段的识别工作。</p>
+  </div>
+  <div class="head-actions">
+    <a class="btn" href="/{{ keep_as }}">返回工作台</a>
+  </div>
+</div>
+
+{% if error %}<div class="flash error">{{ error }}</div>{% endif %}
+
+<div class="grid-2 wide-left">
+  <section class="card">
+    <div class="card-head">
+      <h2>项目信息</h2>
+      <span class="muted small">* 为必填项 · 项目编码自动生成 PRJ-YYYYMMDD-NN</span>
+    </div>
+    {% if can_edit %}
+    <form method="post" action="/project/new{{ keep_as }}" class="new-project-form">
+      <label class="field">
+        <span>项目名称 *（≤60 字）</span>
+        <input type="text" name="name" value="{{ form.name or '' }}" maxlength="60"
+               placeholder="如：某业扩配套工程 / 某台区改造工程" required autofocus>
+      </label>
+      <label class="field">
+        <span>工程类型</span>
+        <select name="ptype">
+          {% for item in project_types %}
+          <option value="{{ item }}" {{ 'selected' if form.ptype == item else '' }}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>项目地点（≤40 字，默认“某供电所”）</span>
+        <input type="text" name="location" value="{{ form.location or '' }}" maxlength="40" placeholder="如：某供电所">
+      </label>
+      <label class="field">
+        <span>备注（≤200 字，选填）</span>
+        <textarea name="note" rows="3" maxlength="200" placeholder="如：10kV 及以下配网工程，含拆除">{{ form.note or '' }}</textarea>
+      </label>
+      <div class="form-actions">
+        <button class="btn primary" type="submit">创建项目，开始图纸解析</button>
+        <a class="btn" href="/{{ keep_as }}">取消</a>
+      </div>
+    </form>
+    {% else %}
+    <div class="empty">
+      当前角色为复核员，仅管理员 / 造价员可创建项目。可返回工作台查看现有项目，或切换到造价员演示身份后再创建。
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>创建后会发生什么</h2></div>
+    <ol class="rule-list">
+      <li><strong>自动编号</strong>：生成 <code>PRJ-YYYYMMDD-NN</code> 项目编码，工程类型 / 地点 / 备注按填写内容保存。</li>
+      <li><strong>自动初始化四阶段</strong>：“图纸解析”为进行中，建模 / 算量 / 计价为未开始，并按阶段门禁推进。</li>
+      <li><strong>跳转到图纸解析页</strong>：可直接上传施工图、设计说明书或材料清册，识别后提交复核。</li>
+      <li><strong>可见性</strong>：演示环境下所有账号（管理员 / 造价员 / 复核员）均可查看该项目。</li>
+      <li><strong>审计留痕</strong>：创建动作写入审计日志，可在项目页“审计动态”查看。</li>
+    </ol>
+    <div class="hint">
+      当前 MVP 未实现项目删除 / 用户管理；新项目没有典设目录、图纸和模型，需按四阶段逐步操作。若只想快速看流程，可改用
+      <a class="link" href="/demo{{ keep_as }}">5 分钟演示路线</a>。
+    </div>
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}工作台 · 设计造价工作流{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="crumb">工作台</div>
+    <h1>设计图纸 → 建模 → 算量 → 计价</h1>
+    <p class="sub">配电网工程施工企业造价工作流：图纸结构化 → 配网建模 → 规则算量 → 2022 版计价与预算对比</p>
+  </div>
+  <div class="head-actions">
+    <a class="btn" href="/project/new{{ keep_as }}">＋ 新建项目</a>
+    <a class="btn" href="/demo{{ keep_as }}">5 分钟演示路线</a>
+    <a class="btn" href="/project/1{{ keep_as }}">查看完成态项目A</a>
+  </div>
+</div>
+
+<div class="kpis">
+  {% for k in kpis %}
+  <div class="kpi">
+    <div class="kpi-label">{{ k.label }}</div>
+    <div class="kpi-value {{ k.cls }}">{{ k.value }}</div>
+    <div class="kpi-sub">{{ k.sub }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+<section class="card start-guide">
+  <div class="start-guide-main">
+    <div class="start-kicker">从这里开始</div>
+    <h2>开始工作流（三步走）</h2>
+    <p class="muted small">新建项目后系统自动初始化四阶段：图纸解析 → 建模 → 算量 → 计价，逐阶段提交 / 复核即可完成一个配网工程的造价工作。</p>
+  </div>
+  <div class="start-steps">
+    <div class="start-step">
+      <span class="start-num">1</span>
+      <div><strong>新建项目</strong><div class="muted small">或从下方演示项目继续</div></div>
+    </div>
+    <div class="start-step">
+      <span class="start-num">2</span>
+      <div><strong>图纸解析 → 建模 → 算量 → 计价</strong><div class="muted small">逐阶段提交复核，复核通过后自动流转</div></div>
+    </div>
+    <div class="start-step">
+      <span class="start-num">3</span>
+      <div><strong>对比分析、导出预算书与匹配清单</strong><div class="muted small">设计预算 vs 模型预算、材料量差异、典设匹配清单</div></div>
+    </div>
+  </div>
+  <div class="start-actions">
+    <a class="btn primary btn-big" href="/project/new{{ keep_as }}">＋ 新建项目，从图纸解析开始</a>
+    <a class="btn" href="/demo{{ keep_as }}">5 分钟演示路线</a>
+    <span class="muted small">{{ '当前角色可创建项目；也可从下方演示项目继续' if can_edit else '复核员可查看项目；创建项目需切换造价员 / 管理员' }}</span>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h2>项目列表</h2>
+    <span class="muted small">共 {{ cards|length }} 个演示项目 · 也可点击卡片继续现有项目</span>
+  </div>
+  <div class="project-grid">
+    {% for c in cards %}
+    <a class="project-card" href="/project/{{ c.p.id }}{{ keep_as }}">
+      <div class="pc-top">
+        <span class="pcode">{{ c.p.code }}</span>
+        <span class="badge {{ badge_class(c.p.stage) }}">{{ c.p.stage }}</span>
+      </div>
+      <div class="pc-name">{{ c.p.name }}</div>
+      <div class="pc-meta">{{ c.p.ptype }} · {{ c.p.location }}</div>
+      <div class="pc-progress">
+        <div class="bar"><div style="width: {{ c.progress.percent }}%"></div></div>
+        <div class="pc-progress-label">
+          <span>四阶段进度 {{ c.progress.done }}/{{ c.progress.total }}</span>
+          <span>{{ c.progress.percent }}%</span>
+        </div>
+      </div>
+      <div class="pc-stages">
+        {% for s in c.stages %}
+        <span class="stage-pill"><span class="dot {{ badge_class(s.status) }}"></span>{{ s.name }}</span>
+        {% endfor %}
+      </div>
+      <div class="pc-money">
+        <div>
+          <span class="muted small">设计预算</span>
+          <div class="money">{{ c.design_total|wan }}<small> 万元</small></div>
+        </div>
+        <div>
+          <span class="muted small">模型预算</span>
+          {% if c.priced %}
+          <div class="money">{{ c.model_total|wan }}<small> 万元</small></div>
+          {% else %}
+          <div class="money muted">未计价</div>
+          {% endif %}
+        </div>
+        <div class="pc-diff">
+          {% if c.priced %}
+          <span class="badge {{ 'warn' if (c.diff_rate|abs) > 3 else 'ok' }}">差异 {{ c.diff_rate|pct }}</span>
+          {% else %}
+          <span class="badge muted">待计价</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="pc-foot">
+        <span class="muted small">{{ c.stats.lines }} 条线路 · {{ c.stats.poles }} 基杆塔</span>
+        <span class="link">打开工作流 →</span>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head">
+      <h2>待办事项</h2>
+      <span class="muted small">{{ todos|length }} 项</span>
+    </div>
+    {% if todos %}
+    <div class="todo-list">
+      {% for t in todos %}
+      <div class="todo-row">
+        <div class="todo-main">
+          <div class="todo-title">
+            <span class="badge {{ 'warn' if t.kind == 'review' else 'info' }}">{{ '待复核' if t.kind == 'review' else '进行中' }}</span>
+            {{ t.title }}
+          </div>
+          <div class="muted small">{{ t.desc }}</div>
+        </div>
+        <a class="btn small" href="/project/{{ t.pid }}{{ keep_as }}">{{ t.action }}</a>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty">暂无待办，所有阶段均已处理完毕。</div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>风险提醒</h2>
+      <span class="muted small">{{ risks|length }} 项</span>
+    </div>
+    {% if risks %}
+    <div class="risk-list">
+      {% for r in risks %}
+      <a class="risk-row" href="/project/{{ r.pid }}/compare{{ keep_as }}">
+        <span class="badge {{ badge_class(r.level) }}">{{ r.level }}</span>
+        <div class="risk-main">
+          <div class="strong">{{ r.title }}</div>
+          <div class="muted small">{{ r.project }} · {{ r.reason }}</div>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty">暂无风险提醒。</div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
