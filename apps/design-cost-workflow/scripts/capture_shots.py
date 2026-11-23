@@ -82,6 +82,12 @@ V3_SHOTS = [
     ("v3-05-demo-start-hint.png", "/demo?as=admin", 2000, None),
 ]
 
+V4_SHOTS = [
+    ("v4-01-new-project-form-code.png", "/project/new?as=admin", 1500, None),
+    ("v4-02-new-project-created-with-code.png", None, 1800, "create_project_with_code"),
+    ("v4-03-drawings-upload-delete.png", "/project/3/drawings?as=admin", 2200, None),
+]
+
 
 def wait_file(path: Path, timeout: float = 30.0) -> bool:
     deadline = time.time() + timeout
@@ -216,6 +222,21 @@ def run_prep(action, base_url: str):
         project_id = match.group(1)
         print(f"      [演示动作] 已创建项目 #{project_id}，跳转图纸解析页")
         return f"/project/{project_id}/drawings?as=admin"
+    if action == "create_project_with_code":
+        code = f"DEMO-CODE-{datetime.now().strftime('%H%M%S')}"
+        name = f"演示编码项目-{datetime.now().strftime('%H%M%S')}"
+        print(f"      [演示动作] 新建项目「{name}」（编码 {code}）…")
+        with httpx.Client(base_url=base, follow_redirects=True, timeout=25) as client:
+            response = client.post("/project/new?as=zaojia", data={
+                "name": name, "code": code, "ptype": "业扩配套",
+                "location": "某供电所", "note": "v4 证据截图演示项目（脚本自动创建）",
+            })
+        match = re.search(r"/project/(\d+)/drawings", str(response.url))
+        if response.status_code != 200 or not match:
+            raise RuntimeError(f"新建项目失败：HTTP {response.status_code}，URL {response.url}")
+        project_id = match.group(1)
+        print(f"      [演示动作] 已创建项目 #{project_id}（编码 {code}）")
+        return f"/project/{project_id}?as=admin"
     raise RuntimeError(f"未知的演示动作：{action}")
 
 
@@ -225,7 +246,7 @@ def main(argv=None) -> int:
     parser.add_argument("--out-dir", type=Path, default=OUT_DIR, help="PNG 输出目录")
     parser.add_argument(
         "--only", default="",
-        help='只抓指定截图："v3"=v3-01…v3-05，"v2"=v2-01…v2-06，'
+        help='只抓指定截图："v4"=v4-01…v4-03，"v3"=v3-01…v3-05，"v2"=v2-01…v2-06，'
              '"01,02"=第一轮，"v3-04,v2-05"=指定项')
     args = parser.parse_args(argv)
     if not Path(EDGE).exists():
@@ -257,15 +278,16 @@ def main(argv=None) -> int:
     shots = [("after", n, p, h, None) for n, p, h in SHOTS if after_selected(n)]
     shots += [("v2", n, p, h, a) for n, p, h, a in V2_SHOTS if series_selected("v2", n)]
     shots += [("v3", n, p, h, a) for n, p, h, a in V3_SHOTS if series_selected("v3", n)]
+    shots += [("v4", n, p, h, a) for n, p, h, a in V4_SHOTS if series_selected("v4", n)]
     if not shots:
         print(f"[错误] --only={args.only} 未匹配任何截图")
         return 2
-    counts = {kind: sum(1 for k, *_ in shots if k == kind) for kind in ("after", "v2", "v3")}
+    counts = {kind: sum(1 for k, *_ in shots if k == kind) for kind in ("after", "v2", "v3", "v4")}
 
     print("=" * 78)
     print(f"After 截图抓取 · {args.base_url}")
     print(f"输出目录：{out_dir}")
-    print(f"截图数量：{len(shots)}（after {counts['after']} / v2 {counts['v2']} / v3 {counts['v3']}）")
+    print(f"截图数量：{len(shots)}（after {counts['after']} / v2 {counts['v2']} / v3 {counts['v3']} / v4 {counts['v4']}）")
     failures = []
     for i, (kind, name, path, height, action) in enumerate(shots, 1):
         tag = f"[{i}/{len(shots)}]"

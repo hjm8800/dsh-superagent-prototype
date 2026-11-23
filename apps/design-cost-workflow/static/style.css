@@ -1264,3 +1264,9 @@ select.cell-input { padding-right: 4px; }
   .start-actions .btn-big { width: 100%; }
 }
 
+/* ========================================================================== */
+/* v4：上传分批累计 + 图纸删除                                                 */
+/* ========================================================================== */
+.upload-actions { display: flex; align-items: center; gap: 10px; margin: 2px 0 10px; min-height: 26px; }
+.upload-actions .muted { font-size: 12px; color: var(--muted); }
+

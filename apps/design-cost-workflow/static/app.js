@@ -13,17 +13,36 @@
     }
   });
 
-  // 2) 上传文件数量 / 大小提示
+  // 2) 上传文件：累计选择（分批选不同文件夹的文件会累加）+ 数量/大小提示 + 清空
   var fileInput = document.querySelector("[data-file-input]");
   var fileHint = document.querySelector("[data-file-hint]");
+  var fileClear = document.querySelector("[data-file-clear]");
+  var fileCount = document.querySelector("[data-file-count]");
   if (fileInput && fileHint) {
     if (!fileHint.dataset.original) {
       fileHint.dataset.original = fileHint.innerHTML;
     }
-    fileInput.addEventListener("change", function () {
+    var picked = null;
+    try {
+      picked = new DataTransfer();
+    } catch (err) {
+      picked = null; // 浏览器不支持 DataTransfer 时退化为默认行为
+    }
+
+    var fileKey = function (file) {
+      return (file.name || "") + "|" + (file.size || 0) + "|" + (file.lastModified || 0);
+    };
+
+    var refresh = function () {
       var files = fileInput.files || [];
+      if (fileClear) {
+        fileClear.hidden = files.length === 0;
+      }
       if (!files.length) {
         fileHint.innerHTML = fileHint.dataset.original;
+        if (fileCount) {
+          fileCount.textContent = "";
+        }
         return;
       }
       var total = 0;
@@ -33,9 +52,49 @@
       var sizeText = total > 1024 * 1024
         ? (total / 1024 / 1024).toFixed(2) + " MB"
         : Math.max(total / 1024, 0.1).toFixed(1) + " KB";
-      fileHint.innerHTML = "<strong>已选择 " + files.length + " 个文件，共 " + sizeText + "</strong><br>" +
-        fileHint.dataset.original;
+      fileHint.innerHTML = "<strong>已选择 " + files.length + " 个文件，共 " + sizeText +
+        "（可继续选择其它文件夹的文件，会累计添加）</strong><br>" + fileHint.dataset.original;
+      if (fileCount) {
+        fileCount.textContent = "已选 " + files.length + " 个文件";
+      }
+    };
+
+    fileInput.addEventListener("change", function () {
+      if (!picked) {
+        refresh();
+        return;
+      }
+      var existing = {};
+      for (var i = 0; i < picked.files.length; i += 1) {
+        existing[fileKey(picked.files[i])] = true;
+      }
+      var added = 0;
+      var incoming = fileInput.files || [];
+      for (var j = 0; j < incoming.length; j += 1) {
+        var file = incoming[j];
+        var key = fileKey(file);
+        if (!existing[key]) {
+          picked.items.add(file);
+          existing[key] = true;
+          added += 1;
+        }
+      }
+      try {
+        fileInput.files = picked.files; // 把累计结果写回 input，表单提交时包含全部文件
+      } catch (err) {
+        // 个别浏览器不允许赋值时保持默认（本次选择）行为
+      }
+      refresh();
     });
+
+    if (fileClear) {
+      fileClear.addEventListener("click", function () {
+        picked = new DataTransfer();
+        fileInput.value = "";
+        refresh();
+      });
+    }
+    refresh();
   }
 
   // 3) 防止重复提交（不改变按钮的 formaction 行为）

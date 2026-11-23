@@ -680,6 +680,9 @@ PROJECT_TYPES = ["台区改造", "业扩配套", "技改修理", "其他"]
 NEW_NAME_MAX = 60
 NEW_LOCATION_MAX = 40
 NEW_NOTE_MAX = 200
+NEW_CODE_MIN = 3
+NEW_CODE_MAX = 40
+NEW_CODE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def next_project_code(conn: sqlite3.Connection) -> str:
@@ -701,7 +704,7 @@ def new_project_context(user, form: dict | None = None, error: str = "") -> dict
     return {
         "active": "new_project",
         "project_types": PROJECT_TYPES,
-        "form": form or {"name": "", "ptype": PROJECT_TYPES[0], "location": "某供电所", "note": ""},
+        "form": form or {"name": "", "code": "", "ptype": PROJECT_TYPES[0], "location": "某供电所", "note": ""},
         "error": error,
     }
 
@@ -721,18 +724,25 @@ async def new_project_submit(request: Request, conn: sqlite3.Connection = Depend
 
     form = await request.form()
     name = str(form.get("name") or "").strip()
+    code = str(form.get("code") or "").strip()
     ptype = str(form.get("ptype") or PROJECT_TYPES[0]).strip()
     location = str(form.get("location") or "").strip() or "某供电所"
     note = str(form.get("note") or "").strip()
     if ptype not in PROJECT_TYPES:
         ptype = PROJECT_TYPES[0]
-    values = {"name": name, "ptype": ptype, "location": location, "note": note}
+    values = {"name": name, "code": code, "ptype": ptype, "location": location, "note": note}
 
     error = ""
     if not name:
         error = "项目名称不能为空"
     elif len(name) > NEW_NAME_MAX:
         error = f"项目名称不能超过 {NEW_NAME_MAX} 字"
+    elif code and not (NEW_CODE_MIN <= len(code) <= NEW_CODE_MAX):
+        error = f"项目编码长度需在 {NEW_CODE_MIN}–{NEW_CODE_MAX} 位之间（留空则自动生成）"
+    elif code and not NEW_CODE_RE.match(code):
+        error = "项目编码只能包含字母、数字、短横线（-）、下划线（_）和点（.）"
+    elif code and conn.execute("SELECT 1 FROM projects WHERE code=?", (code,)).fetchone():
+        error = "项目编码已存在，请更换"
     elif len(location) > NEW_LOCATION_MAX:
         error = f"项目地点不能超过 {NEW_LOCATION_MAX} 字"
     elif len(note) > NEW_NOTE_MAX:
@@ -740,7 +750,8 @@ async def new_project_submit(request: Request, conn: sqlite3.Connection = Depend
     if error:
         return page(request, "new_project.html", user, **new_project_context(user, values, error))
 
-    code = next_project_code(conn)
+    if not code:
+        code = next_project_code(conn)
     try:
         cursor = conn.execute(
             "INSERT INTO projects (code, name, ptype, stage, location, t0, design_equipment, "
@@ -929,6 +940,40 @@ async def drawings_upload(pid: int, request: Request, conn: sqlite3.Connection =
     if skipped:
         msg += f"，跳过 {skipped} 个不支持或空文件"
     return redirect_msg(request, f"/project/{pid}/drawings", msg)
+
+
+@app.post("/project/{pid}/drawings/{did}/delete")
+async def drawings_delete(
+    pid: int, did: int, request: Request, conn: sqlite3.Connection = Depends(get_db)
+):
+    """删除已上传图纸（仅图纸解析阶段进行中、且为造价员/管理员）。同时删除本地文件并写审计。"""
+    user = require_user(request, conn)
+    get_project(conn, pid, user)
+    require_role(user, CAN_EDIT_ROLES, "删除图纸")
+    require_stage_editable(conn, pid, "drawings", "删除图纸：")
+
+    row = conn.execute(
+        "SELECT * FROM drawings WHERE id=? AND project_id=?", (did, pid)
+    ).fetchone()
+    if not row:
+        return redirect_msg(request, f"/project/{pid}/drawings", "图纸不存在或已删除", "error")
+
+    file_path = str(row["file_path"] or "").strip()
+    if file_path:
+        try:
+            target = (DATA_DIR / file_path).resolve()
+            upload_root = UPLOAD_DIR.resolve()
+            if target.is_file() and (target == upload_root or upload_root in target.parents):
+                target.unlink()
+        except (OSError, ValueError):
+            pass  # 文件删除失败不阻塞记录删除（可在 data/uploads 手工清理）
+
+    conn.execute("DELETE FROM drawings WHERE id=? AND project_id=?", (did, pid))
+    conn.commit()
+    audit(conn, pid, user, "删除图纸", f"删除 {row['name'] or row['code']}")
+    return redirect_msg(
+        request, f"/project/{pid}/drawings", f"已删除图纸：{row['name'] or row['code']}"
+    )
 
 
 @app.post("/project/{pid}/drawings/autofill")

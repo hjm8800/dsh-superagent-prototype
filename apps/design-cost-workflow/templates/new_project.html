@@ -18,7 +18,7 @@
   <section class="card">
     <div class="card-head">
       <h2>项目信息</h2>
-      <span class="muted small">* 为必填项 · 项目编码自动生成 PRJ-YYYYMMDD-NN</span>
+      <span class="muted small">* 为必填项 · 项目编码选填（留空自动生成 PRJ-YYYYMMDD-NN）</span>
     </div>
     {% if can_edit %}
     <form method="post" action="/project/new{{ keep_as }}" class="new-project-form">
@@ -26,6 +26,12 @@
         <span>项目名称 *（≤60 字）</span>
         <input type="text" name="name" value="{{ form.name or '' }}" maxlength="60"
                placeholder="如：某业扩配套工程 / 某台区改造工程" required autofocus>
+      </label>
+      <label class="field">
+        <span>项目编码（选填，投资计划 / 合同编码）</span>
+        <input type="text" name="code" value="{{ form.code or '' }}" maxlength="40"
+               placeholder="如 031853DP23000123；留空自动生成 PRJ 编码">
+        <span class="hint">编码用于后续“识图→结算”统一项目标识，全库唯一（3–40 位字母/数字/-/_/.）；留空则由系统自动生成 PRJ-YYYYMMDD-NN。</span>
       </label>
       <label class="field">
         <span>工程类型</span>
@@ -58,7 +64,7 @@
   <section class="card">
     <div class="card-head"><h2>创建后会发生什么</h2></div>
     <ol class="rule-list">
-      <li><strong>自动编号</strong>：生成 <code>PRJ-YYYYMMDD-NN</code> 项目编码，工程类型 / 地点 / 备注按填写内容保存。</li>
+      <li><strong>项目编码</strong>：填写投资计划 / 合同编码（全库唯一）；留空则自动生成 <code>PRJ-YYYYMMDD-NN</code>。</li>
       <li><strong>自动初始化四阶段</strong>：“图纸解析”为进行中，建模 / 算量 / 计价为未开始，并按阶段门禁推进。</li>
       <li><strong>跳转到图纸解析页</strong>：可直接上传施工图、设计说明书或材料清册，识别后提交复核。</li>
       <li><strong>可见性</strong>：演示环境下所有账号（管理员 / 造价员 / 复核员）均可查看该项目。</li>

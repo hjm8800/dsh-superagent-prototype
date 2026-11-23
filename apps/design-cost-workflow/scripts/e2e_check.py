@@ -422,6 +422,114 @@ def main(argv=None) -> int:
                   "页面含“开始工作流/新建项目”")
         except Exception as exc:  # noqa: BLE001 - v3 未就绪时给出 FAIL 而不是中断
             check("新建项目（v3）E2E 执行", False, f"异常：{exc}")
+
+        # ---------- 9. 项目编码录入 + 上传分批/删除（第四轮 v4，contract4 §5） ----------
+        try:
+            from openpyxl import Workbook  # 本地生成一个小清册用于上传/删除校验
+
+            response = zaojia.get("/project/new")
+            check("新建项目表单含“项目编码”输入",
+                  response.status_code == 200 and "项目编码" in response.text and 'name="code"' in response.text,
+                  f"HTTP {response.status_code}")
+
+            code_value = f"E2E-CODE-{datetime.now().strftime('%H%M%S')}"
+            response = post(zaojia, "/project/new", {
+                "name": f"E2E编码项目-{datetime.now().strftime('%H%M%S')}",
+                "code": code_value, "ptype": "业扩配套", "location": "某供电所", "note": "v4 编码校验",
+            })
+            final_url = str(response.url)
+            m2 = re.search(r"/project/(\d+)/drawings", final_url)
+            code_pid = int(m2.group(1)) if m2 else 0
+            check("录入项目编码创建成功并跳转图纸解析页",
+                  response.status_code == 200 and bool(m2),
+                  f"HTTP {response.status_code}，最终 URL {final_url}")
+            if code_pid:
+                project = db_query("SELECT code, stage FROM projects WHERE id=?", (code_pid,))
+                check("项目编码按录入值保存（唯一）",
+                      bool(project) and project[0]["code"] == code_value
+                      and project[0]["stage"] == "图纸解析",
+                      f"code={project[0]['code'] if project else '—'}")
+
+            after_count = db_query("SELECT COUNT(*) AS n FROM projects")[0]["n"]
+            response = post(zaojia, "/project/new", {
+                "name": "E2E重复编码-不应创建", "code": code_value,
+                "ptype": "台区改造", "location": "某供电所", "note": "",
+            })
+            final_count = db_query("SELECT COUNT(*) AS n FROM projects")[0]["n"]
+            check("重复项目编码被拒绝且不写库",
+                  response.status_code == 200 and "项目编码已存在" in response.text
+                  and final_count == after_count,
+                  f"HTTP {response.status_code}，项目数 {after_count}→{final_count}")
+
+            response = post(zaojia, "/project/new", {
+                "name": "E2E非法编码-不应创建", "code": "中文编码",
+                "ptype": "台区改造", "location": "某供电所", "note": "",
+            })
+            check("非法项目编码被拒绝",
+                  response.status_code == 200 and "项目编码只能包含" in response.text,
+                  f"HTTP {response.status_code}")
+
+            response = post(zaojia, "/project/new", {
+                "name": f"E2E自动编码-{datetime.now().strftime('%H%M%S')}", "code": "",
+                "ptype": "台区改造", "location": "某供电所", "note": "",
+            })
+            auto_match = re.search(r"/project/(\d+)/drawings", str(response.url))
+            auto_code = ""
+            if auto_match:
+                auto_row = db_query("SELECT code FROM projects WHERE id=?", (int(auto_match.group(1)),))
+                auto_code = auto_row[0]["code"] if auto_row else ""
+            check("留空项目编码自动生成 PRJ 编码",
+                  bool(re.match(r"^PRJ-\d{8}-\d{2}$", auto_code or "")), f"code={auto_code}")
+
+            if code_pid:
+                wb = Workbook()
+                ws = wb.active
+                ws.title = "材料清册"
+                ws.append(["名称", "规格", "单位", "数量"])
+                ws.append(["电缆", "YJV-1×240", "米", 10])
+                buffer = io.BytesIO()
+                wb.save(buffer)
+                upload = zaojia.post(
+                    f"/project/{code_pid}/drawings/upload",
+                    files={"files": (
+                        "E2E待删除清册.xlsx",
+                        buffer.getvalue(),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )},
+                    data={"category": "材料清册"},
+                    follow_redirects=False,
+                )
+                check("上传图纸成功（用于删除校验）", upload.status_code == 303,
+                      f"HTTP {upload.status_code}")
+                rows = db_query(
+                    "SELECT id FROM drawings WHERE project_id=? ORDER BY id DESC LIMIT 1", (code_pid,))
+                did = int(rows[0]["id"]) if rows else 0
+                page = zaojia.get(f"/project/{code_pid}/drawings")
+                check("图纸目录含删除操作",
+                      page.status_code == 200 and f"/drawings/{did}/delete" in page.text,
+                      f"HTTP {page.status_code}，drawing={did}")
+                if did:
+                    deleted = zaojia.post(
+                        f"/project/{code_pid}/drawings/{did}/delete", follow_redirects=False)
+                    remain = db_query("SELECT COUNT(*) AS n FROM drawings WHERE id=?", (did,))
+                    check("图纸可删除（记录移除）",
+                          deleted.status_code == 303 and bool(remain) and remain[0]["n"] == 0,
+                          f"HTTP {deleted.status_code}，剩余 {remain[0]['n'] if remain else '—'}")
+                    audit_del = db_query(
+                        "SELECT COUNT(*) AS n FROM audit WHERE project_id=? AND action='删除图纸'",
+                        (code_pid,))
+                    check("删除图纸写入审计",
+                          bool(audit_del) and audit_del[0]["n"] >= 1, "审计含“删除图纸”")
+                page = zaojia.get(f"/project/{code_pid}/drawings")
+                check("上传区支持分批累计选择（清空按钮/累计提示）",
+                      page.status_code == 200 and "data-file-clear" in page.text
+                      and "会累计添加" in page.text,
+                      "页面含 data-file-clear/会累计添加")
+                js = zaojia.get("/static/app.js")
+                check("前端选择器支持累计选择（DataTransfer）",
+                      js.status_code == 200 and "DataTransfer" in js.text, f"HTTP {js.status_code}")
+        except Exception as exc:  # noqa: BLE001 - v4 未就绪时给出 FAIL 而不是中断
+            check("项目编码与上传体验（v4）E2E 执行", False, f"异常：{exc}")
     finally:
         zaojia.close()
         fuhe.close()
@@ -438,7 +546,7 @@ def main(argv=None) -> int:
                 print(f"  - {name}：{detail}")
         return 1
     print("E2E 全部通过 ✅（项目C 已走完 图纸→建模→算量→计价 全链路并完成复核与导出；"
-          "典型设计匹配/确认/导出/送审条件亦通过；新建项目与“下一步”引导通过）")
+          "典型设计匹配/确认/导出/送审条件亦通过；新建项目、项目编码录入、上传分批与图纸删除通过）")
     return 0
 
 

@@ -63,14 +63,18 @@
   <section class="card">
     <div class="card-head">
       <h2>上传图纸 / 清册</h2>
-      <span class="muted small">支持 PDF / DWG / XLSX / XLS / DOCX / JPG，可多选</span>
+      <span class="muted small">支持 PDF / DWG / XLSX / XLS / DOCX / JPG，可多选、可分批添加</span>
     </div>
     {% if editable %}
     <form class="upload-form" method="post" action="/project/{{ p.id }}/drawings/upload{{ keep_as }}" enctype="multipart/form-data">
       <label class="field">
-        <span>文件（可多选，单个 ≤ 50MB）</span>
+        <span>文件（可多选；可先选一个文件夹里的文件，再选另一个文件夹的文件，会累计添加；单个 ≤ 50MB）</span>
         <input type="file" name="files" multiple required data-file-input>
       </label>
+      <div class="upload-actions">
+        <button type="button" class="btn small" data-file-clear hidden>清空已选</button>
+        <span class="muted small" data-file-count></span>
+      </div>
       <label class="field">
         <span>图纸类别</span>
         <select name="category">
@@ -88,7 +92,7 @@
       <button class="btn primary" type="submit">上传并识别</button>
     </form>
     <div class="hint" data-file-hint>
-      上传后系统自动解析：PDF 提取文字并识别路径/杆塔/配变；XLSX/XLS 读取工作表与数据行；
+      可分批选择文件（累计添加）：上传后系统自动解析：PDF 提取文字并识别路径/杆塔/配变；XLSX/XLS 读取工作表与数据行；
       DWG 检测 ODA File Converter 插件后转 DXF 读取文字，未安装时标记“需插件”。
     </div>
     {% else %}
@@ -144,6 +148,7 @@
           <th>识别结论</th>
           <th style="width:122px">上传时间</th>
           <th style="width:84px">上传人</th>
+          {% if editable %}<th style="width:76px">操作</th>{% endif %}
         </tr>
       </thead>
       <tbody>
@@ -159,10 +164,18 @@
           <td class="muted small">{{ d.summary or '—' }}</td>
           <td class="muted small">{{ d.uploaded_at or '—' }}</td>
           <td class="small">{{ d.uploader_name or '—' }}</td>
+          {% if editable %}
+          <td>
+            <form method="post" action="/project/{{ p.id }}/drawings/{{ d.id }}/delete{{ keep_as }}" class="inline-form">
+              <button class="btn small danger" type="submit"
+                      data-confirm="确认删除图纸「{{ d.name }}」？删除后可在本阶段重新上传。">删除</button>
+            </form>
+          </td>
+          {% endif %}
         </tr>
         {% endfor %}
         {% if not drawings %}
-        <tr><td colspan="10" class="empty-cell">暂无图纸，请先上传施工图或材料清册。</td></tr>
+        <tr><td colspan="{{ 11 if editable else 10 }}" class="empty-cell">暂无图纸，请先上传施工图或材料清册。</td></tr>
         {% endif %}
       </tbody>
     </table>
