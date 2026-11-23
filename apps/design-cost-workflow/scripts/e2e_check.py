@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import os
 import re
 import sqlite3
@@ -577,6 +578,53 @@ def main(argv=None) -> int:
                   f"HTTP {export.status_code}，表头含图纸文件={('图纸文件' in header)}")
         except Exception as exc:  # noqa: BLE001 - v5 未就绪时给出 FAIL 而不是中断
             check("真实典设库目录（v5）E2E 执行", False, f"异常：{exc}")
+
+        # ---------- 11. 上传可选择文件夹并保留目录层级（第七轮 v7） ----------
+        try:
+            from openpyxl import Workbook
+
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "材料清册"
+            ws.append(["名称", "规格", "单位", "数量"])
+            ws.append(["电缆", "YJV-1×240", "米", 12])
+            buffer = io.BytesIO()
+            wb.save(buffer)
+            # 用新建项目做（项目C 在四阶段跑完后图纸阶段已不可上传）
+            dir_project = post(zaojia, "/project/new", {
+                "name": f"E2E文件夹上传-{datetime.now().strftime('%H%M%S')}",
+                "code": f"E2E-DIR-{datetime.now().strftime('%H%M%S')}",
+                "ptype": "业扩配套", "location": "某供电所", "note": "v7 文件夹上传校验",
+            })
+            dir_match = re.search(r"/project/(\d+)/drawings", str(dir_project.url))
+            dir_pid = int(dir_match.group(1)) if dir_match else 0
+            rel_paths = json.dumps(["施工图/10kV/线路平面图.xlsx", "施工图/说明/说明书.pdf"])
+            response = zaojia.post(
+                f"/project/{dir_pid}/drawings/upload",
+                files=[
+                    ("files", ("线路平面图.xlsx", buffer.getvalue(),
+                               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+                    ("files", ("说明书.pdf", b"%PDF-1.4 demo", "application/pdf")),
+                ],
+                data={"category": "自动识别", "rel_paths": rel_paths},
+                follow_redirects=False,
+            )
+            check("按文件夹方式上传（带相对路径）成功", response.status_code == 303,
+                  f"HTTP {response.status_code}")
+            paths = [row["file_path"] for row in db_query(
+                "SELECT file_path FROM drawings WHERE project_id=? AND file_path<>'' ORDER BY id DESC LIMIT 5",
+                (dir_pid,))]
+            check("上传后保留文件夹层级",
+                  any("施工图/10kV" in str(path) for path in paths)
+                  and any("施工图/说明" in str(path) for path in paths),
+                  f"路径 {paths[:3]}")
+            page = zaojia.get(f"/project/{dir_pid}/drawings")
+            check("上传区提供“选择文件夹”入口",
+                  page.status_code == 200 and "webkitdirectory" in page.text
+                  and "选择文件夹" in page.text,
+                  f"HTTP {page.status_code}")
+        except Exception as exc:  # noqa: BLE001 - v7 未就绪时给出 FAIL 而不是中断
+            check("文件夹上传（v7）E2E 执行", False, f"异常：{exc}")
     finally:
         zaojia.close()
         fuhe.close()

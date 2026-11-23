@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import html
 import io
+import json
 import os
 import re
 import sqlite3
@@ -676,6 +677,22 @@ def dashboard(request: Request, conn: sqlite3.Connection = Depends(get_db)):
 # --------------------------------------------------------------------------- #
 # 新建项目（v3：工作流“开始”入口）
 # --------------------------------------------------------------------------- #
+def safe_relative_path(raw: str) -> str:
+    """把前端传来的相对路径清洗成安全的相对路径（去盘符、去 ..、去绝对路径）。"""
+    text = (raw or "").replace("\\", "/").strip()
+    if not text:
+        return ""
+    parts: list[str] = []
+    for part in text.split("/"):
+        part = part.strip().replace("\\", "")
+        if not part or part in (".", ".."):
+            continue
+        if ":" in part:  # 盘符（如 C:）直接丢弃
+            continue
+        parts.append(part)
+    return "/".join(parts[:8])
+
+
 def auto_typdesign_match(conn, pid: int, user) -> dict | None:
     """自动执行典设匹配（不作为独立流程环节）。
 
@@ -913,6 +930,17 @@ async def drawings_upload(pid: int, request: Request, conn: sqlite3.Connection =
     if not uploads:
         return redirect_msg(request, f"/project/{pid}/drawings", "请选择至少一个图纸 / 清册文件再上传", "error")
 
+    # 前端在选择文件夹时提交相对路径（JSON 数组，与文件顺序一致），用于保留目录层级
+    rel_paths: list[str] = []
+    raw_paths = str(form.get("rel_paths") or "").strip()
+    if raw_paths:
+        try:
+            parsed = json.loads(raw_paths)
+            if isinstance(parsed, list):
+                rel_paths = [str(item) for item in parsed]
+        except (TypeError, ValueError):
+            rel_paths = []
+
     dest_dir = UPLOAD_DIR / str(pid)
     dest_dir.mkdir(parents=True, exist_ok=True)
     base_seq = int(conn.execute("SELECT COALESCE(MAX(id), 0) FROM drawings").fetchone()[0])
@@ -928,7 +956,16 @@ async def drawings_upload(pid: int, request: Request, conn: sqlite3.Connection =
             skipped += 1
             continue
         stored_name = f"{datetime.now():%Y%m%d%H%M%S}_{uuid.uuid4().hex[:6]}{ext}"
-        dest = dest_dir / stored_name
+        relative = ""
+        if index < len(rel_paths):
+            relative = safe_relative_path(rel_paths[index])
+        if relative:
+            # 保留文件夹层级：uploads/{项目id}/{子目录/文件名}
+            dest = dest_dir / relative
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest = dest.with_name(f"{datetime.now():%Y%m%d%H%M%S}_{uuid.uuid4().hex[:6]}{ext}")
+        else:
+            dest = dest_dir / stored_name
         try:
             dest.write_bytes(content)
         except OSError:
@@ -950,7 +987,7 @@ async def drawings_upload(pid: int, request: Request, conn: sqlite3.Connection =
                 int(parsed.get("sheet_count") or 1),
                 status,
                 parsed.get("summary") or "",
-                str(dest.relative_to(DATA_DIR)),
+                str(dest.relative_to(DATA_DIR)).replace("\\", "/"),
                 int(user["id"]),
                 now_text(),
                 now_text() if status in ("已识别", "解析失败", "需插件") else None,

@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import sqlite3
@@ -1064,4 +1065,49 @@ def test_typdesign_not_in_primary_nav():
     assert page.status_code == 200
     assert 'class="nav-aux' not in page.text  # 主导航不再单列“典型设计”
     assert "/project/3/typdesign" in page.text  # 仍可从图纸解析页进入明细/确认
+    client.get("/logout")
+
+
+# ---------------------------------------------------------------------------
+# v7：上传可选择文件夹（保留目录层级）
+# ---------------------------------------------------------------------------
+def test_upload_folder_keeps_relative_path():
+    login("zaojia", "123456")
+    pid = create_project_via_http("文件夹上传项目", code="TEST-CODE-DIR1")
+    rel_paths = json.dumps(["施工图/10kV/线路平面图.xlsx", "施工图/说明/说明书.pdf"])
+    response = client.post(
+        f"/project/{pid}/drawings/upload",
+        files=[
+            ("files", ("线路平面图.xlsx", xlsx_bytes(),
+                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+            ("files", ("说明书.pdf", b"%PDF-1.4 demo", "application/pdf")),
+        ],
+        data={"category": "自动识别", "rel_paths": rel_paths},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303, response.text
+    conn = db_conn()
+    rows = conn.execute(
+        "SELECT name, file_path FROM drawings WHERE project_id=? ORDER BY id", (pid,)
+    ).fetchall()
+    conn.close()
+    assert rows, "未登记上传文件"
+    paths = [row["file_path"] for row in rows]
+    assert any("施工图/10kV" in path for path in paths), paths
+    assert any("施工图/说明" in path for path in paths), paths
+    client.get("/logout")
+
+
+def test_upload_folder_ui_has_folder_picker():
+    login("zaojia", "123456")
+    # 用新建项目（图纸解析进行中，可上传）检查上传区，避免依赖其它测试改变项目C阶段
+    pid = create_project_via_http("文件夹入口项目", code="TEST-CODE-DIR2")
+    page = client.get(f"/project/{pid}/drawings")
+    assert page.status_code == 200
+    assert "webkitdirectory" in page.text
+    assert "或选择文件夹" in page.text
+    assert 'name="rel_paths"' in page.text
+    static = client.get("/static/app.js")
+    assert static.status_code == 200
+    assert "webkitRelativePath" in static.text
     client.get("/logout")

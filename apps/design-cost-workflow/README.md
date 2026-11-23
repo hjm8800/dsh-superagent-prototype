@@ -76,6 +76,12 @@ python -m uvicorn app:app --host 127.0.0.1 --port 8091
 
 演示环境可用 `?as=zaojia` 等方式切换身份（仅 `WORKFLOW_DEMO=1` 生效）；三个账号均可看到项目 A/B/C。
 
+## 上传可选择文件夹（v7）
+
+- 图纸上传区提供两个入口：**选择文件**（可多选、可分批累计）与 **选择文件夹**（一次取该文件夹下全部文件，含子目录）；Edge/Chrome 直接选文件夹，Firefox 用同一入口即可。
+- 选择文件夹时前端会带上文件的相对路径，服务端按 `uploads/{项目id}/{子目录}/` 保存并在图纸目录中保留层级，便于看清“哪张图来自哪个文件夹”。
+- 单文件大小上限 50MB，格式限 PDF / DWG / XLSX / XLS / DOCX / JPG 等。
+
 ## 真实资料库接入（v5）
 
 - **南网 V3.1 典设库**（本机目录）：`D:\知识库\2、V3.1标准设计--清远本地化修编26-01版`（7 册、77 个 DWG，含总论/修编记录）。
@@ -191,6 +197,6 @@ cd apps/design-cost-workflow
 - `before-*.png`：现状手工流程还原（图纸信息登记与建模表、算量计算表、计价汇总表），标注“演示数据还原，非旧版应用截图”。
 - `after-*.png`（v1 四阶段）：原型页面截图（登录、工作台、项目工作流、图纸解析、建模、算量、计价、对比、演示路线）。
 - `v2-*.png`（v2 典型设计匹配，基线为 PR #4 初版 commit `05b91ad`）：`v2-01-drawings-c-typdesign.png` 项目C 图纸解析页（含典设匹配卡片）、`v2-02-project-a-typdesign.png` 项目A 工作流页（典设卡片）、`v2-03-typdesign-a.png` 项目A 典设匹配页（已确认）、`v2-04-typdesign-b.png` 项目B 典设匹配页（待确认）、`v2-05-typdesign-c-after-match.png` 项目C 执行匹配后的匹配页、`v2-06-model-a-typdesign.png` 项目A 建模页（典设参考面板）。
-- `v3-*.png`（v3 开始工作流与新建项目，基线为 v2 `bfc8544` 截图）：Before `v3-before-dashboard.png` 工作台无开始引导、`v3-before-project-c.png` 项目C 页无下一步引导、`v3-before-login.png`；After `v3-01-dashboard-start.png` 工作台“开始工作流”引导区、`v3-02-project-c-next-step.png` 项目C“下一步”引导条、`v3-03-new-project-form.png` 新建项目表单、`v3-04-new-project-created.png` 新建后跳转的图纸解析页、`v3-05-demo-start-hint.png`（可选）演示路线开始提示；`v4-*.png`（v4 项目编码/上传分批/删除，基线为 v3 `6d3da08` 截图）；`v5-*.png`（v5 真实典设库目录导入与库内图纸列，基线为 v4 `f2413c6`）；`v6-*.png`（v6 典设匹配自动执行与非独立环节，基线为 v5 前 `f2413c6`）。
+- `v3-*.png`（v3 开始工作流与新建项目，基线为 v2 `bfc8544` 截图）：Before `v3-before-dashboard.png` 工作台无开始引导、`v3-before-project-c.png` 项目C 页无下一步引导、`v3-before-login.png`；After `v3-01-dashboard-start.png` 工作台“开始工作流”引导区、`v3-02-project-c-next-step.png` 项目C“下一步”引导条、`v3-03-new-project-form.png` 新建项目表单、`v3-04-new-project-created.png` 新建后跳转的图纸解析页、`v3-05-demo-start-hint.png`（可选）演示路线开始提示；`v4-*.png`（v4 项目编码/上传分批/删除，基线为 v3 `6d3da08` 截图）；`v5-*.png`（v5 真实典设库目录导入与库内图纸列，基线为 v4 `f2413c6`）；`v6-*.png`（v6 典设匹配自动执行与非独立环节，基线为 v5 前 `f2413c6`）；`v7-01-drawings-folder-upload.png`（v7 上传可选择文件夹，基线为 v6 `779def7` 的 `v6-01-drawings-c-auto-match.png`）。
 
 配套建设方案（现状痛点、四阶段流程、角色权限、数据标准、典型设计匹配、算量/计价规则、AI 边界、实施路线、风险与附录）见 `docs/design-cost/workflow-design.md`。

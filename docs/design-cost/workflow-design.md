@@ -4,7 +4,7 @@
 
 **编制：** 数字化建设专班（造价组、工程组、信息组）
 
-**版本：** V1.5（v6 迭代：典设匹配自动执行、不再作为独立环节；v5 本机真实典设库/定额资料接入）
+**版本：** V1.6（v7 迭代：上传可选择文件夹；v6 典设匹配自动执行；v5 本机真实典设库/定额资料接入）
 
 **日期：** 2026 年 11 月
 
@@ -688,6 +688,7 @@ flowchart LR
 8. 典型设计匹配（v2 迭代）：典设模块目录导入（XLSX/CSV，兼容附件6-1 双表结构）、规则匹配与置信度、人工确认/忽略、图纸解析页/项目页/建模页/对比页集成、导出《典型设计匹配清单》；不新增阶段门禁。
 9. 工作流开始入口与新建项目（v3 迭代）：工作台“开始工作流（三步走）”引导区；`/project/new` 简单建档（名称/类型/地点/备注，自动编码 `PRJ-YYYYMMDD-NN`、四阶段初始化、演示账号加入成员）；项目页“下一步”引导条；登录页/演示路线页开始提示；不改变四阶段语义与既有引擎接口。
 10. 项目编码与上传体验（v4 迭代）：新建项目可录入项目编码（选填、3–40 位字母数字 `-_.`、全库唯一，留空自动生成 `PRJ-YYYYMMDD-NN`），作为后续识图→结算统一项目标识；图纸上传支持多选/分批累计添加；已上传图纸在解析阶段可删除/重传并写审计。
+11-c. 上传支持选择文件夹（v7 迭代）：图纸上传区提供“选择文件”（多选/分批累计）与“选择文件夹”两个入口；选择文件夹时前端提交文件相对路径，服务端按 `uploads/{项目id}/{子目录}/` 保存并在图纸目录保留层级，便于追溯图纸来源目录。
 11-b. 典型设计匹配自动执行（v6 迭代）：典设匹配不作为独立流程环节——在图纸上传/解析、删除图纸、生成建模初稿、导入典设目录时自动执行；结果直接显示在图纸解析页/建模页；主导航不再单列“典型设计”，`/project/{id}/typdesign` 仅保留为明细、人工确认与导出页；不改变四阶段门禁与建模规则。
 11. 真实资料接入（v5 迭代）：支持用 `scripts/build_typical_design_catalog.py` 从本机 V3.1 典设库（7 册 DWG）与附件6-1 模块汇总表生成带“图纸文件”列的典设目录；导入后匹配明细与导出清单显示库内图纸相对路径；`scripts/check_quota_library.py` 盘点 2022 版定额资料可解析性（预规为文字版、5 册预算定额为扫描版），真实定额子目需电子版/OCR 后再导入。
 
@@ -834,6 +835,7 @@ flowchart LR
    - After（v1 四阶段）：`after-*.png`，原型页面截图（登录、工作台、项目工作流、图纸解析、建模、算量、计价、对比、演示路线）。
    - After（v2 典设匹配）：`v2-*.png`，基线为 PR #4 初版（commit `05b91ad`，无典设匹配能力）：`v2-01-drawings-c-typdesign.png` 项目C 图纸解析页（含典设匹配卡片）、`v2-02-project-a-typdesign.png` 项目A 工作流页（典设匹配卡片）、`v2-03-typdesign-a.png` 项目A 典设匹配页（已确认）、`v2-04-typdesign-b.png` 项目B 典设匹配页（待确认）、`v2-05-typdesign-c-after-match.png` 项目C 执行匹配后的匹配页、`v2-06-model-a-typdesign.png` 项目A 建模页（典设参考面板）。
    - After（v3 开始工作流与新建项目）：`v3-*.png`，基线为 v2 版本（commit `bfc8544`，无开始引导/新建项目）：Before `v3-before-dashboard.png`（工作台无开始引导）、`v3-before-project-c.png`（项目C 页无下一步引导）、`v3-before-login.png`；After `v3-01-dashboard-start.png` 工作台“开始工作流”引导区、`v3-02-project-c-next-step.png` 项目C“下一步”引导条、`v3-03-new-project-form.png` 新建项目表单、`v3-04-new-project-created.png` 新建后跳转的图纸解析页、`v3-05-demo-start-hint.png`（可选）演示路线开始提示。
+- After（v7 文件夹上传）：`v7-01-drawings-folder-upload.png`，基线为 v6 版本（commit `779def7`，上传区只有“选择文件”）：After 新增“或选择文件夹”入口与相对路径保留。
 - After（v6 自动典设匹配）：`v6-*.png`，基线为 v4 版本（commit `f2413c6`）：Before `v6-before-drawings-c.png`（图纸页“执行匹配”手动按钮）、`v6-before-project-c.png`（项目页单列典型设计卡）；After `v6-01-drawings-c-auto-match.png`（图纸页自动匹配提示、无手动执行匹配主按钮）、`v6-02-project-c-auto-match.png`（项目页典型设计（自动）卡）、`v6-03-typdesign-detail.png`（明细页顶部自动执行说明）。
 - After（v5 真实资料库接入）：`v5-*.png`，基线为 v4 版本（commit `f2413c6`，典设匹配页无“库内图纸”列）：After `v5-01-typdesign-c-real-library.png`（项目C 导入 V3.1 典设库目录后的匹配明细，含库内图纸路径）。
 - After（v4 项目编码与上传体验）：`v4-*.png`，基线为 v3 版本（commit `6d3da08`，新建项目无项目编码字段、图纸页无删除列/累计上传）：Before `v3-03-new-project-form.png`（无项目编码字段）、`after-04-drawings-c.png`（图纸页无删除列、上传不支持累计）；After `v4-01-new-project-form-code.png`（含项目编码输入）、`v4-02-new-project-created-with-code.png`（录入编码创建后的项目页）、`v4-03-drawings-upload-delete.png`（分批累计上传提示 + 图纸删除操作列）。

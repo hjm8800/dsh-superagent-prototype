@@ -68,9 +68,14 @@
     {% if editable %}
     <form class="upload-form" method="post" action="/project/{{ p.id }}/drawings/upload{{ keep_as }}" enctype="multipart/form-data">
       <label class="field">
-        <span>文件（可多选；可先选一个文件夹里的文件，再选另一个文件夹的文件，会累计添加；单个 ≤ 50MB）</span>
-        <input type="file" name="files" multiple required data-file-input>
+        <span>选择文件（可多选；可先选一个文件夹里的文件，再选另一个文件夹的文件，会累计添加；单个 ≤ 50MB）</span>
+        <input type="file" name="files" multiple data-file-input>
       </label>
+      <label class="field">
+        <span>或选择文件夹（一次取该文件夹下的全部文件，含子目录，保留层级）</span>
+        <input type="file" name="files" multiple webkitdirectory directory data-dir-input>
+      </label>
+      <input type="hidden" name="rel_paths" value="" data-rel-paths>
       <div class="upload-actions">
         <button type="button" class="btn small" data-file-clear hidden>清空已选</button>
         <span class="muted small" data-file-count></span>
@@ -92,8 +97,8 @@
       <button class="btn primary" type="submit">上传并识别</button>
     </form>
     <div class="hint" data-file-hint>
-      可分批选择文件（累计添加）：上传后系统自动解析：PDF 提取文字并识别路径/杆塔/配变；XLSX/XLS 读取工作表与数据行；
-      DWG 检测 ODA File Converter 插件后转 DXF 读取文字，未安装时标记“需插件”。
+      可分批选择文件（累计添加），也可直接选择整个文件夹（递归取该文件夹下所有文件）；上传后系统自动解析：
+      PDF 提取文字并识别路径/杆塔/配变；XLSX/XLS 读取工作表与数据行；DWG 检测 ODA File Converter 插件后转 DXF 读取文字，未安装时标记“需插件”。
     </div>
     {% else %}
     <div class="empty">

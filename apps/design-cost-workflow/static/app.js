@@ -13,8 +13,10 @@
     }
   });
 
-  // 2) 上传文件：累计选择（分批选不同文件夹的文件会累加）+ 数量/大小提示 + 清空
+  // 2) 上传文件：累计选择（分批选不同文件夹的文件会累加）+ 文件夹选择 + 数量/大小提示 + 清空
   var fileInput = document.querySelector("[data-file-input]");
+  var dirInput = document.querySelector("[data-dir-input]");
+  var relPathsField = document.querySelector("[data-rel-paths]");
   var fileHint = document.querySelector("[data-file-hint]");
   var fileClear = document.querySelector("[data-file-clear]");
   var fileCount = document.querySelector("[data-file-count]");
@@ -29,12 +31,36 @@
       picked = null; // 浏览器不支持 DataTransfer 时退化为默认行为
     }
 
-    var fileKey = function (file) {
-      return (file.name || "") + "|" + (file.size || 0) + "|" + (file.lastModified || 0);
+    var fileKey = function (file, path) {
+      return (path || file.name || "") + "|" + (file.size || 0) + "|" + (file.lastModified || 0);
+    };
+
+    // 汇总两个输入框的选择：普通文件 + 文件夹（保留相对路径）
+    var collect = function () {
+      var items = [];
+      var plain = fileInput.files || [];
+      for (var i = 0; i < plain.length; i += 1) {
+        items.push({ file: plain[i], path: "" });
+      }
+      if (dirInput) {
+        var folder = dirInput.files || [];
+        for (var j = 0; j < folder.length; j += 1) {
+          items.push({ file: folder[j], path: folder[j].webkitRelativePath || folder[j].name || "" });
+        }
+      }
+      return items;
+    };
+
+    var syncRelativePaths = function (items) {
+      if (!relPathsField) return;
+      var paths = items.map(function (item) { return item.path || ""; });
+      relPathsField.value = JSON.stringify(paths);
     };
 
     var refresh = function () {
-      var files = fileInput.files || [];
+      var items = collect();
+      var files = items.map(function (item) { return item.file; });
+      syncRelativePaths(items);
       if (fileClear) {
         fileClear.hidden = files.length === 0;
       }
@@ -68,7 +94,6 @@
       for (var i = 0; i < picked.files.length; i += 1) {
         existing[fileKey(picked.files[i])] = true;
       }
-      var added = 0;
       var incoming = fileInput.files || [];
       for (var j = 0; j < incoming.length; j += 1) {
         var file = incoming[j];
@@ -76,7 +101,6 @@
         if (!existing[key]) {
           picked.items.add(file);
           existing[key] = true;
-          added += 1;
         }
       }
       try {
@@ -87,10 +111,21 @@
       refresh();
     });
 
+    if (dirInput) {
+      dirInput.addEventListener("change", function () {
+        // 选择文件夹：直接使用该文件夹下的全部文件（浏览器已展开），并保留相对路径
+        if (picked) {
+          try { fileInput.files = picked.files; } catch (err) { /* 忽略 */ }
+        }
+        refresh();
+      });
+    }
+
     if (fileClear) {
       fileClear.addEventListener("click", function () {
         picked = new DataTransfer();
         fileInput.value = "";
+        if (dirInput) dirInput.value = "";
         refresh();
       });
     }
