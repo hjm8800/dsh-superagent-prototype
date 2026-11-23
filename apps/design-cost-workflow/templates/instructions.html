@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}作业指导书工序库 · 设计造价工作台{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="crumb">知识库 / 作业指导书工序库</div>
+    <h1>作业指导书工序库 <span class="badge info">施工工序</span></h1>
+    <p class="sub">把本机“作业指导书 / 样板点施工指导作业书”中的施工工序整理为可检索条目：建模、算量、计价各阶段可直接引用对应工序的施工工艺、质量要求、安全措施与材料机具。</p>
+  </div>
+  <div class="head-actions">
+    <a class="btn" href="/{{ keep_as }}">返回工作台</a>
+  </div>
+</div>
+
+<div class="kpis kpis-4">
+  <div class="kpi">
+    <div class="kpi-label">工序条目</div>
+    <div class="kpi-value">{{ summary.entries }}</div>
+    <div class="kpi-sub">{{ '演示条目（未导入本机索引）' if summary.demo else '来自本机作业指导书索引' }}</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">工序类别</div>
+    <div class="kpi-value">{{ categories|length }}</div>
+    <div class="kpi-sub">基础/杆塔/架线/电缆/变压器…</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">源文档</div>
+    <div class="kpi-value">{{ summary.documents or '—' }}</div>
+    <div class="kpi-sub">{{ '需人工核对的条目 ' ~ summary.needs_review }}</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">索引生成时间</div>
+    <div class="kpi-value" style="font-size:18px">{{ summary.generated_at or '—' }}</div>
+    <div class="kpi-sub">本机生成，不随仓库分发</div>
+  </div>
+</div>
+
+<form class="card" method="get" action="/instructions">
+  <div class="card-head"><h2>检索工序</h2><span class="muted small">关键词匹配标题/标签/要点</span></div>
+  <div class="grid-3">
+    <label class="field">
+      <span>关键词（如 电缆、基础、拉线、终端、接地）</span>
+      <input type="text" name="q" value="{{ query }}" placeholder="如：电缆终端">
+    </label>
+    <label class="field">
+      <span>工序类别</span>
+      <select name="category">
+        <option value="">全部类别</option>
+        {% for name, count in categories %}
+        <option value="{{ name }}" {{ 'selected' if category == name else '' }}>{{ name }}（{{ count }}）</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="field">
+      <span>&nbsp;</span>
+      <div class="card-actions-row">
+        <button class="btn primary" type="submit">检索</button>
+        <a class="btn" href="/instructions{{ keep_as }}">重置</a>
+      </div>
+    </div>
+  </div>
+</form>
+
+{% if summary.demo %}
+<div class="hint warn" style="margin-bottom:12px">
+  当前显示的是<strong>演示条目（通用示例，非作业指导书原文）</strong>。在本机用
+  <code>python scripts/build_work_instruction_index.py --source "&lt;作业指导书目录&gt;"</code>
+  生成索引后，本页会自动切换为本机资料整理出的真实工序条目（索引写入应用 data/ 目录，不入仓库）。
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-head">
+    <h2>工序条目</h2>
+    <span class="muted small">{{ entries|length }} 条{{ '（关键词：' ~ query ~ '）' if query }}{{ '（类别：' ~ category ~ '）' if category }}</span>
+  </div>
+  {% if entries %}
+  <div class="instr-list">
+    {% for item in entries %}
+    <details class="instr-item">
+      <summary>
+        <span class="mono small instr-code">{{ item.code or '—' }}</span>
+        <span class="instr-title">{{ item.title }}</span>
+        <span class="badge info">{{ item.category }}</span>
+        {% if item.version %}<span class="muted small">{{ item.version }}</span>{% endif %}
+        {% if item.needs_review %}<span class="badge warn">需人工核对</span>{% endif %}
+      </summary>
+      <div class="instr-body">
+        {% if item.tags %}
+        <div class="instr-tags">
+          {% for tag in item.tags %}<span class="chip">{{ tag }}</span>{% endfor %}
+        </div>
+        {% endif %}
+        <div class="instr-grid">
+          {% if item.steps %}
+          <div><h4>施工工艺 / 作业步骤</h4><ul>{% for line in item.steps %}<li>{{ line }}</li>{% endfor %}</ul></div>
+          {% endif %}
+          {% if item.quality %}
+          <div><h4>质量要求</h4><ul>{% for line in item.quality %}<li>{{ line }}</li>{% endfor %}</ul></div>
+          {% endif %}
+          {% if item.safety %}
+          <div><h4>安全措施</h4><ul>{% for line in item.safety %}<li>{{ line }}</li>{% endfor %}</ul></div>
+          {% endif %}
+          {% if item.materials %}
+          <div><h4>材料与机具</h4><ul>{% for line in item.materials %}<li>{{ line }}</li>{% endfor %}</ul></div>
+          {% endif %}
+          {% if item.standards %}
+          <div><h4>引用标准</h4><ul>{% for line in item.standards %}<li>{{ line }}</li>{% endfor %}</ul></div>
+          {% endif %}
+        </div>
+        <div class="muted small">来源文件：{{ item.source_file or '—' }}</div>
+      </div>
+    </details>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty">
+    <div class="empty-title">没有匹配的工序条目</div>
+    <div class="muted">换个关键词或清除类别筛选再试。</div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

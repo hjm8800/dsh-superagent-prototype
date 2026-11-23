@@ -18,6 +18,7 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
 import engine  # noqa: E402
+import instructions  # noqa: E402
 import seed  # noqa: E402
 import typdesign  # noqa: E402
 
@@ -515,3 +516,37 @@ def test_import_match_export_include_file_path(db, tmp_path):
     rows = typdesign.export_rows(db, project_id)
     assert "图纸文件" in rows[0]
     assert rows[1][6].endswith(".dwg")
+
+
+# ---------------------------------------------------------------------------
+# v8：作业指导书工序库
+# ---------------------------------------------------------------------------
+
+def test_instructions_module_demo_and_search(monkeypatch, tmp_path):
+    monkeypatch.setattr(instructions, "_index_candidates", lambda: [tmp_path / "missing.json"])
+    monkeypatch.setattr(instructions, "_CACHE", {"mtime": None, "data": None})
+    entries = instructions.all_entries()
+    assert entries, "没有索引时应回退到演示条目"
+    assert instructions.is_demo()
+    assert instructions.search("电缆"), "按关键词应能检索到电缆工序"
+    assert instructions.search("", "基础与土建"), "按类别应能过滤"
+    related = instructions.related_entries(["电缆", "终端"])
+    assert related and "电缆" in related[0]["title"]
+
+
+def test_instructions_module_reads_local_index(monkeypatch, tmp_path):
+    index = tmp_path / "instructions.json"
+    index.write_text(
+        '{"generated_at": "2026-11-23 12:00", "source": "local", "stats": {"documents": 1}, '
+        '"entries": [{"code": "DLTJ-01", "title": "电缆沟、槽盒作业指导书", "category": "电缆", '
+        '"version": "2015年单行版", "source_file": "a.pdf", "tags": ["电缆", "电缆沟"], '
+        '"steps": ["开挖", "浇筑"], "quality": [], "safety": [], "materials": [], "standards": []}]}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(instructions, "_index_candidates", lambda: [index])
+    monkeypatch.setattr(instructions, "_CACHE", {"mtime": None, "data": None})
+    summary = instructions.summary()
+    assert summary["entries"] == 1
+    assert not summary["demo"]
+    assert instructions.search("电缆沟")
+    assert instructions.related_entries(["电缆沟"])[0]["code"] == "DLTJ-01"

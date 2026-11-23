@@ -12,6 +12,7 @@
   <nav class="topnav">
     <a href="/{{ keep_as }}" class="{{ 'active' if active == 'dashboard' else '' }}">工作台</a>
     <a href="/project/1{{ keep_as }}" class="{{ 'active' if active in ('flow','drawings','model','quantities','pricing','compare','typdesign') else '' }}">项目工作流</a>
+    <a href="/instructions{{ keep_as }}" class="{{ 'active' if active == 'instructions' else '' }}">作业指导书</a>
     <a href="/demo{{ keep_as }}" class="{{ 'active' if active == 'demo' else '' }}">演示路线</a>
   </nav>
   {% if demo %}

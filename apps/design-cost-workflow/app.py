@@ -38,6 +38,7 @@ from openpyxl.utils import get_column_letter
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import engine
+import instructions
 import pricing
 import seed
 
@@ -83,7 +84,8 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 # 算量规则说明（页面“计算规则”卡片 + 导出“编制说明”页共用）
 QUANTITY_RULES: list[tuple[str, str]] = [
-    ("导线架设", "按线路亘长（km）计算：10kV → YD3-0301，1kV → YD3-0302；单位工程取线路名称。"),
+    ("导线架设", "定额按单线计：数量 = 亘长 × 单线根数（10kV 三相 3 根、低压三相四线 4 根），"
+                "单位 km（单线长度）；10kV → YD3-0301，1kV → YD3-0302；单位工程取线路名称。"),
     ("导线主材", "数量 = 亘长 × 相数 × 1.03（预留损耗 3%），单位 km；10kV 按 3 相，低压按 4 线。"),
     ("电杆组立", "数量 = 杆塔数（基）：Φ190×12m → YD3-0103，其余 → YD3-0101。"),
     ("拉线制作安装", "数量 = 拉线条数，定额 YD3-0201，主材按拉线主材单价计取。"),
@@ -693,6 +695,34 @@ def safe_relative_path(raw: str) -> str:
     return "/".join(parts[:8])
 
 
+def related_instructions(conn, pid: int, limit: int = 6) -> list[dict]:
+    """按项目模型/算量中的名称与材料，找出相关的施工工序条目。"""
+    tokens: list[str] = []
+    for table, columns in (
+        ("model_lines", ("name", "spec", "conductor_type", "pole_type")),
+        ("model_equipment", ("name", "spec", "category")),
+        ("model_civil", ("name", "spec")),
+        ("model_demolition", ("name", "spec")),
+        ("quantities", ("name", "spec", "unit_name")),
+    ):
+        try:
+            rows = conn.execute(f"SELECT * FROM {table} WHERE project_id=?", (pid,)).fetchall()
+        except Exception:
+            continue
+        for row in rows:
+            for column in columns:
+                try:
+                    value = str(row[column] or "").strip()
+                except (IndexError, KeyError):
+                    value = ""
+                if value:
+                    tokens.append(value)
+    if not tokens:
+        return []
+    unique = list(dict.fromkeys(tokens))[:120]
+    return [instructions.entry_payload(item) for item in instructions.related_entries(unique, limit)]
+
+
 def auto_typdesign_match(conn, pid: int, user) -> dict | None:
     """自动执行典设匹配（不作为独立流程环节）。
 
@@ -878,6 +908,28 @@ def project_home(pid: int, request: Request, conn: sqlite3.Connection = Depends(
 # --------------------------------------------------------------------------- #
 # 图纸解析
 # --------------------------------------------------------------------------- #
+@app.get("/instructions")
+def instructions_page(request: Request, conn: sqlite3.Connection = Depends(get_db)):
+    """作业指导书/施工工序知识库（本机索引，支持关键词与类别检索）。"""
+    user = require_user(request, conn)
+    query = str(request.query_params.get("q") or "").strip()
+    category = str(request.query_params.get("category") or "").strip()
+    summary = instructions.summary()
+    entries = [instructions.entry_payload(item) for item in instructions.search(query, category)]
+    categories = sorted(summary.get("categories", {}).items(), key=lambda item: (-item[1], item[0]))
+    return page(
+        request,
+        "instructions.html",
+        user,
+        active="instructions",
+        query=query,
+        category=category,
+        summary=summary,
+        categories=categories,
+        entries=entries,
+    )
+
+
 @app.get("/project/{pid}/drawings")
 def drawings_page(pid: int, request: Request, conn: sqlite3.Connection = Depends(get_db)):
     user = require_user(request, conn)
@@ -1245,6 +1297,7 @@ def model_page(pid: int, request: Request, conn: sqlite3.Connection = Depends(ge
         stage=ctx["stage_map"].get("model", {}),
         td_stats=td_stats(conn, pid),
         td_confirmed=td_confirmed(conn, pid),
+        related_instructions=related_instructions(conn, pid),
         **ctx,
     )
 
@@ -1449,6 +1502,7 @@ def quantities_page(pid: int, request: Request, conn: sqlite3.Connection = Depen
         editable=editable,
         rules=QUANTITY_RULES,
         stage=ctx["stage_map"].get("quantities", {}),
+        related_instructions=related_instructions(conn, pid),
         **ctx,
     )
 

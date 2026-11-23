@@ -1111,3 +1111,27 @@ def test_upload_folder_ui_has_folder_picker():
     assert static.status_code == 200
     assert "webkitRelativePath" in static.text
     client.get("/logout")
+
+
+# ---------------------------------------------------------------------------
+# v8：作业指导书工序库页面
+# ---------------------------------------------------------------------------
+def test_instructions_page_and_nav():
+    login("zaojia", "123456")
+    page = client.get("/instructions")
+    assert page.status_code == 200
+    assert "作业指导书" in page.text
+    assert "工序条目" in page.text
+    # 关键词检索
+    found = client.get("/instructions?q=%E7%94%B5%E7%BC%86")
+    assert found.status_code == 200
+    assert "电缆" in found.text
+    client.get("/logout")
+
+
+def test_quantities_page_shows_related_instructions():
+    login("zaojia", "123456")
+    page = client.get("/project/1/quantities")
+    assert page.status_code == 200
+    assert "相关施工工序" in page.text
+    client.get("/logout")

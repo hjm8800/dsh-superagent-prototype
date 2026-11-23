@@ -174,13 +174,17 @@ def test_compute_quantities_project_a(db):
     assert len(rows) > 30
 
     rows_10kv = [row for row in rows if row["name"] == "10kV架空线路架设"]
-    assert len(rows_10kv) == 1 and abs(rows_10kv[0]["qty"] - 0.057) < 1e-9
+    # 定额按单线计：0.057km × 3 根 = 0.171 km（单线长度）
+    assert len(rows_10kv) == 1 and abs(rows_10kv[0]["qty"] - 0.171) < 1e-9
+    assert "单线" in rows_10kv[0]["formula"] and "3 根" in rows_10kv[0]["formula"]
     assert rows_10kv[0]["unit"] == "km" and rows_10kv[0]["quota_code"] == "YD3-0301"
     assert rows_10kv[0]["formula"] and rows_10kv[0]["basis"]
     assert "10kV路径0.057km" in rows_10kv[0]["basis"]
 
     rows_lv = [row for row in rows if row["name"] == "低压线路架设"]
-    assert len(rows_lv) == 1 and abs(rows_lv[0]["qty"] - 0.7875) < 1e-9
+    # 低压三相四线按单线计：0.7875km × 4 根 = 3.15 km（单线长度）
+    assert abs(rows_lv[0]["qty"] - 3.15) < 1e-6
+    assert len(rows_lv) == 1 and abs(rows_lv[0]["qty"] - 3.15) < 1e-6
     assert rows_lv[0]["quota_code"] == "YD3-0302"
 
     # 导线主材：10kV 0.176（清册量）；低压 1.648 + 1.597（清册量，共 3.245）
@@ -541,7 +545,8 @@ def test_update_item_quota(db):
     updated = _one(db, "SELECT * FROM pricing_items WHERE id=?", (item["id"],))
     assert updated["quota_code"] == "YD3-0201"
     assert abs(updated["labor_unit"] - 130.0) < 1e-9
-    assert abs(updated["labor"] - round(0.057 * 130.0, 2)) < 1e-9
+    # 单线口径后：0.057km × 3 根 = 0.171 km（单线）× 单价
+    assert abs(updated["labor"] - round(0.171 * 130.0, 2)) < 1e-9
     install_after = _one(db, "SELECT amount FROM pricing_fees WHERE project_id=? "
                              "AND category='安装工程费' AND item='合计'",
                          (project_id,))["amount"]

@@ -151,4 +151,25 @@
   </form>
 </div>
 {% endif %}
+
+<section class="card td-ref-card">
+  <div class="card-head">
+    <h2>相关施工工序（作业指导书）</h2>
+    <span class="muted small">按本项目模型/算量内容匹配 · 只读参考</span>
+  </div>
+  {% if related_instructions %}
+  <div class="td-ref-list">
+    {% for item in related_instructions %}
+    <div class="td-ref-item">
+      <span class="mono small td-ref-code">{{ item.code or '—' }}</span>
+      <span class="td-ref-name">{{ item.title }}</span>
+      <span class="muted small">{{ item.category }}{% if item.version %} · {{ item.version }}{% endif %}</span>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="hint">工序要点用于施工组织与算量口径核对；完整条目见<a class="link" href="/instructions{{ keep_as }}">作业指导书工序库</a>。</div>
+  {% else %}
+  <div class="empty">本项目模型内容较少，暂未匹配到相关工序条目；可到<a class="link" href="/instructions{{ keep_as }}">作业指导书工序库</a>检索。</div>
+  {% endif %}
+</section>
 {% endblock %}

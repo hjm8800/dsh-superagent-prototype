@@ -565,16 +565,20 @@ def _build_quantities(conn, project_id: int) -> list[dict]:
         pole_type = line.get("pole_type") or ""
         conductor = line.get("conductor") or ""
 
-        # 规则 1：导线架设（按亘长）
+        # 规则 1：导线架设（定额按单线计 → 数量 = 亘长 × 单线根数）
+        single_wires = phases if phases > 0 else (3 if voltage == "10kV" else 4)
+        stringing_qty = round(length_km * single_wires, 4)
         if voltage == "10kV":
-            builder.add(unit_name, "10kV架空线路架设", conductor, "km", length_km,
-                        f"图纸识别亘长 {_fmt(length_km)} km",
-                        f"图纸识别：10kV路径{_fmt(length_km)}km，{phases}相",
+            builder.add(unit_name, "10kV架空线路架设", conductor, "km", stringing_qty,
+                        f"图纸识别亘长 {_fmt(length_km)} km × {single_wires} 根（单线） = {_fmt(stringing_qty)} km",
+                        f"图纸识别：10kV路径{_fmt(length_km)}km，{phases}相；"
+                        f"定额按单线计算：单线根数 {single_wires} → 单线长 {_fmt(stringing_qty)}km",
                         rates.CATEGORY_INSTALL, "YD3-0301")
         else:
-            builder.add(unit_name, "低压线路架设", conductor, "km", length_km,
-                        f"图纸识别亘长 {_fmt(length_km)} km",
-                        f"图纸识别：低压路径{_fmt(length_km)}km，{phases}相",
+            builder.add(unit_name, "低压线路架设", conductor, "km", stringing_qty,
+                        f"图纸识别亘长 {_fmt(length_km)} km × {single_wires} 根（单线） = {_fmt(stringing_qty)} km",
+                        f"图纸识别：低压路径{_fmt(length_km)}km，{phases}相（线）；"
+                        f"定额按单线计算：单线根数 {single_wires} → 单线长 {_fmt(stringing_qty)}km",
                         rates.CATEGORY_INSTALL, "YD3-0302")
 
         # 规则 2：导线主材（单位 km）——清册有同名导线则以清册量为准，否则按公式

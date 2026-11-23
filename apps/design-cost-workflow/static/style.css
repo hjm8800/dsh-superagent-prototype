@@ -1273,3 +1273,20 @@ select.cell-input { padding-right: 4px; }
 .upload-actions { display: flex; align-items: center; gap: 10px; margin: 2px 0 10px; min-height: 26px; }
 .upload-actions .muted { font-size: 12px; color: var(--muted); }
 
+
+
+/* ========================================================================== */
+/* 作业指导书工序库                                                            */
+/* ========================================================================== */
+.instr-list { display: flex; flex-direction: column; gap: 8px; }
+.instr-item { border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
+.instr-item > summary { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; list-style: none; }
+.instr-item > summary::-webkit-details-marker { display: none; }
+.instr-item > summary:hover { background: #f8fafc; }
+.instr-code { color: #6b7280; min-width: 74px; }
+.instr-title { flex: 1; font-weight: 600; color: #111827; }
+.instr-body { border-top: 1px dashed #e5e7eb; padding: 12px 14px; }
+.instr-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.instr-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.instr-grid h4 { margin: 0 0 6px; font-size: 13px; color: #1d4ed8; }
+.instr-grid ul { margin: 0; padding-left: 18px; font-size: 12px; color: #374151; line-height: 1.7; }

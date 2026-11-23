@@ -625,6 +625,30 @@ def main(argv=None) -> int:
                   f"HTTP {page.status_code}")
         except Exception as exc:  # noqa: BLE001 - v7 未就绪时给出 FAIL 而不是中断
             check("文件夹上传（v7）E2E 执行", False, f"异常：{exc}")
+
+        # ---------- 12. 作业指导书工序库 + 单线口径（第八轮 v8） ----------
+        try:
+            response = zaojia.get("/instructions")
+            check("作业指导书工序库页返回 200 且含工序条目",
+                  response.status_code == 200 and "作业指导书" in response.text
+                  and "工序条目" in response.text,
+                  f"HTTP {response.status_code}")
+            found = zaojia.get("/instructions?q=%E7%94%B5%E7%BC%86")
+            check("工序库支持关键词检索",
+                  found.status_code == 200 and "电缆" in found.text,
+                  f"HTTP {found.status_code}")
+            page = zaojia.get(f"/project/{PID}/quantities")
+            check("算量页显示“相关施工工序”面板",
+                  page.status_code == 200 and "相关施工工序" in page.text,
+                  f"HTTP {page.status_code}")
+            qty_rows = db_query(
+                "SELECT name, qty, formula FROM quantities WHERE project_id=? AND name LIKE '%架设%'",
+                (PID,))
+            single_line_ok = all("单线" in str(row["formula"]) for row in qty_rows) and bool(qty_rows)
+            check("导线架设按单线口径计算（公式含单线）", single_line_ok,
+                  f"{[(row['name'], row['qty']) for row in qty_rows[:3]]}")
+        except Exception as exc:  # noqa: BLE001 - v8 未就绪时给出 FAIL 而不是中断
+            check("作业指导书工序库（v8）E2E 执行", False, f"异常：{exc}")
     finally:
         zaojia.close()
         fuhe.close()
@@ -641,7 +665,7 @@ def main(argv=None) -> int:
                 print(f"  - {name}：{detail}")
         return 1
     print("E2E 全部通过 ✅（项目C 已走完 图纸→建模→算量→计价 全链路并完成复核与导出；"
-          "典型设计匹配/确认/导出/送审条件亦通过；新建项目、项目编码录入、上传分批与图纸删除、典设库目录图纸文件列通过）")
+          "典型设计匹配/确认/导出/送审条件亦通过；新建项目、项目编码录入、上传分批与图纸删除、典设库目录图纸文件列、作业指导书工序库与单线算量口径通过）")
     return 0
 
 
