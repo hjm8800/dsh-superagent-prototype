@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% from "_macros.html" import stage_banner %}
+{% block title %}算量 · {{ p.name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="crumb">项目工作流 / {{ p.code }} / 算量</div>
+    <h1>算量 <span class="badge {{ badge_class(stage.status) }}">{{ stage.status }}</span></h1>
+    <p class="sub">按算量规则从模型计算工程量（含计算式与依据），与设计材料清册对比并自动归因量差；工程量清单与材料量对比是计价的输入</p>
+  </div>
+  <div class="head-actions">
+    <a class="btn" href="/project/{{ p.id }}/quantities/export.xlsx">导出工程量清单</a>
+  </div>
+</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="kpi-label">工程量清单</div><div class="kpi-value">{{ rows|length }}</div><div class="kpi-sub">行（含安装 / 建筑 / 拆除 / 主材）</div></div>
+  <div class="kpi"><div class="kpi-label">安装 / 建筑</div><div class="kpi-value">{{ by_category.get('安装', 0) }}<small> / {{ by_category.get('建筑', 0) }}</small></div><div class="kpi-sub">安装工程 / 建筑工程行数</div></div>
+  <div class="kpi"><div class="kpi-label">拆除 / 主材</div><div class="kpi-value">{{ by_category.get('拆除', 0) }}<small> / {{ by_category.get('主材', 0) }}</small></div><div class="kpi-sub">拆除工程 / 主材行数</div></div>
+  <div class="kpi"><div class="kpi-label">主材金额</div><div class="kpi-value">{{ (stats.material_amount or 0)|wan }}</div><div class="kpi-sub">万元（按示例材料价）</div></div>
+</div>
+
+{% set extra_buttons %}
+  {% if editable %}
+  <form method="post" action="/project/{{ p.id }}/quantities/compute{{ keep_as }}" class="inline-form">
+    <button class="btn primary" type="submit">重新计算工程量</button>
+  </form>
+  {% endif %}
+  {% if rows %}
+  <a class="btn" href="/project/{{ p.id }}/quantities/export.xlsx">导出清单</a>
+  {% endif %}
+{% endset %}
+{{ stage_banner(stage, p, keep_as, can_edit, can_review, extra_buttons) }}
+
+<section class="card">
+  <div class="card-head">
+    <h2>计算规则与依据</h2>
+    <span class="muted small">2022 版《20kV及以下配电网工程预算定额》演示口径</span>
+  </div>
+  <div class="rule-grid">
+    {% for title, text in rules %}
+    <div class="rule-item">
+      <div class="rule-title">{{ loop.index }}. {{ title }}</div>
+      <div class="muted small">{{ text }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h2>工程量清单</h2>
+    <span class="muted small">计算式与依据随行输出，便于复核追溯</span>
+  </div>
+  {% if rows %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th style="width:48px">序号</th>
+          <th style="width:128px">单位工程</th>
+          <th style="width:196px">项目名称</th>
+          <th style="width:150px">规格型号</th>
+          <th style="width:56px">单位</th>
+          <th style="width:82px">数量</th>
+          <th style="width:180px">计算式</th>
+          <th>计算依据</th>
+          <th style="width:58px">类别</th>
+          <th style="width:92px">定额</th>
+          <th style="width:74px">状态</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for q in rows %}
+        <tr>
+          <td class="muted">{{ q.seq if q.seq is not none else loop.index }}</td>
+          <td>{{ q.unit_name or '—' }}</td>
+          <td>{{ q.name }}</td>
+          <td class="muted">{{ q.spec or '—' }}</td>
+          <td>{{ q.unit or '—' }}</td>
+          <td class="num strong">{{ q.qty|num }}</td>
+          <td class="mono small">{{ q.formula or '—' }}</td>
+          <td class="muted small">{{ q.basis or '—' }}</td>
+          <td><span class="badge {{ badge_class(q.category) }}">{{ q.category or '其他' }}</span></td>
+          <td class="mono small">{{ q.quota_code or '—' }}</td>
+          <td><span class="badge {{ badge_class(q.status) }}">{{ q.status or '已计算' }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">
+    尚无工程量数据。{% if editable %}点击“重新计算工程量”将按模型数据生成清单与材料量对比；{% else %}请由造价员在算量阶段执行计算。{% endif %}
+  </div>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h2>材料量对比（设计清册 vs 模型算量）</h2>
+    <span class="muted small">差异率 ≥1% 标注关注，预留损耗类差异自动归因</span>
+  </div>
+  {% if compare_rows %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th style="width:48px">序号</th>
+          <th style="width:180px">材料名称</th>
+          <th style="width:150px">规格型号</th>
+          <th style="width:56px">单位</th>
+          <th class="num" style="width:86px">设计量</th>
+          <th class="num" style="width:86px">模型量</th>
+          <th class="num" style="width:86px">差异</th>
+          <th class="num" style="width:80px">差异率</th>
+          <th style="width:72px">等级</th>
+          <th>差异原因 / 归因</th>
+          <th style="width:80px">确认状态</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in compare_rows %}
+        <tr>
+          <td class="muted">{{ m.seq if m.seq is not none else loop.index }}</td>
+          <td>{{ m.name }}</td>
+          <td class="muted">{{ m.spec or '—' }}</td>
+          <td>{{ m.unit or '—' }}</td>
+          <td class="num">{{ m.design_qty|num }}</td>
+          <td class="num">{{ m.model_qty|num }}</td>
+          <td class="num {{ 'neg' if (m.diff|float) < 0 else 'pos' }}">{{ m.diff|num }}</td>
+          <td class="num">{{ m.rate|pct }}</td>
+          <td><span class="badge {{ badge_class(m.level) }}">{{ m.level }}</span></td>
+          <td class="muted small">{{ m.reason or '—' }}</td>
+          <td><span class="badge {{ badge_class(m.status) }}">{{ m.status or '待确认' }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">暂无材料量对比数据，执行“重新计算工程量”后自动生成。</div>
+  {% endif %}
+</section>
+
+{% if can_edit and stage.status == '进行中' %}
+<div class="action-bar">
+  <span class="muted small">完成算量并核对材料量差异后，提交复核进入计价阶段。</span>
+  <form method="post" action="/project/{{ p.id }}/stage/quantities/submit{{ keep_as }}" class="inline-form">
+    <button class="btn primary" type="submit">提交算量复核</button>
+  </form>
+</div>
+{% endif %}
+
+<section class="card td-ref-card">
+  <div class="card-head">
+    <h2>相关施工工序（作业指导书）</h2>
+    <span class="muted small">按本项目模型/算量内容匹配 · 只读参考</span>
+  </div>
+  {% if related_instructions %}
+  <div class="td-ref-list">
+    {% for item in related_instructions %}
+    <div class="td-ref-item">
+      <span class="mono small td-ref-code">{{ item.code or '—' }}</span>
+      <span class="td-ref-name">{{ item.title }}</span>
+      <span class="muted small">{{ item.category }}{% if item.version %} · {{ item.version }}{% endif %}</span>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="hint">工序要点用于施工组织与算量口径核对；完整条目见<a class="link" href="/instructions{{ keep_as }}">作业指导书工序库</a>。</div>
+  {% else %}
+  <div class="empty">本项目模型内容较少，暂未匹配到相关工序条目；可到<a class="link" href="/instructions{{ keep_as }}">作业指导书工序库</a>检索。</div>
+  {% endif %}
+</section>
+{% endblock %}

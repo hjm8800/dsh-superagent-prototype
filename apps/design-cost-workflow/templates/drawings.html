@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% from "_macros.html" import stage_banner %}
+{% block title %}图纸解析 · {{ p.name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="crumb">项目工作流 / {{ p.code }} / 图纸解析</div>
+    <h1>图纸解析 <span class="badge {{ badge_class(stage.status) }}">{{ stage.status }}</span></h1>
+    <p class="sub">施工图、说明书、杆塔明细表与设备材料清册导入 → 自动识别项目画像（路径长度、杆塔、配变容量、导线型号）→ 为建模提供初稿依据</p>
+  </div>
+</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="kpi-label">图纸 / 清册总数</div><div class="kpi-value">{{ counts.total }}</div><div class="kpi-sub">含已识别与需插件文件</div></div>
+  <div class="kpi"><div class="kpi-label">已识别</div><div class="kpi-value ok">{{ counts['已识别'] }}</div><div class="kpi-sub">可用于生成模型初稿</div></div>
+  <div class="kpi"><div class="kpi-label">需插件</div><div class="kpi-value {{ 'warn' if counts['需插件'] else '' }}">{{ counts['需插件'] }}</div><div class="kpi-sub">DWG 需 ODA File Converter</div></div>
+  <div class="kpi"><div class="kpi-label">解析失败 / 待识别</div><div class="kpi-value {{ 'danger' if counts['解析失败'] else '' }}">{{ counts['解析失败'] + counts['待识别'] }}</div><div class="kpi-sub">可人工编目后继续</div></div>
+</div>
+
+{% set extra_buttons %}
+  {% if autofill_ok %}
+  <form method="post" action="/project/{{ p.id }}/drawings/autofill{{ keep_as }}" class="inline-form">
+    <button class="btn" type="submit">由已识别图纸生成模型初稿</button>
+  </form>
+  {% endif %}
+  {% if identified %}
+  <a class="btn" href="/project/{{ p.id }}/model{{ keep_as }}">进入建模 →</a>
+  {% endif %}
+{% endset %}
+{{ stage_banner(stage, p, keep_as, can_edit, can_review, extra_buttons) }}
+
+<section class="card td-card">
+  <div class="card-head">
+    <h2>典型设计匹配（自动）</h2>
+    <span class="muted small">图纸上传/解析后自动执行 · 图纸解析阶段辅助能力（不单独设置门禁）</span>
+  </div>
+  {% if td_stats.modules %}
+  <div class="mini-stats">
+    <div class="mini-stat"><span>目录模块</span><strong>{{ td_stats.modules }}</strong><em>已导入</em></div>
+    <div class="mini-stat"><span>已匹配</span><strong>{{ td_stats.matched }}</strong><em>匹配率 {{ td_stats.rate|pct2 }}%</em></div>
+    <div class="mini-stat"><span>待确认</span><strong class="{{ 'warn' if td_stats.pending else 'ok' }}">{{ td_stats.pending }}</strong><em>需人工确认</em></div>
+    <div class="mini-stat"><span>已确认</span><strong class="ok">{{ td_stats.confirmed }}</strong><em>可作建模参考</em></div>
+    <div class="mini-stat"><span>应用率</span><strong>{{ td_stats.rate|pct2 }}%</strong><em>已匹配 / 目录</em></div>
+  </div>
+  <div class="card-actions-row">
+    <a class="btn primary" href="/project/{{ p.id }}/typdesign{{ keep_as }}">查看/确认匹配 →</a>
+    {% if can_edit %}
+    <form method="post" action="/project/{{ p.id }}/typdesign/match{{ keep_as }}" class="inline-form">
+      <button class="btn small" type="submit">重新匹配</button>
+    </form>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="empty">
+    尚未导入典设目录（可选）。导入南网 V3.1 典设模块目录后，图纸上传/解析时会自动匹配；人工确认后可作为建模参考与附件6-1 图纸依据。
+    <a class="link" href="/project/{{ p.id }}/typdesign{{ keep_as }}">前往导入典设目录 →</a>
+  </div>
+  {% endif %}
+  <div class="hint">典设匹配在图纸上传/解析、删除图纸、生成建模初稿时自动执行，无需单独操作；匹配为规则算法结果，需人工逐项确认。演示目录为“演示用典设目录节选（40 条，非完整 V3.1 库）”。</div>
+</section>
+
+<div class="grid-2 wide-left">
+  <section class="card">
+    <div class="card-head">
+      <h2>上传图纸 / 清册</h2>
+      <span class="muted small">支持 PDF / DWG / XLSX / XLS / DOCX / JPG，可多选、可分批添加</span>
+    </div>
+    {% if editable %}
+    <form class="upload-form" method="post" action="/project/{{ p.id }}/drawings/upload{{ keep_as }}" enctype="multipart/form-data">
+      <label class="field">
+        <span>选择文件（可多选；可先选一个文件夹里的文件，再选另一个文件夹的文件，会累计添加；单个 ≤ 50MB）</span>
+        <input type="file" name="files" multiple data-file-input>
+      </label>
+      <label class="field">
+        <span>或选择文件夹（一次取该文件夹下的全部文件，含子目录，保留层级）</span>
+        <input type="file" name="files" multiple webkitdirectory directory data-dir-input>
+      </label>
+      <input type="hidden" name="rel_paths" value="" data-rel-paths>
+      <div class="upload-actions">
+        <button type="button" class="btn small" data-file-clear hidden>清空已选</button>
+        <span class="muted small" data-file-count></span>
+      </div>
+      <label class="field">
+        <span>图纸类别</span>
+        <select name="category">
+          <option value="自动识别">自动识别（按文件名）</option>
+          <option value="设计说明书">设计说明书</option>
+          <option value="平面图">平面图</option>
+          <option value="安装图">安装图</option>
+          <option value="明细表">明细表</option>
+          <option value="材料清册">材料清册</option>
+          <option value="预算">预算</option>
+          <option value="现场照片">现场照片</option>
+          <option value="其他">其他</option>
+        </select>
+      </label>
+      <button class="btn primary" type="submit">上传并识别</button>
+    </form>
+    <div class="hint" data-file-hint>
+      可分批选择文件（累计添加），也可直接选择整个文件夹（递归取该文件夹下所有文件）；上传后系统自动解析：
+      PDF 提取文字并识别路径/杆塔/配变；XLSX/XLS 读取工作表与数据行；DWG 检测 ODA File Converter 插件后转 DXF 读取文字，未安装时标记“需插件”。
+    </div>
+    {% else %}
+    <div class="empty">
+      当前不可上传：需图纸解析阶段为“进行中”，且当前角色为造价员或管理员。
+      {% if stage.status == '已完成' %}该阶段已完成，如需补充图纸请由复核员退回本阶段。{% endif %}
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>识别结果概览</h2>
+      <span class="muted small">已识别 {{ identified|length }} 份</span>
+    </div>
+    {% if identified %}
+    <div class="ident-list">
+      {% for d in identified[:6] %}
+      <div class="ident-row">
+        <span class="badge ok">已识别</span>
+        <div>
+          <div class="strong">{{ d.name }} <span class="muted small">· {{ d.category or '其他' }}</span></div>
+          <div class="muted small">{{ d.summary or '无识别结论' }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty">暂无识别成功的图纸，请上传 PDF / XLSX 等支持格式的文件。</div>
+    {% endif %}
+    {% if counts['需插件'] %}
+    <div class="hint warn">有 {{ counts['需插件'] }} 份 DWG 图纸因未安装 ODA File Converter 而标记“需插件”，已登记图纸目录，可人工编目后继续建模。</div>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head">
+    <h2>图纸目录</h2>
+    <span class="muted small">共 {{ counts.total }} 份 · 识别结论来自解析器自动提取，需人工复核</span>
+  </div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th style="width:52px">序号</th>
+          <th style="width:110px">图纸编号</th>
+          <th style="width:210px">图纸名称</th>
+          <th style="width:100px">类别</th>
+          <th style="width:64px">格式</th>
+          <th style="width:58px">张数</th>
+          <th style="width:86px">状态</th>
+          <th>识别结论</th>
+          <th style="width:122px">上传时间</th>
+          <th style="width:84px">上传人</th>
+          {% if editable %}<th style="width:76px">操作</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in drawings %}
+        <tr>
+          <td class="muted">{{ loop.index }}</td>
+          <td class="mono">{{ d.code or '—' }}</td>
+          <td>{{ d.name }}</td>
+          <td>{{ d.category or '其他' }}</td>
+          <td>{{ d.fmt or '—' }}</td>
+          <td class="num">{{ d.sheet_count or 1 }}</td>
+          <td><span class="badge {{ badge_class(d.status) }}">{{ d.status }}</span></td>
+          <td class="muted small">{{ d.summary or '—' }}</td>
+          <td class="muted small">{{ d.uploaded_at or '—' }}</td>
+          <td class="small">{{ d.uploader_name or '—' }}</td>
+          {% if editable %}
+          <td>
+            <form method="post" action="/project/{{ p.id }}/drawings/{{ d.id }}/delete{{ keep_as }}" class="inline-form">
+              <button class="btn small danger" type="submit"
+                      data-confirm="确认删除图纸「{{ d.name }}」？删除后可在本阶段重新上传。">删除</button>
+            </form>
+          </td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+        {% if not drawings %}
+        <tr><td colspan="{{ 11 if editable else 10 }}" class="empty-cell">暂无图纸，请先上传施工图或材料清册。</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

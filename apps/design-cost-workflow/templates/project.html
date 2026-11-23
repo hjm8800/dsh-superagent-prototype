@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% from "_macros.html" import submit_box, review_box %}
+{% block title %}{{ p.name }} · 工作流总览{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="crumb">项目工作流 / {{ p.code }}</div>
+    <h1>{{ p.name }}</h1>
+    <p class="sub">
+      {{ p.ptype }} · {{ p.location }}
+      {% if p.t0 %} · 计划完成 {{ p.t0 }}{% endif %}
+      {% if p.note %} · {{ p.note }}{% endif %}
+    </p>
+  </div>
+  <div class="head-actions">
+    <a class="btn" href="/project/{{ p.id }}/compare{{ keep_as }}">对比分析</a>
+    <a class="btn" href="/project/{{ p.id }}/pricing/export.xlsx">导出预算书</a>
+  </div>
+</div>
+
+<div class="kpis">
+  <div class="kpi">
+    <div class="kpi-label">四阶段进度</div>
+    <div class="kpi-value">{{ progress.percent }}%</div>
+    <div class="kpi-sub">{{ progress.done }}/{{ progress.total }} 阶段已完成</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">设计静态投资</div>
+    <div class="kpi-value">{{ design_total|wan }}</div>
+    <div class="kpi-sub">万元（附件5 设计预算）</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">模型静态投资</div>
+    {% if model_total %}
+    <div class="kpi-value ok">{{ model_total|wan }}</div>
+    {% else %}
+    <div class="kpi-value muted">未计价</div>
+    {% endif %}
+    <div class="kpi-sub">万元（按模型 + 示例定额计价）</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">预算差异</div>
+    {% if model_total %}
+    <div class="kpi-value {{ 'warn' if (diff_rate|abs) > 3 else 'ok' }}">{{ diff_rate|pct }}</div>
+    {% else %}
+    <div class="kpi-value muted">—</div>
+    {% endif %}
+    <div class="kpi-sub">模型预算 vs 设计预算</div>
+  </div>
+</div>
+
+{% if next_action %}
+{% set cta_label = '查看对比分析 →' if next_action.kind == 'done' else ('去复核 →' if next_action.kind == 'review' else '去处理 →') %}
+<div class="next-action {{ next_action.kind }}">
+  <div class="next-action-main">
+    <span class="next-kicker">{{ '已完成' if next_action.kind == 'done' else '下一步' }}</span>
+    <div>
+      <div class="next-title">{{ next_action.label }}</div>
+      <div class="next-desc">{{ next_action.desc }}</div>
+    </div>
+  </div>
+  <a class="btn primary" href="{{ next_action.href }}{{ keep_as }}">{{ cta_label }}</a>
+</div>
+{% endif %}
+
+<section class="card">
+  <div class="card-head">
+    <h2>四阶段工作流</h2>
+    <span class="muted small">图纸解析 → 建模 → 算量 → 计价 · 每阶段需复核通过后才能流转</span>
+  </div>
+  <div class="stepper">
+    {% for s in stages %}
+    <div class="stage-card {{ 'is-current' if s.status == '进行中' else '' }} {{ 'is-review' if s.status == '待复核' else '' }}">
+      <div class="stage-head">
+        <div class="stage-dot {{ badge_class(s.status) }}">{{ loop.index }}</div>
+        <div class="stage-title">
+          <div class="stage-name">{{ s.name }}</div>
+          <span class="badge {{ badge_class(s.status) }}">{{ s.status }}</span>
+        </div>
+        <div class="stage-ver">v{{ s.version }}</div>
+      </div>
+      <div class="stage-meta">
+        <div><span class="muted">负责人</span> {{ s.owner or '—' }}</div>
+        <div><span class="muted">复核人</span> {{ s.reviewer or '—' }}</div>
+        <div><span class="muted">提交时间</span> {{ s.submitted_at or '—' }}</div>
+        <div><span class="muted">复核时间</span> {{ s.reviewed_at or '—' }}</div>
+      </div>
+      {% if s.note %}<div class="stage-note">{{ s.note }}</div>{% endif %}
+      <div class="stage-actions">
+        <a class="btn small" href="/project/{{ p.id }}/{{ s.key }}{{ keep_as }}">打开{{ s.name }}</a>
+        {% if can_edit and s.status == '进行中' %}{{ submit_box(s, p, keep_as) }}{% endif %}
+      </div>
+      {% if can_review and s.status == '待复核' %}{{ review_box(s, p, keep_as) }}{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="card td-card">
+  <div class="card-head">
+    <h2>典型设计匹配（自动）</h2>
+    <span class="muted small">南网 V3.1 典设图纸库 ↔ 项目设计图纸 · 图纸解析时自动执行，无需单独操作</span>
+  </div>
+  {% if td_stats.modules %}
+  <div class="mini-stats">
+    <div class="mini-stat"><span>目录模块</span><strong>{{ td_stats.modules }}</strong><em>已导入</em></div>
+    <div class="mini-stat"><span>已匹配</span><strong>{{ td_stats.matched }}</strong><em>匹配率 {{ td_stats.rate|pct2 }}%</em></div>
+    <div class="mini-stat"><span>待确认</span><strong class="{{ 'warn' if td_stats.pending else 'ok' }}">{{ td_stats.pending }}</strong><em>需人工确认</em></div>
+    <div class="mini-stat"><span>已确认</span><strong class="ok">{{ td_stats.confirmed }}</strong><em>已应用模块</em></div>
+    <div class="mini-stat"><span>应用率</span><strong>{{ td_stats.rate|pct2 }}%</strong><em>已匹配 / 目录</em></div>
+  </div>
+  <div class="card-actions-row">
+    <a class="btn primary" href="/project/{{ p.id }}/typdesign{{ keep_as }}">查看匹配明细/确认 →</a>
+    {% if td_stats.pending %}
+    <span class="hint-inline">有 {{ td_stats.pending }} 个模块待确认，确认后方可作为附件6-1 图纸依据。</span>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="empty">
+    尚未导入典设目录。<a class="link" href="/project/{{ p.id }}/typdesign{{ keep_as }}">前往导入并匹配典设 →</a>
+  </div>
+  {% endif %}
+</section>
+
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head">
+      <h2>设计预算 vs 模型预算</h2>
+      <span class="muted small">单位：万元</span>
+    </div>
+    {% if compare_rows %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>费用构成</th>
+            <th class="num">设计预算</th>
+            <th class="num">模型预算</th>
+            <th class="num">差异</th>
+            <th class="num">差异率</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in compare_rows %}
+          <tr>
+            <td>{{ row.item }}</td>
+            <td class="num">{{ row.design_amount|wan }}</td>
+            <td class="num">{{ row.model_amount|wan }}</td>
+            <td class="num {{ 'neg' if (row.diff|float) < 0 else 'pos' }}">{{ row.diff|wan }}</td>
+            <td class="num"><span class="badge {{ 'danger' if (row.rate|abs) >= 3 else 'ok' }}">{{ row.rate|pct }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty">
+      尚未完成计价。当前设计预算（静态投资）：<span class="strong">{{ design_total|wan }} 万元</span>；
+      完成“计价”阶段后自动生成 5 行对比（设备购置费 / 安装工程费 / 其他费用 / 基本预备费 / 静态投资）。
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>模型校验与材料风险</h2>
+      <span class="muted small">高级问题 {{ check_counts['高'] }} 项</span>
+    </div>
+    <div class="check-summary">
+      <div class="check-pill danger">高 {{ check_counts['高'] }}</div>
+      <div class="check-pill warn">中 {{ check_counts['中'] }}</div>
+      <div class="check-pill info">低 {{ check_counts['低'] }}</div>
+      <a class="btn small" href="/project/{{ p.id }}/model{{ keep_as }}">查看校验明细</a>
+    </div>
+    {% if alerts %}
+    <div class="risk-list compact">
+      {% for a in alerts %}
+      <div class="risk-row">
+        <span class="badge {{ badge_class(a.level) }}">{{ a.level }}</span>
+        <div class="risk-main">
+          <div class="strong">{{ a.name }}{% if a.spec %} · {{ a.spec }}{% endif %}</div>
+          <div class="muted small">设计 {{ a.design_qty|num }} / 模型 {{ a.model_qty|num }} · {{ a.reason or '差异待确认' }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty">暂无材料量异常。</div>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head">
+    <h2>审计动态</h2>
+    <span class="muted small">最近 {{ audit|length }} 条操作记录</span>
+  </div>
+  {% if audit %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th style="width:150px">时间</th>
+          <th style="width:110px">操作人</th>
+          <th style="width:140px">动作</th>
+          <th>详情</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in audit %}
+        <tr>
+          <td class="muted">{{ a.created_at }}</td>
+          <td>{{ a.user_name or '系统' }}</td>
+          <td><span class="badge info">{{ a.action }}</span></td>
+          <td class="muted">{{ a.detail or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">暂无审计记录。</div>
+  {% endif %}
+</section>
+{% endblock %}

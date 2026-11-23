@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+{% from "_macros.html" import stage_banner %}
+{% block title %}计价 · {{ p.name }}{% endblock %}
+{% block content %}
+{% set pricing_items = summary['items'] %}
+<div class="page-head">
+  <div>
+    <div class="crumb">项目工作流 / {{ p.code }} / 计价</div>
+    <h1>计价 <span class="badge {{ badge_class(stage.status) }}">{{ stage.status }}</span></h1>
+    <p class="sub">按 2022 版《20kV及以下配电网工程建设预算编制与计算规定》的费用构成与费率，套用示例定额库生成施工图预算，并与设计预算（附件5）对比</p>
+  </div>
+  <div class="head-actions">
+    {% if summary.static_total and summary.static_total > 0 %}
+    <a class="btn" href="/project/{{ p.id }}/pricing/export.xlsx">导出预算书 Excel</a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="kpis">
+  <div class="kpi">
+    <div class="kpi-label">静态投资</div>
+    {% if summary.static_total and summary.static_total > 0 %}
+    <div class="kpi-value ok">{{ summary.static_total|wan }}</div>
+    <div class="kpi-sub">万元 · {{ summary.static_total|money }} 元</div>
+    {% else %}
+    <div class="kpi-value muted">未计价</div>
+    <div class="kpi-sub">点击下方“重新计价”生成预算</div>
+    {% endif %}
+  </div>
+  <div class="kpi"><div class="kpi-label">安装工程费</div><div class="kpi-value">{{ (summary.install or 0)|wan }}</div><div class="kpi-sub">万元 · 含措施费/规费/管理费/利润/税金</div></div>
+  <div class="kpi"><div class="kpi-label">建筑工程费</div><div class="kpi-value">{{ (summary.build or 0)|wan }}</div><div class="kpi-sub">万元</div></div>
+  <div class="kpi"><div class="kpi-label">拆除工程费</div><div class="kpi-value">{{ (summary.demolition or 0)|wan }}</div><div class="kpi-sub">万元</div></div>
+  <div class="kpi"><div class="kpi-label">设备购置费</div><div class="kpi-value">{{ (summary.equipment or 0)|wan }}</div><div class="kpi-sub">万元 · 含运杂费 1.06%</div></div>
+  <div class="kpi"><div class="kpi-label">其他费用</div><div class="kpi-value">{{ (summary.other or 0)|wan }}</div><div class="kpi-sub">万元 · 按编制规定逐项计取</div></div>
+  <div class="kpi"><div class="kpi-label">基本预备费</div><div class="kpi-value">{{ (summary.reserve or 0)|wan }}</div><div class="kpi-sub">万元 · （建安+设备+其他）×3%</div></div>
+  <div class="kpi"><div class="kpi-label">定额子目</div><div class="kpi-value">{{ pricing_items|length }}</div><div class="kpi-sub">项 · 来自算量清单套价</div></div>
+</div>
+
+{% set extra_buttons %}
+  {% if editable %}
+  <form method="post" action="/project/{{ p.id }}/pricing/compute{{ keep_as }}" class="inline-form">
+    <button class="btn primary" type="submit">重新计价</button>
+  </form>
+  {% endif %}
+  {% if summary.static_total and summary.static_total > 0 %}
+  <a class="btn" href="/project/{{ p.id }}/pricing/export.xlsx">导出预算书</a>
+  {% endif %}
+{% endset %}
+{{ stage_banner(stage, p, keep_as, can_edit, can_review, extra_buttons) }}
+
+{% if not pricing_items %}
+<section class="card">
+  <div class="empty big-empty">
+    <div class="empty-title">尚未计价</div>
+    <div class="muted">{{ '算量完成并复核通过后，点击“重新计价”即可按示例定额库与 2022 版费率生成施工图预算。' if editable else '计价阶段尚未开始：请先完成算量阶段复核。' }}</div>
+    {% if editable %}
+    <form method="post" action="/project/{{ p.id }}/pricing/compute{{ keep_as }}" class="inline-form">
+      <button class="btn primary" type="submit">重新计价</button>
+    </form>
+    {% endif %}
+  </div>
+</section>
+{% else %}
+
+<section class="card">
+  <div class="card-head">
+    <h2>定额套用表</h2>
+    <span class="muted small">示例定额库（演示用）· 可逐行更换定额子目，费用汇总自动重算</span>
+  </div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th style="width:44px">序号</th>
+          <th style="width:104px">单位工程</th>
+          <th style="width:168px">项目名称</th>
+          <th style="width:48px">单位</th>
+          <th class="num" style="width:66px">数量</th>
+          <th style="width:88px">定额编号</th>
+          <th style="width:148px">定额名称</th>
+          <th class="num" style="width:66px">人工费</th>
+          <th class="num" style="width:66px">材料费</th>
+          <th class="num" style="width:66px">机械费</th>
+          <th class="num" style="width:78px">主材费</th>
+          <th class="num" style="width:88px">直接工程费</th>
+          <th style="width:196px">更换定额</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in pricing_items %}
+        <tr>
+          <td class="muted">{{ it.seq if it.seq is not none else loop.index }}</td>
+          <td>{{ it.unit_name or '—' }}</td>
+          <td>{{ it.name }}{% if it.spec %}<div class="muted small">{{ it.spec }}</div>{% endif %}</td>
+          <td>{{ it.unit or '—' }}</td>
+          <td class="num">{{ it.qty|num }}</td>
+          <td class="mono small">{{ it.quota_code or '—' }}</td>
+          <td class="small">{{ it.quota_name or '—' }}</td>
+          <td class="num">{{ it.labor|money }}</td>
+          <td class="num">{{ it.material|money }}</td>
+          <td class="num">{{ it.machine|money }}</td>
+          <td class="num">{{ it.main_material|money }}</td>
+          <td class="num strong">{{ it.direct_cost|money }}</td>
+          <td>
+            {% if editable %}
+            <form method="post" action="/project/{{ p.id }}/pricing/item/{{ it.id }}/quota{{ keep_as }}" class="quota-form">
+              <select name="quota_code" aria-label="定额子目">
+                {% for q in quota_lib %}
+                <option value="{{ q.code }}" {{ 'selected' if q.code == it.quota_code else '' }}>{{ q.code }} {{ q.name }}</option>
+                {% endfor %}
+              </select>
+              <button class="btn small" type="submit">更换</button>
+            </form>
+            {% else %}
+            <span class="muted small">只读</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% set mats = item_materials.get(it.id) %}
+        {% if mats %}
+        <tr class="sub-row">
+          <td></td>
+          <td colspan="12">
+            <div class="mat-line">
+              <span class="mat-label">主材明细</span>
+              {% for m in mats %}
+              <span class="mat-chip">{{ m.name }}{% if m.spec %} {{ m.spec }}{% endif %}｜{{ m.qty|num }}{{ m.unit or '' }} × {{ m.unit_price|money }} 元 = {{ m.amount|money }} 元{% if m.supply %}（{{ m.supply }}）{% endif %}</span>
+              {% endfor %}
+            </div>
+          </td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div class="grid-3-2">
+  <section class="card">
+    <div class="card-head"><h2>费用汇总表</h2><span class="muted small">2022 版编制规定·江西Ⅰ类地区演示费率</span></div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th style="width:44px">序号</th>
+            <th style="width:106px">费用构成</th>
+            <th style="width:190px">费用项目</th>
+            <th>计算基数</th>
+            <th class="num" style="width:76px">费率(%)</th>
+            <th class="num" style="width:118px">金额(元)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for f in summary.fees %}
+          <tr>
+            <td class="muted">{{ f.seq if f.seq is not none else loop.index }}</td>
+            <td><span class="badge info">{{ f.category }}</span></td>
+            <td>{{ f.item }}</td>
+            <td class="muted small">{{ f.base_desc or '—' }}{% if f.formula %}<div class="mono small">{{ f.formula }}</div>{% endif %}</td>
+            <td class="num">{{ f.rate|pct2 }}</td>
+            <td class="num {{ 'strong' if f.category in ('静态投资', '设备购置费', '其他费用', '基本预备费') else '' }}">{{ f.amount|money }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>AI 差异说明</h2><span class="muted small">基于模型预算与设计预算自动生成</span></div>
+    <div class="insight-list">
+      {% for ins in insights %}
+      <div class="insight {{ ins.level }}">
+        <div class="insight-title">{{ ins.title }}</div>
+        <div class="muted small">{{ ins.text }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head">
+    <h2>设计预算（附件5）对比</h2>
+    <span class="muted small">
+      {% if static_row %}静态投资差异 {{ static_row.rate|pct }}{% else %}单位：万元{% endif %}
+    </span>
+  </div>
+  {% if compare_rows %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th style="width:44px">序号</th>
+          <th style="width:210px">费用构成</th>
+          <th class="num">设计预算(万元)</th>
+          <th class="num">模型预算(万元)</th>
+          <th class="num">差异(万元)</th>
+          <th class="num">差异率</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in compare_rows %}
+        <tr>
+          <td class="muted">{{ loop.index }}</td>
+          <td class="strong">{{ row.item }}</td>
+          <td class="num">{{ row.design_amount|wan }}</td>
+          <td class="num">{{ row.model_amount|wan }}</td>
+          <td class="num {{ 'neg' if (row.diff|float) < 0 else 'pos' }}">{{ row.diff|wan }}</td>
+          <td class="num"><span class="badge {{ 'danger' if (row.rate|abs) >= 3 else 'ok' }}">{{ row.rate|pct }}</span></td>
+          <td class="muted small">{{ row.note or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">暂无设计预算对比数据。</div>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if can_edit and stage.status == '进行中' and pricing_items %}
+<div class="action-bar">
+  <span class="muted small">核对定额套用与费用汇总后，提交复核进入计价定稿。</span>
+  <form method="post" action="/project/{{ p.id }}/stage/pricing/submit{{ keep_as }}" class="inline-form">
+    <button class="btn primary" type="submit">提交计价复核</button>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

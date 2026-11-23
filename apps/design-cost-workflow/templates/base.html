@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}设计图纸→建模→算量→计价 工作流{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/{{ keep_as }}">设计<span>造价</span>工作台</a>
+  <nav class="topnav">
+    <a href="/{{ keep_as }}" class="{{ 'active' if active == 'dashboard' else '' }}">工作台</a>
+    <a href="/project/1{{ keep_as }}" class="{{ 'active' if active in ('flow','drawings','model','quantities','pricing','compare','typdesign') else '' }}">项目工作流</a>
+    <a href="/instructions{{ keep_as }}" class="{{ 'active' if active == 'instructions' else '' }}">作业指导书</a>
+    <a href="/demo{{ keep_as }}" class="{{ 'active' if active == 'demo' else '' }}">演示路线</a>
+  </nav>
+  {% if demo %}
+  <div class="demo-switch">
+    <span class="demo-label">演示身份</span>
+    {% set current_identity = demo_as or (user.username if user else '') %}
+    <a href="{{ request.url.path }}?as=zaojia" class="{{ 'active' if current_identity == 'zaojia' else '' }}">造价员</a>
+    <a href="{{ request.url.path }}?as=fuhe" class="{{ 'active' if current_identity == 'fuhe' else '' }}">复核员</a>
+    <a href="{{ request.url.path }}?as=admin" class="{{ 'active' if current_identity == 'admin' else '' }}">管理员</a>
+  </div>
+  {% endif %}
+  <div class="userbox">
+    <span class="avatar">{{ (user.name or 'U')[0] }}</span>
+    <span class="username">{{ user.name }}</span>
+    <span class="role">{{ role_names.get(user.role, user.role) }}</span>
+    <a href="/login">切换账号</a>
+    <a href="/logout">退出</a>
+  </div>
+</header>
+
+{% if nav_p %}
+<div class="projectbar">
+  <div class="projectbar-main">
+    <span class="pcode">{{ nav_p.code }}</span>
+    <a class="pname" href="/project/{{ nav_p.id }}{{ keep_as }}">{{ nav_p.name }}</a>
+    <span class="badge {{ badge_class(nav_p.stage) }}">{{ nav_p.stage }}</span>
+    <span class="muted small">{{ nav_p.ptype }} · {{ nav_p.location }}</span>
+  </div>
+  <nav class="stagenav">
+    <a href="/project/{{ nav_p.id }}{{ keep_as }}" class="{{ 'active' if active == 'flow' else '' }}">流程总览</a>
+    {% for s in stages or [] %}
+    <a href="/project/{{ nav_p.id }}/{{ s.key }}{{ keep_as }}" class="{{ 'active' if active == s.key else '' }}">
+      <span class="dot {{ badge_class(s.status) }}"></span>{{ s.name }}
+    </a>
+    {% endfor %}
+    <a href="/project/{{ nav_p.id }}/compare{{ keep_as }}" class="{{ 'active' if active == 'compare' else '' }}">对比分析</a>
+  </nav>
+</div>
+{% endif %}
+
+<main class="main">
+  {% if msg %}<div class="flash {{ 'error' if msg_level == 'error' else '' }}">{{ msg }}</div>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+
+<footer class="footer">
+  设计图纸 → 建模 → 算量 → 计价 工作流原型 · 演示数据已匿名化 · 示例定额与材料价仅供演示，正式项目须人工复核
+</footer>
+
+{# ---------- 提示：可复用组件（submit_box / review_box / stage_banner）
+   统一定义在 templates/_macros.html 中，页面通过 {% from "_macros.html" import ... %} 引入 ---------- #}
+<script src="/static/app.js" defer></script>
+</body>
+</html>

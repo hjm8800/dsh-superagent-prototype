@@ -1,0 +1,426 @@
+{% extends "base.html" %}
+{% from "_macros.html" import stage_banner %}
+{% block title %}建模 · {{ p.name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="crumb">项目工作流 / {{ p.code }} / 建模</div>
+    <h1>建模 <span class="badge {{ badge_class(stage.status) }}">{{ stage.status }}</span></h1>
+    <p class="sub">由图纸识别结果生成配网模型初稿（线路 / 杆塔 / 导线 / 设备 / 土建 / 拆除），人工校正后执行模型校验，通过复核进入算量</p>
+  </div>
+</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="kpi-label">线路</div><div class="kpi-value">{{ model_stats.lines }}</div><div class="kpi-sub">亘长合计 {{ model_stats.length_km|num }} km</div></div>
+  <div class="kpi"><div class="kpi-label">杆塔</div><div class="kpi-value">{{ model_stats.poles }}</div><div class="kpi-sub">基（含拉线 {{ lines|sum(attribute='stays') if lines else 0 }} 条）</div></div>
+  <div class="kpi"><div class="kpi-label">设备 / 主材</div><div class="kpi-value">{{ model_stats.equipment }}<small> / {{ model_stats.materials }}</small></div><div class="kpi-sub">台（套）/ 项</div></div>
+  <div class="kpi"><div class="kpi-label">土建 / 拆除</div><div class="kpi-value">{{ model_stats.civil }}<small> / {{ model_stats.demolition }}</small></div><div class="kpi-sub">项</div></div>
+</div>
+
+{% set extra_buttons %}
+  {% if autofill_ok %}
+  <form method="post" action="/project/{{ p.id }}/model/autofill{{ keep_as }}" class="inline-form">
+    <button class="btn" type="submit">由图纸生成模型初稿</button>
+  </form>
+  {% endif %}
+  {% if can_edit %}
+  <form method="post" action="/project/{{ p.id }}/model/validate{{ keep_as }}" class="inline-form">
+    <button class="btn" type="submit">执行模型校验</button>
+  </form>
+  {% endif %}
+{% endset %}
+{{ stage_banner(stage, p, keep_as, can_edit, can_review, extra_buttons) }}
+
+{% if not editable and stage.status != '进行中' %}
+<div class="readonly-note">
+  当前为只读视图：{{ '阶段已完成，如需修改请由复核员退回。' if stage.status == '已完成' else '建模阶段尚未开始（请先完成图纸解析复核）。' }}
+</div>
+{% endif %}
+
+<section class="card td-ref-card">
+  <div class="card-head">
+    <h2>典设匹配参考（自动）</h2>
+    <span class="muted small">图纸解析后自动匹配、已确认 {{ td_confirmed|length }} 个典设模块可作为建模初稿参考 · 只读</span>
+  </div>
+  {% if td_confirmed %}
+  <div class="td-ref-list">
+    {% for m in td_confirmed[:6] %}
+    <div class="td-ref-item">
+      <span class="mono small td-ref-code">{{ m.code }}</span>
+      <span class="td-ref-name">{{ m.name }}</span>
+      <span class="muted small">{{ m.unit or '—' }}{% if m.qty %} × {{ m.qty|num }}{% endif %}</span>
+    </div>
+    {% endfor %}
+    {% if td_confirmed|length > 6 %}
+    <div class="td-ref-item muted small">… 另有 {{ td_confirmed|length - 6 }} 个已确认模块</div>
+    {% endif %}
+  </div>
+  <div class="hint">典设匹配在图纸解析阶段自动执行，本页仅展示已确认模块作为建模参考，不改变建模规则；“由图纸生成模型初稿”仍按图纸识别结果生成。完整清单/确认见<a class="link" href="/project/{{ p.id }}/typdesign{{ keep_as }}">典设匹配明细</a>。</div>
+  {% else %}
+  <div class="empty">
+    暂无已确认的典设模块。
+    {% if td_stats.modules %}
+    请到<a class="link" href="/project/{{ p.id }}/typdesign{{ keep_as }}">典型设计匹配</a>页确认应用模块；
+    {% else %}
+    可先在<a class="link" href="/project/{{ p.id }}/typdesign{{ keep_as }}">典型设计匹配</a>页导入南网 V3.1 典设目录并匹配；
+    {% endif %}
+    “由图纸生成模型初稿”仍按图纸识别结果生成。
+  </div>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h2>模型平面示意图</h2>
+    <span class="muted small">服务端按模型数据生成 · 示意用途，非施工图</span>
+  </div>
+  <div class="svg-wrap">{{ svg|safe }}</div>
+</section>
+
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head">
+      <h2>模型校验结果</h2>
+      <span class="muted small">高 {{ check_counts['高'] }} · 中 {{ check_counts['中'] }} · 低 {{ check_counts['低'] }}</span>
+    </div>
+    {% if checks %}
+    <div class="check-list">
+      {% for c in checks %}
+      <div class="check-item">
+        <span class="badge {{ badge_class(c.level) }}">{{ c.level }}</span>
+        <div>
+          <div class="strong">{{ c.name }}</div>
+          <div class="muted small">{{ c.problem }}</div>
+          <div class="hint">{{ c.hint }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty ok-empty">模型校验通过：未发现高 / 中 / 低问题，可提交复核。</div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>模型统计</h2></div>
+    <div class="kv-list">
+      <div class="kv"><span class="kv-label">线路数量</span><span class="kv-value">{{ model_stats.lines }} 条</span></div>
+      <div class="kv"><span class="kv-label">线路亘长</span><span class="kv-value">{{ model_stats.length_km|num }} km</span></div>
+      <div class="kv"><span class="kv-label">杆塔总数</span><span class="kv-value">{{ model_stats.poles }} 基</span></div>
+      <div class="kv"><span class="kv-label">设备数量</span><span class="kv-value">{{ model_stats.equipment }} 台（套）</span></div>
+      <div class="kv"><span class="kv-label">主材项数</span><span class="kv-value">{{ model_stats.materials }} 项</span></div>
+      <div class="kv"><span class="kv-label">土建项</span><span class="kv-value">{{ model_stats.civil }} 项</span></div>
+      <div class="kv"><span class="kv-label">拆除项</span><span class="kv-value">{{ model_stats.demolition }} 项</span></div>
+    </div>
+    <div class="hint">提示：校验“高”级问题未清零前，建模阶段无法提交复核；档距、拉线、土质等为人工校正重点。</div>
+  </section>
+</div>
+
+<div class="row-forms">
+  {% for l in lines %}<form id="line-form-{{ l.id }}" method="post" action="/project/{{ p.id }}/model/line/{{ l.id }}/update{{ keep_as }}"></form>{% endfor %}
+</div>
+<section class="card">
+  <div class="card-head">
+    <h2>线路与杆塔</h2>
+    <span class="muted small">{{ lines|length }} 条线路 · {{ '可直接编辑后保存' if editable else '只读' }}</span>
+  </div>
+  <div class="table-wrap">
+    <table class="table edit-table">
+      <thead>
+        <tr>
+          <th style="width:120px">线路名称</th>
+          <th style="width:76px">电压</th>
+          <th style="width:130px">起点</th>
+          <th style="width:130px">终点</th>
+          <th style="width:88px">亘长(km)</th>
+          <th style="width:56px">回路</th>
+          <th style="width:56px">相数</th>
+          <th style="width:150px">导线型号</th>
+          <th style="width:56px">杆数</th>
+          <th style="width:104px">杆型</th>
+          <th style="width:76px">档距(m)</th>
+          <th style="width:58px">拉线</th>
+          <th style="width:74px">土质</th>
+          {% if editable %}<th style="width:96px">操作</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for l in lines %}
+        <tr>
+          {% if editable %}
+          <td><input class="cell-input" form="line-form-{{ l.id }}" name="name" value="{{ l.name or '' }}"></td>
+          <td><select class="cell-input" form="line-form-{{ l.id }}" name="voltage">
+            <option value="10kV" {{ 'selected' if l.voltage == '10kV' else '' }}>10kV</option>
+            <option value="1kV" {{ 'selected' if l.voltage == '1kV' else '' }}>1kV</option>
+          </select></td>
+          <td><input class="cell-input" form="line-form-{{ l.id }}" name="start_point" value="{{ l.start_point or '' }}"></td>
+          <td><input class="cell-input" form="line-form-{{ l.id }}" name="end_point" value="{{ l.end_point or '' }}"></td>
+          <td><input class="cell-input num" form="line-form-{{ l.id }}" name="length_km" value="{{ l.length_km if l.length_km is not none else 0 }}" type="number" step="0.0001" min="0"></td>
+          <td><input class="cell-input num" form="line-form-{{ l.id }}" name="circuits" value="{{ l.circuits or 1 }}" type="number" min="1"></td>
+          <td><input class="cell-input num" form="line-form-{{ l.id }}" name="phases" value="{{ l.phases or 3 }}" type="number" min="1"></td>
+          <td><input class="cell-input" form="line-form-{{ l.id }}" name="conductor" value="{{ l.conductor or '' }}"></td>
+          <td><input class="cell-input num" form="line-form-{{ l.id }}" name="poles" value="{{ l.poles or 0 }}" type="number" min="0"></td>
+          <td><input class="cell-input" form="line-form-{{ l.id }}" name="pole_type" value="{{ l.pole_type or '' }}"></td>
+          <td><input class="cell-input num" form="line-form-{{ l.id }}" name="span_m" value="{{ l.span_m if l.span_m is not none else 0 }}" type="number" step="0.1" min="0"></td>
+          <td><input class="cell-input num" form="line-form-{{ l.id }}" name="stays" value="{{ l.stays or 0 }}" type="number" min="0"></td>
+          <td><select class="cell-input" form="line-form-{{ l.id }}" name="soil">
+            {% for soil in ['普通土', '坚土', '松砂石', '泥水'] %}
+            <option value="{{ soil }}" {{ 'selected' if l.soil == soil else '' }}>{{ soil }}</option>
+            {% endfor %}
+          </select></td>
+          <td class="actions-cell">
+            <button class="btn small primary" form="line-form-{{ l.id }}" type="submit">保存</button>
+            <button class="btn small danger" form="line-form-{{ l.id }}" formaction="/project/{{ p.id }}/model/line/{{ l.id }}/delete{{ keep_as }}" type="submit" data-confirm="确认删除线路“{{ l.name }}”？">删除</button>
+          </td>
+          {% else %}
+          <td>{{ l.name or '—' }}</td>
+          <td>{{ l.voltage or '—' }}</td>
+          <td>{{ l.start_point or '—' }}</td>
+          <td>{{ l.end_point or '—' }}</td>
+          <td class="num">{{ l.length_km|num }}</td>
+          <td class="num">{{ l.circuits or 1 }}</td>
+          <td class="num">{{ l.phases or 3 }}</td>
+          <td>{{ l.conductor or '—' }}</td>
+          <td class="num">{{ l.poles or 0 }}</td>
+          <td>{{ l.pole_type or '—' }}</td>
+          <td class="num">{{ l.span_m|num }}</td>
+          <td class="num">{{ l.stays or 0 }}</td>
+          <td>{{ l.soil or '—' }}</td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+        {% if not lines %}
+        <tr><td colspan="{{ 14 if editable else 13 }}" class="empty-cell">暂无线路数据{% if editable %}，请在下方“新增线路”中补充{% endif %}。</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+  {% if editable %}
+  <details class="add-box">
+    <summary>＋ 新增线路</summary>
+    <form method="post" action="/project/{{ p.id }}/model/line/add{{ keep_as }}" class="add-grid">
+      <label class="field"><span>线路名称 *</span><input name="name" required placeholder="如 10kV线路"></label>
+      <label class="field"><span>电压</span><select name="voltage"><option>10kV</option><option>1kV</option></select></label>
+      <label class="field"><span>起点</span><input name="start_point" placeholder="如 10kV线路T接点"></label>
+      <label class="field"><span>终点</span><input name="end_point" placeholder="如 台架变1#杆"></label>
+      <label class="field"><span>亘长(km)</span><input name="length_km" type="number" step="0.0001" min="0" value="0"></label>
+      <label class="field"><span>回路数</span><input name="circuits" type="number" min="1" value="1"></label>
+      <label class="field"><span>相数</span><input name="phases" type="number" min="1" value="3"></label>
+      <label class="field"><span>导线型号</span><input name="conductor" placeholder="如 JKLGYJ-70/10"></label>
+      <label class="field"><span>杆数</span><input name="poles" type="number" min="0" value="0"></label>
+      <label class="field"><span>杆型</span><input name="pole_type" value="Φ150×8m"></label>
+      <label class="field"><span>档距(m)</span><input name="span_m" type="number" step="0.1" min="0" value="0"></label>
+      <label class="field"><span>拉线(条)</span><input name="stays" type="number" min="0" value="0"></label>
+      <label class="field"><span>土质</span><select name="soil"><option>普通土</option><option>坚土</option><option>松砂石</option><option>泥水</option></select></label>
+      <label class="field"><span>来源</span><input name="source" placeholder="如 图纸识别/人工录入"></label>
+      <label class="field wide"><span>备注</span><input name="note" placeholder="选填"></label>
+      <button class="btn primary" type="submit">新增线路</button>
+    </form>
+  </details>
+  {% endif %}
+</section>
+
+<div class="row-forms">
+  {% for e in equipment %}<form id="eq-form-{{ e.id }}" method="post" action="/project/{{ p.id }}/model/equipment/{{ e.id }}/update{{ keep_as }}"></form>{% endfor %}
+</div>
+<section class="card">
+  <div class="card-head">
+    <h2>设备与主材</h2>
+    <span class="muted small">{{ equipment|length }} 项 · 设备计入设备购置费，主材计入安装工程主材费</span>
+  </div>
+  <div class="table-wrap">
+    <table class="table edit-table">
+      <thead>
+        <tr>
+          <th style="width:76px">类别</th>
+          <th style="width:230px">名称</th>
+          <th style="width:190px">规格型号</th>
+          <th style="width:60px">单位</th>
+          <th style="width:78px">数量</th>
+          <th style="width:104px">单价(元)</th>
+          <th style="width:76px">供应</th>
+          <th style="width:110px">来源</th>
+          <th>备注</th>
+          {% if editable %}<th style="width:96px">操作</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in equipment %}
+        <tr>
+          {% if editable %}
+          <td><select class="cell-input" form="eq-form-{{ e.id }}" name="category">
+            <option value="设备" {{ 'selected' if e.category == '设备' else '' }}>设备</option>
+            <option value="主材" {{ 'selected' if e.category == '主材' else '' }}>主材</option>
+          </select></td>
+          <td><input class="cell-input" form="eq-form-{{ e.id }}" name="name" value="{{ e.name or '' }}"></td>
+          <td><input class="cell-input" form="eq-form-{{ e.id }}" name="spec" value="{{ e.spec or '' }}"></td>
+          <td><input class="cell-input" form="eq-form-{{ e.id }}" name="unit" value="{{ e.unit or '' }}"></td>
+          <td><input class="cell-input num" form="eq-form-{{ e.id }}" name="qty" value="{{ e.qty if e.qty is not none else 0 }}" type="number" step="0.0001" min="0"></td>
+          <td><input class="cell-input num" form="eq-form-{{ e.id }}" name="unit_price" value="{{ e.unit_price if e.unit_price is not none else 0 }}" type="number" step="0.01" min="0"></td>
+          <td><select class="cell-input" form="eq-form-{{ e.id }}" name="supply">
+            <option value="甲供" {{ 'selected' if e.supply == '甲供' else '' }}>甲供</option>
+            <option value="乙供" {{ 'selected' if e.supply == '乙供' else '' }}>乙供</option>
+          </select></td>
+          <td><input class="cell-input" form="eq-form-{{ e.id }}" name="source" value="{{ e.source or '' }}"></td>
+          <td><input class="cell-input" form="eq-form-{{ e.id }}" name="note" value="{{ e.note or '' }}"></td>
+          <td class="actions-cell">
+            <button class="btn small primary" form="eq-form-{{ e.id }}" type="submit">保存</button>
+            <button class="btn small danger" form="eq-form-{{ e.id }}" formaction="/project/{{ p.id }}/model/equipment/{{ e.id }}/delete{{ keep_as }}" type="submit" data-confirm="确认删除“{{ e.name }}”？">删除</button>
+          </td>
+          {% else %}
+          <td><span class="badge {{ badge_class(e.category) }}">{{ e.category }}</span></td>
+          <td>{{ e.name or '—' }}</td>
+          <td class="muted">{{ e.spec or '—' }}</td>
+          <td>{{ e.unit or '—' }}</td>
+          <td class="num">{{ e.qty|num }}</td>
+          <td class="num">{{ e.unit_price|money }}</td>
+          <td>{{ e.supply or '—' }}</td>
+          <td class="muted small">{{ e.source or '—' }}</td>
+          <td class="muted small">{{ e.note or '—' }}</td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+        {% if not equipment %}
+        <tr><td colspan="{{ 10 if editable else 9 }}" class="empty-cell">暂无设备 / 主材数据。</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+  {% if editable %}
+  <details class="add-box">
+    <summary>＋ 新增设备 / 主材</summary>
+    <form method="post" action="/project/{{ p.id }}/model/equipment/add{{ keep_as }}" class="add-grid">
+      <label class="field"><span>类别</span><select name="category"><option value="设备">设备</option><option value="主材">主材</option></select></label>
+      <label class="field"><span>名称 *</span><input name="name" required placeholder="如 配电变压器"></label>
+      <label class="field"><span>规格型号</span><input name="spec" placeholder="如 SB20-M-500kVA"></label>
+      <label class="field"><span>单位</span><input name="unit" value="台"></label>
+      <label class="field"><span>数量</span><input name="qty" type="number" step="0.0001" min="0" value="1"></label>
+      <label class="field"><span>单价(元)</span><input name="unit_price" type="number" step="0.01" min="0" value="0"></label>
+      <label class="field"><span>供应方式</span><select name="supply"><option value="甲供">甲供</option><option value="乙供">乙供</option></select></label>
+      <label class="field"><span>来源</span><input name="source" placeholder="如 材料清册/人工录入"></label>
+      <label class="field wide"><span>备注</span><input name="note" placeholder="选填"></label>
+      <button class="btn primary" type="submit">新增设备 / 主材</button>
+    </form>
+  </details>
+  {% endif %}
+</section>
+
+<div class="row-forms">
+  {% for c in civil %}<form id="civil-form-{{ c.id }}" method="post" action="/project/{{ p.id }}/model/civil/{{ c.id }}/update{{ keep_as }}"></form>{% endfor %}
+  {% for d in demolition %}<form id="demo-form-{{ d.id }}" method="post" action="/project/{{ p.id }}/model/demolition/{{ d.id }}/update{{ keep_as }}"></form>{% endfor %}
+</div>
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head"><h2>土建工程量</h2><span class="muted small">{{ civil|length }} 项</span></div>
+    <div class="table-wrap">
+      <table class="table edit-table">
+        <thead><tr>
+          <th>名称</th><th style="width:150px">规格</th><th style="width:60px">单位</th><th style="width:80px">数量</th><th>备注</th>
+          {% if editable %}<th style="width:96px">操作</th>{% endif %}
+        </tr></thead>
+        <tbody>
+          {% for c in civil %}
+          <tr>
+            {% if editable %}
+            <td><input class="cell-input" form="civil-form-{{ c.id }}" name="name" value="{{ c.name or '' }}"></td>
+            <td><input class="cell-input" form="civil-form-{{ c.id }}" name="spec" value="{{ c.spec or '' }}"></td>
+            <td><input class="cell-input" form="civil-form-{{ c.id }}" name="unit" value="{{ c.unit or '' }}"></td>
+            <td><input class="cell-input num" form="civil-form-{{ c.id }}" name="qty" value="{{ c.qty if c.qty is not none else 0 }}" type="number" step="0.0001" min="0"></td>
+            <td><input class="cell-input" form="civil-form-{{ c.id }}" name="note" value="{{ c.note or '' }}"></td>
+            <td class="actions-cell">
+              <button class="btn small primary" form="civil-form-{{ c.id }}" type="submit">保存</button>
+              <button class="btn small danger" form="civil-form-{{ c.id }}" formaction="/project/{{ p.id }}/model/civil/{{ c.id }}/delete{{ keep_as }}" type="submit" data-confirm="确认删除“{{ c.name }}”？">删除</button>
+            </td>
+            {% else %}
+            <td>{{ c.name or '—' }}</td><td class="muted">{{ c.spec or '—' }}</td><td>{{ c.unit or '—' }}</td>
+            <td class="num">{{ c.qty|num }}</td><td class="muted small">{{ c.note or '—' }}</td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+          {% if not civil %}<tr><td colspan="{{ 6 if editable else 5 }}" class="empty-cell">暂无土建工程量。</td></tr>{% endif %}
+        </tbody>
+      </table>
+    </div>
+    {% if editable %}
+    <details class="add-box">
+      <summary>＋ 新增土建</summary>
+      <form method="post" action="/project/{{ p.id }}/model/civil/add{{ keep_as }}" class="add-grid">
+        <label class="field"><span>名称 *</span><input name="name" required placeholder="如 台架变基础"></label>
+        <label class="field"><span>规格</span><input name="spec" placeholder="如 C20混凝土"></label>
+        <label class="field"><span>单位</span><input name="unit" value="m³"></label>
+        <label class="field"><span>数量</span><input name="qty" type="number" step="0.0001" min="0" value="0"></label>
+        <label class="field wide"><span>备注</span><input name="note" placeholder="选填"></label>
+        <button class="btn primary" type="submit">新增土建</button>
+      </form>
+    </details>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>拆除工程量</h2><span class="muted small">{{ demolition|length }} 项</span></div>
+    <div class="table-wrap">
+      <table class="table edit-table">
+        <thead><tr>
+          <th>名称</th><th style="width:150px">规格</th><th style="width:60px">单位</th><th style="width:80px">数量</th><th>备注</th>
+          {% if editable %}<th style="width:96px">操作</th>{% endif %}
+        </tr></thead>
+        <tbody>
+          {% for d in demolition %}
+          <tr>
+            {% if editable %}
+            <td><input class="cell-input" form="demo-form-{{ d.id }}" name="name" value="{{ d.name or '' }}"></td>
+            <td><input class="cell-input" form="demo-form-{{ d.id }}" name="spec" value="{{ d.spec or '' }}"></td>
+            <td><input class="cell-input" form="demo-form-{{ d.id }}" name="unit" value="{{ d.unit or '' }}"></td>
+            <td><input class="cell-input num" form="demo-form-{{ d.id }}" name="qty" value="{{ d.qty if d.qty is not none else 0 }}" type="number" step="0.0001" min="0"></td>
+            <td><input class="cell-input" form="demo-form-{{ d.id }}" name="note" value="{{ d.note or '' }}"></td>
+            <td class="actions-cell">
+              <button class="btn small primary" form="demo-form-{{ d.id }}" type="submit">保存</button>
+              <button class="btn small danger" form="demo-form-{{ d.id }}" formaction="/project/{{ p.id }}/model/demolition/{{ d.id }}/delete{{ keep_as }}" type="submit" data-confirm="确认删除“{{ d.name }}”？">删除</button>
+            </td>
+            {% else %}
+            <td>{{ d.name or '—' }}</td><td class="muted">{{ d.spec or '—' }}</td><td>{{ d.unit or '—' }}</td>
+            <td class="num">{{ d.qty|num }}</td><td class="muted small">{{ d.note or '—' }}</td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+          {% if not demolition %}<tr><td colspan="{{ 6 if editable else 5 }}" class="empty-cell">暂无拆除工程量。</td></tr>{% endif %}
+        </tbody>
+      </table>
+    </div>
+    {% if editable %}
+    <details class="add-box">
+      <summary>＋ 新增拆除</summary>
+      <form method="post" action="/project/{{ p.id }}/model/demolition/add{{ keep_as }}" class="add-grid">
+        <label class="field"><span>名称 *</span><input name="name" required placeholder="如 拆除低压导线"></label>
+        <label class="field"><span>规格</span><input name="spec" placeholder="如 BLVV-120"></label>
+        <label class="field"><span>单位</span><input name="unit" value="km"></label>
+        <label class="field"><span>数量</span><input name="qty" type="number" step="0.0001" min="0" value="0"></label>
+        <label class="field wide"><span>备注</span><input name="note" placeholder="选填"></label>
+        <button class="btn primary" type="submit">新增拆除</button>
+      </form>
+    </details>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card td-ref-card">
+  <div class="card-head">
+    <h2>相关施工工序（作业指导书）</h2>
+    <span class="muted small">按本项目模型/算量内容匹配 · 只读参考</span>
+  </div>
+  {% if related_instructions %}
+  <div class="td-ref-list">
+    {% for item in related_instructions %}
+    <div class="td-ref-item">
+      <span class="mono small td-ref-code">{{ item.code or '—' }}</span>
+      <span class="td-ref-name">{{ item.title }}</span>
+      <span class="muted small">{{ item.category }}{% if item.version %} · {{ item.version }}{% endif %}</span>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="hint">工序要点用于施工组织与算量口径核对；完整条目见<a class="link" href="/instructions{{ keep_as }}">作业指导书工序库</a>。</div>
+  {% else %}
+  <div class="empty">本项目模型内容较少，暂未匹配到相关工序条目；可到<a class="link" href="/instructions{{ keep_as }}">作业指导书工序库</a>检索。</div>
+  {% endif %}
+</section>
+{% endblock %}

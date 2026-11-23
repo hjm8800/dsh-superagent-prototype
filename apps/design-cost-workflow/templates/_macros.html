@@ -1,0 +1,45 @@
+{# 可复用页面组件（宏）：阶段提交 / 复核表单、阶段横幅。
+   放在独立模板中供其他页面 import，避免导入 base.html 时触发其顶层渲染。 #}
+
+{% macro submit_box(stage, p, keep_as) -%}
+<form method="post" action="/project/{{ p.id }}/stage/{{ stage.key }}/submit{{ keep_as }}" class="inline-form">
+  <button class="btn primary" type="submit">提交复核</button>
+</form>
+{%- endmacro %}
+
+{% macro review_box(stage, p, keep_as) -%}
+<form method="post" action="/project/{{ p.id }}/stage/{{ stage.key }}/review{{ keep_as }}" class="review-form">
+  <select name="result" aria-label="复核结论">
+    <option value="通过">复核通过</option>
+    <option value="退回">退回修改</option>
+  </select>
+  <input type="text" name="comment" placeholder="复核意见（可选，如：工程量与清册一致）">
+  <button class="btn ok" type="submit">提交复核意见</button>
+</form>
+{%- endmacro %}
+
+{% macro stage_banner(stage, p, keep_as, can_edit, can_review, extra='') -%}
+<section class="card stage-banner">
+  <div class="stage-banner-main">
+    <span class="badge {{ badge_class(stage.status) }}">{{ stage.status }}</span>
+    <div>
+      <div class="strong">{{ stage.name }}阶段</div>
+      <div class="muted small">
+        负责人：{{ stage.owner or '—' }} · 复核人：{{ stage.reviewer or '—' }} · 版本 v{{ stage.version }}
+        {% if stage.submitted_at %} · 提交于 {{ stage.submitted_at }}{% endif %}
+        {% if stage.reviewed_at %} · 复核于 {{ stage.reviewed_at }}{% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="head-actions">
+    {{ extra|safe }}
+    {% if can_edit and stage.status == '进行中' %}{{ submit_box(stage, p, keep_as) }}{% endif %}
+  </div>
+</section>
+{% if can_review and stage.status == '待复核' %}
+<section class="card review-card">
+  <div class="card-head"><h2>复核意见</h2><span class="muted small">复核通过后自动流转到下一阶段</span></div>
+  {{ review_box(stage, p, keep_as) }}
+</section>
+{% endif %}
+{%- endmacro %}
