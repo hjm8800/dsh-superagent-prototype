@@ -530,6 +530,53 @@ def main(argv=None) -> int:
                       js.status_code == 200 and "DataTransfer" in js.text, f"HTTP {js.status_code}")
         except Exception as exc:  # noqa: BLE001 - v4 未就绪时给出 FAIL 而不是中断
             check("项目编码与上传体验（v4）E2E 执行", False, f"异常：{exc}")
+
+        # ---------- 10. 真实典设库目录（含“图纸文件”列）导入（第五轮 v5） ----------
+        try:
+            from openpyxl import load_workbook
+
+            csv_text = (
+                "卷册,篇,类别,模块编号,模块名称,模块单位,图纸文件\n"
+                "第三册,第二篇 台架变,台架变,CSG-GD-10B-TB-GT-JD,台架变地网图,处,"
+                "03 第三册 台架变智能台区标准设计/第二篇 Ⅰ型(10+12)台架智能台区变标准设计.dwg\n"
+                "第七册,第二篇 低压线路本体,低压架空,CSG-GD-0.4K-HD,横担架线,套,"
+                "07 第七册 低压线路标准设计/02 第二篇 低压线路本体/03 低压架空模块/横担架线标准设计.dwg\n"
+            ).encode("utf-8")
+            response = zaojia.post(
+                "/project/3/typdesign/import",
+                files={"file": ("E2E典设目录-含图纸.csv", csv_text, "text/csv")},
+                follow_redirects=False,
+            )
+            check("典设目录（含图纸文件列）导入成功", response.status_code == 303,
+                  f"HTTP {response.status_code}")
+            auto_matches = db_query(
+                "SELECT COUNT(*) AS n FROM typdesign_matches WHERE project_id=3")
+            check("导入典设目录后自动执行匹配（无需手动点击）",
+                  bool(auto_matches) and auto_matches[0]["n"] >= 1,
+                  f"匹配记录 {auto_matches[0]['n'] if auto_matches else 0} 条")
+            zaojia.post("/project/3/typdesign/match", follow_redirects=True)
+            page = zaojia.get("/project/3/typdesign")
+            check("匹配明细显示“库内图纸”列与文件路径",
+                  page.status_code == 200 and "库内图纸" in page.text
+                  and "台架智能台区变标准设计.dwg" in page.text,
+                  f"HTTP {page.status_code}")
+            export = zaojia.get("/project/3/typdesign/export.xlsx")
+            workbook = load_workbook(io.BytesIO(export.content))
+            sheet = workbook[workbook.sheetnames[0]]
+            header, header_row = [], 0
+            for row_index, row in enumerate(sheet.iter_rows(min_row=1, max_row=6, values_only=True), 1):
+                values = [str(value or "") for value in row]
+                if "图纸文件" in values and "模块编号" in values:
+                    header, header_row = values, row_index
+                    break
+            data_rows = list(sheet.iter_rows(min_row=header_row + 1, values_only=True)) if header_row else []
+            has_path = bool(header) and any(
+                str(row[header.index("图纸文件")] or "").endswith(".dwg")
+                for row in data_rows if len(row) > header.index("图纸文件"))
+            check("导出匹配清单含“图纸文件”列与路径", export.status_code == 200 and has_path,
+                  f"HTTP {export.status_code}，表头含图纸文件={('图纸文件' in header)}")
+        except Exception as exc:  # noqa: BLE001 - v5 未就绪时给出 FAIL 而不是中断
+            check("真实典设库目录（v5）E2E 执行", False, f"异常：{exc}")
     finally:
         zaojia.close()
         fuhe.close()
@@ -546,7 +593,7 @@ def main(argv=None) -> int:
                 print(f"  - {name}：{detail}")
         return 1
     print("E2E 全部通过 ✅（项目C 已走完 图纸→建模→算量→计价 全链路并完成复核与导出；"
-          "典型设计匹配/确认/导出/送审条件亦通过；新建项目、项目编码录入、上传分批与图纸删除通过）")
+          "典型设计匹配/确认/导出/送审条件亦通过；新建项目、项目编码录入、上传分批与图纸删除、典设库目录图纸文件列通过）")
     return 0
 
 

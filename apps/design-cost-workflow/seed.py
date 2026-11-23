@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS typdesign_modules (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL,
   volume TEXT, chapter TEXT, category TEXT,
-  code TEXT NOT NULL, name TEXT, unit TEXT, note TEXT);
+  code TEXT NOT NULL, name TEXT, unit TEXT, file_path TEXT, note TEXT);
 
 CREATE TABLE IF NOT EXISTS typdesign_imports (
   id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL,
@@ -136,7 +136,7 @@ CREATE TABLE IF NOT EXISTS typdesign_imports (
 
 CREATE TABLE IF NOT EXISTS typdesign_matches (
   id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL,
-  module_id INTEGER, code TEXT NOT NULL, name TEXT, volume TEXT, category TEXT, unit TEXT,
+  module_id INTEGER, code TEXT NOT NULL, name TEXT, volume TEXT, category TEXT, unit TEXT, file_path TEXT,
   match_type TEXT,
   confidence TEXT,
   evidence TEXT,
@@ -195,6 +195,21 @@ def check_pw(password: str, stored: str) -> bool:
 # 初始化入口
 # ---------------------------------------------------------------------------
 
+def _ensure_typdesign_columns(conn) -> None:
+    """为已有数据库补齐 v5 新增列（SQLite ALTER TABLE ADD COLUMN，幂等）。"""
+    for table in ("typdesign_modules", "typdesign_matches"):
+        try:
+            existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        except sqlite3.Error:
+            continue
+        if "file_path" not in existing:
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN file_path TEXT")
+            except sqlite3.Error:
+                pass
+    conn.commit()
+
+
 def init_db(db_path: str | Path) -> None:
     """建库建表并在空库时写入演示数据；可重复调用（幂等）。
 
@@ -206,6 +221,7 @@ def init_db(db_path: str | Path) -> None:
     conn = connect(path)
     try:
         conn.executescript(SCHEMA)
+        _ensure_typdesign_columns(conn)
         project_count = conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
         if project_count == 0:
             _seed_demo(conn)

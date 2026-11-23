@@ -46,9 +46,6 @@
     <a href="/project/{{ nav_p.id }}/{{ s.key }}{{ keep_as }}" class="{{ 'active' if active == s.key else '' }}">
       <span class="dot {{ badge_class(s.status) }}"></span>{{ s.name }}
     </a>
-    {% if s.key == 'drawings' %}
-    <a href="/project/{{ nav_p.id }}/typdesign{{ keep_as }}" class="nav-aux {{ 'active' if active == 'typdesign' else '' }}">典型设计</a>
-    {% endif %}
     {% endfor %}
     <a href="/project/{{ nav_p.id }}/compare{{ keep_as }}" class="{{ 'active' if active == 'compare' else '' }}">对比分析</a>
   </nav>

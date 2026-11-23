@@ -98,8 +98,8 @@
 
 <section class="card td-card">
   <div class="card-head">
-    <h2>典型设计匹配</h2>
-    <span class="muted small">南网 V3.1 典设图纸库 ↔ 项目设计图纸 · 图纸解析阶段辅助能力</span>
+    <h2>典型设计匹配（自动）</h2>
+    <span class="muted small">南网 V3.1 典设图纸库 ↔ 项目设计图纸 · 图纸解析时自动执行，无需单独操作</span>
   </div>
   {% if td_stats.modules %}
   <div class="mini-stats">
@@ -110,7 +110,7 @@
     <div class="mini-stat"><span>应用率</span><strong>{{ td_stats.rate|pct2 }}%</strong><em>已匹配 / 目录</em></div>
   </div>
   <div class="card-actions-row">
-    <a class="btn primary" href="/project/{{ p.id }}/typdesign{{ keep_as }}">打开典型设计匹配 →</a>
+    <a class="btn primary" href="/project/{{ p.id }}/typdesign{{ keep_as }}">查看匹配明细/确认 →</a>
     {% if td_stats.pending %}
     <span class="hint-inline">有 {{ td_stats.pending }} 个模块待确认，确认后方可作为附件6-1 图纸依据。</span>
     {% endif %}

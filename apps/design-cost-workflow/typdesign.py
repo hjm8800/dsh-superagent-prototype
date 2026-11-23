@@ -56,9 +56,10 @@ _HEADER_ALIASES = {
     "code": ("模块编号", "编号", "模块编码", "典设编号", "图号", "图纸编号"),
     "name": ("模块名称", "名称", "模块名", "图纸名称"),
     "unit": ("模块单位", "单位", "计量单位"),
+    "file_path": ("图纸文件", "库内图纸", "图纸路径", "文件路径", "file_path", "library_path"),
     "note": ("备注", "说明"),
 }
-_PARSE_COLUMNS = ("volume", "chapter", "category", "code", "name", "unit")
+_PARSE_COLUMNS = ("volume", "chapter", "category", "code", "name", "unit", "file_path")
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +321,7 @@ def _rows_to_modules(rows: list[list[str]]) -> list[dict]:
             "code": code,
             "name": value_of("name"),
             "unit": value_of("unit"),
+            "file_path": value_of("file_path"),
         })
     return modules
 
@@ -423,10 +425,10 @@ def import_catalog(conn, project_id: int, path: str, filename: str, user: dict |
     conn.execute("DELETE FROM typdesign_matches WHERE project_id=?", (project_id,))
     for module in modules:
         conn.execute(
-            "INSERT INTO typdesign_modules (project_id, volume, chapter, category, code, name, unit, note) "
-            "VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO typdesign_modules (project_id, volume, chapter, category, code, name, unit, file_path, note) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
             (project_id, module["volume"], module["chapter"], module["category"],
-             module["code"], module["name"], module["unit"], ""),
+             module["code"], module["name"], module["unit"], module.get("file_path") or "", ""),
         )
     user = _user_dict(user)
     conn.execute(
@@ -587,6 +589,7 @@ def match_project(conn, project_id: int, user: dict | None = None) -> dict:
             "volume": module.get("volume") or "",
             "category": module.get("category") or "",
             "unit": module.get("unit") or "",
+            "file_path": module.get("file_path") or "",
             "match_type": match_type,
             "confidence": confidence,
             "evidence": evidence,
@@ -599,11 +602,11 @@ def match_project(conn, project_id: int, user: dict | None = None) -> dict:
     conn.execute("DELETE FROM typdesign_matches WHERE project_id=?", (project_id,))
     for row in rows:
         conn.execute(
-            "INSERT INTO typdesign_matches (project_id, module_id, code, name, volume, category, unit, "
+            "INSERT INTO typdesign_matches (project_id, module_id, code, name, volume, category, unit, file_path, "
             "match_type, confidence, evidence, applied, status, qty, note, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (project_id, row["module_id"], row["code"], row["name"], row["volume"],
-             row["category"], row["unit"], row["match_type"], row["confidence"],
+             row["category"], row["unit"], row["file_path"], row["match_type"], row["confidence"],
              row["evidence"], row["applied"], row["status"], row["qty"], row["note"],
              row["updated_at"]),
         )
@@ -654,7 +657,7 @@ _IMPORT_SELECT = (
 )
 
 _MATCH_SELECT = (
-    "SELECT id, module_id, code, name, volume, category, unit, match_type, confidence, "
+    "SELECT id, module_id, code, name, volume, category, unit, file_path, match_type, confidence, "
     "evidence, applied, status, qty, note, updated_at FROM typdesign_matches "
     "WHERE project_id=? ORDER BY id"
 )
@@ -699,6 +702,7 @@ def _summary_from_db(conn, project_id: int) -> dict:
                 "volume": row.get("volume") or "",
                 "category": row.get("category") or "",
                 "unit": row.get("unit") or "",
+                "file_path": row.get("file_path") or "",
                 "match_type": row.get("match_type") or "",
                 "confidence": row.get("confidence") or "",
                 "evidence": row.get("evidence") or "",
@@ -734,7 +738,7 @@ def confirmed_modules(conn, project_id: int) -> list[dict]:
     """已确认应用的典设模块（供建模页/算量页引用）。"""
     rows = _rows(
         conn,
-        "SELECT id, module_id, code, name, volume, category, unit, match_type, confidence, "
+        "SELECT id, module_id, code, name, volume, category, unit, file_path, match_type, confidence, "
         "evidence, qty, note, updated_at FROM typdesign_matches "
         "WHERE project_id=? AND status=? ORDER BY code",
         (project_id, STATUS_CONFIRMED),
@@ -800,7 +804,7 @@ def confirm_match(conn, project_id: int, match_id: int, user: dict | None = None
 # ---------------------------------------------------------------------------
 
 EXPORT_HEADER = [
-    "序号", "卷册", "类别", "模块编号", "模块名称", "模块单位",
+    "序号", "卷册", "类别", "模块编号", "模块名称", "模块单位", "图纸文件",
     "匹配方式", "置信度", "证据摘要", "状态", "应用数量", "备注",
 ]
 
@@ -824,6 +828,7 @@ def export_rows(conn, project_id: int) -> list[list]:
             module.get("code") or "",
             module.get("name") or match.get("name") or "",
             module.get("unit") or match.get("unit") or "",
+            module.get("file_path") or "",
             match.get("match_type") or MATCH_TYPE_NONE,
             match.get("confidence") or "",
             match.get("evidence") or "",

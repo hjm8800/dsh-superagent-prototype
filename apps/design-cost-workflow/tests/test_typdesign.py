@@ -457,7 +457,7 @@ def test_export_rows(db):
     assert all(len(row) == len(typdesign.EXPORT_HEADER) for row in rows)
     body = rows[1:]
     assert all(row[3] for row in body)  # 模块编号
-    assert any(row[9] == "已确认" for row in body)
+    assert any(row[10] == "已确认" for row in body)
     # 导出按卷册排序，第一行应为“第一册 配电站”
     assert body[0][1].startswith("第一册")
 
@@ -470,3 +470,48 @@ def test_project_stats_includes_typdesign(db):
     assert 0 <= stats["typdesign_rate"] <= 100
     # 原有统计键保持
     assert stats["lines"] == 2 and stats["poles"] == 16
+
+
+# ---------------------------------------------------------------------------
+# v5：目录“图纸文件”列（本机典设库接入）
+# ---------------------------------------------------------------------------
+
+def test_parse_catalog_csv_with_file_path(tmp_path):
+    path = tmp_path / "catalog_with_path.csv"
+    path.write_text(
+        "卷册,篇,类别,模块编号,模块名称,模块单位,图纸文件\n"
+        "第三册,第二篇 台架变,台架变,CSG-GD-10B-TB-GT-JD,台架变地网图,处,"
+        "03 第三册 台架变智能台区标准设计-清远本地化修编26-01版/第二篇 Ⅰ型(10+12)台架智能台区变标准设计.dwg\n"
+        "第七册,第二篇 低压线路本体,低压架空,CSG-GD-0.4K-HD,横担架线,套,"
+        "07 第七册 低压线路标准设计-清远本地化修编26-01版/02 第二篇 低压线路本体/03 低压架空模块/01 横担架线标准设计（CSG-GD-0.4K-HD）.dwg\n",
+        encoding="utf-8",
+    )
+    modules = typdesign.parse_catalog_file(str(path), path.name)
+    assert len(modules) == 2
+    assert modules[0]["file_path"].endswith(".dwg")
+    assert "第三册" in modules[0]["file_path"]
+    assert modules[1]["code"] == "CSG-GD-0.4K-HD"
+
+
+def test_import_match_export_include_file_path(db, tmp_path):
+    users = _users(db)
+    project_id = _new_project(db, code="TEST-TYPD-PATH")
+    path = tmp_path / "catalog_path.csv"
+    path.write_text(
+        "卷册,篇,类别,模块编号,模块名称,模块单位,图纸文件\n"
+        "第三册,第二篇 台架变,台架变,CSG-GD-10B-TB-GT-JD,台架变地网图,处,"
+        "03 第三册 台架变智能台区标准设计/第二篇 Ⅰ型(10+12)台架智能台区变标准设计.dwg\n",
+        encoding="utf-8",
+    )
+    result = typdesign.import_catalog(db, project_id, str(path), path.name, users["zaojia"])
+    assert result["ok"] and result["modules"] == 1
+    stored = _rows(db, "SELECT * FROM typdesign_modules WHERE project_id=?", (project_id,))
+    assert stored[0]["file_path"].endswith(".dwg")
+
+    typdesign.match_project(db, project_id, users["zaojia"])
+    summary = typdesign.typdesign_summary(db, project_id)
+    assert summary["matches"] and summary["matches"][0]["file_path"].endswith(".dwg")
+
+    rows = typdesign.export_rows(db, project_id)
+    assert "图纸文件" in rows[0]
+    assert rows[1][6].endswith(".dwg")

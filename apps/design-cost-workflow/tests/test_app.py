@@ -417,7 +417,9 @@ def test_full_workflow_project_c():
     # v2：新增“典型设计应用匹配已完成”辅助条件；项目C 演示数据为“仅导入目录未匹配”，
     # 因此该条件不满足（其余条件仍应满足），与 contract2 §5 一致
     assert "典型设计应用匹配已完成" in compare_page.text
-    assert "已确认 0/40 个模块" in compare_page.text
+    # v6 起上传图纸会自动执行典设匹配，项目C 可能出现待确认项，两种文案都成立
+    assert ("已确认 0/40 个模块" in compare_page.text
+            or "待确认" in compare_page.text and "已确认 0/40" in compare_page.text)
     conn.close()
     client.get("/logout")
 
@@ -509,8 +511,8 @@ def test_typdesign_integrations_visible():
     # 图纸解析页：典设匹配状态卡
     drawings = client.get("/project/3/drawings")
     assert drawings.status_code == 200
-    assert "典型设计（典设）匹配" in drawings.text
-    assert "执行匹配" in drawings.text
+    assert "典型设计匹配（自动）" in drawings.text
+    assert "重新匹配" in drawings.text
     # 项目工作流页：典设匹配卡片
     project_page = client.get("/project/1")
     assert project_page.status_code == 200
@@ -534,7 +536,8 @@ def test_typdesign_import_match_confirm_export():
     # 项目C 种子：目录已导入、尚未匹配
     page = client.get("/project/3/typdesign")
     assert page.status_code == 200
-    assert "尚未执行匹配" in page.text
+    # v6 起上传图纸会自动执行匹配，页面可能是“尚未执行匹配”也可能有匹配明细
+    assert ("尚未执行匹配" in page.text) or ("匹配明细" in page.text)
 
     csv_text = (
         "序号,卷册,类别,模块编号,模块名称,模块单位\n"
@@ -963,4 +966,102 @@ def test_upload_ui_supports_accumulated_selection_and_delete():
     assert static.status_code == 200
     assert "DataTransfer" in static.text
     assert "data-file-clear" in static.text
+    client.get("/logout")
+
+
+# ---------------------------------------------------------------------------
+# v5：典设目录“图纸文件”列（本机典设库接入）
+# ---------------------------------------------------------------------------
+def test_typdesign_catalog_file_path_column():
+    login("zaojia", "123456")
+    csv_text = (
+        "卷册,篇,类别,模块编号,模块名称,模块单位,图纸文件\n"
+        "第三册,第二篇 台架变,台架变,CSG-GD-10B-TB-GT-JD,台架变地网图,处,"
+        "03 第三册 台架变智能台区标准设计/第二篇 Ⅰ型(10+12)台架智能台区变标准设计.dwg\n"
+    ).encode("utf-8")
+    response = client.post(
+        "/project/3/typdesign/import",
+        files={"file": ("catalog_path.csv", csv_text, "text/csv")},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303, response.text
+    client.post("/project/3/typdesign/match", follow_redirects=False)
+    page = client.get("/project/3/typdesign")
+    assert page.status_code == 200
+    assert "库内图纸" in page.text
+    assert "台架智能台区变标准设计.dwg" in page.text
+    export = client.get("/project/3/typdesign/export.xlsx")
+    assert export.status_code == 200
+    workbook = load_workbook(BytesIO(export.content))
+    sheet = workbook[workbook.sheetnames[0]]
+    header_row = None
+    header = []
+    for row_index, row in enumerate(sheet.iter_rows(min_row=1, max_row=6, values_only=True), 1):
+        values = [str(value or "") for value in row]
+        if "图纸文件" in values and "模块编号" in values:
+            header_row, header = row_index, values
+            break
+    assert header_row is not None, "导出表头未找到“图纸文件/模块编号”"
+    path_column = header.index("图纸文件")
+    data_rows = list(sheet.iter_rows(min_row=header_row + 1, values_only=True))
+    assert any(str(row[path_column] or "").endswith(".dwg") for row in data_rows if len(row) > path_column)
+    client.get("/logout")
+
+
+# ---------------------------------------------------------------------------
+# v6：典型设计匹配改为自动执行（不再作为单独环节）
+# ---------------------------------------------------------------------------
+def test_typdesign_import_runs_match_automatically():
+    login("zaojia", "123456")
+    pid = create_project_via_http("典设自动匹配项目", code="TEST-CODE-AUTO1")
+    csv_text = (
+        "卷册,篇,类别,模块编号,模块名称,模块单位,图纸文件\n"
+        "第三册,第二篇 台架变,台架变,CSG-GD-10B-TB-GT-JD,台架变地网图,处,"
+        "03 第三册 台架变智能台区标准设计/第二篇 Ⅰ型(10+12)台架智能台区变标准设计.dwg\n"
+    ).encode("utf-8")
+    response = client.post(
+        f"/project/{pid}/typdesign/import",
+        files={"file": ("catalog_auto.csv", csv_text, "text/csv")},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "自动执行典设匹配" in unquote(response.headers["location"])
+    conn = db_conn()
+    count = conn.execute("SELECT COUNT(*) AS n FROM typdesign_matches WHERE project_id=?", (pid,)).fetchone()["n"]
+    conn.close()
+    assert count >= 1  # 导入目录后自动匹配，无需手动点“执行匹配”
+    client.get("/logout")
+
+
+def test_drawings_upload_runs_typdesign_match_automatically():
+    login("zaojia", "123456")
+    pid = create_project_via_http("上传自动匹配项目", code="TEST-CODE-AUTO2")
+    csv_text = (
+        "卷册,篇,类别,模块编号,模块名称,模块单位,图纸文件\n"
+        "第七册,第二篇 低压线路本体,低压架空,CSG-GD-0.4K-HD,横担架线,套,"
+        "07 第七册 低压线路标准设计/02 第二篇 低压线路本体/03 低压架空模块/横担架线标准设计.dwg\n"
+    ).encode("utf-8")
+    client.post(
+        f"/project/{pid}/typdesign/import",
+        files={"file": ("catalog_auto2.csv", csv_text, "text/csv")},
+        follow_redirects=False,
+    )
+    response = client.post(
+        f"/project/{pid}/drawings/upload",
+        files=[("files", ("自动匹配清册.xlsx", xlsx_bytes(),
+                          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))],
+        data={"category": "材料清册"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "自动执行典设匹配" in unquote(response.headers["location"])
+    client.get("/logout")
+
+
+def test_typdesign_not_in_primary_nav():
+    login("zaojia", "123456")
+    page = client.get("/project/3/drawings")
+    assert page.status_code == 200
+    assert 'class="nav-aux' not in page.text  # 主导航不再单列“典型设计”
+    assert "/project/3/typdesign" in page.text  # 仍可从图纸解析页进入明细/确认
     client.get("/logout")

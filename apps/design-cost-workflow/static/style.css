@@ -1265,6 +1265,9 @@ select.cell-input { padding-right: 4px; }
 }
 
 /* ========================================================================== */
+/* v5：典设匹配明细显示库内图纸路径                                            */
+.file-path { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* v4：上传分批累计 + 图纸删除                                                 */
 /* ========================================================================== */
 .upload-actions { display: flex; align-items: center; gap: 10px; margin: 2px 0 10px; min-height: 26px; }

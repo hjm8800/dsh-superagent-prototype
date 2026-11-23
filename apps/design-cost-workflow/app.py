@@ -676,6 +676,35 @@ def dashboard(request: Request, conn: sqlite3.Connection = Depends(get_db)):
 # --------------------------------------------------------------------------- #
 # 新建项目（v3：工作流“开始”入口）
 # --------------------------------------------------------------------------- #
+def auto_typdesign_match(conn, pid: int, user) -> dict | None:
+    """自动执行典设匹配（不作为独立流程环节）。
+
+    触发时机：图纸上传/删除、生成建模初稿、导入典设目录。没有典设目录时静默跳过，
+    失败也不阻塞主流程（匹配结果仍需人工确认）。
+    """
+    if not typdesign_ready():
+        return None
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM typdesign_modules WHERE project_id=?", (pid,)
+        ).fetchone()
+        if not int(row["n"] if row else 0):
+            return None
+        result = typdesign.match_project(conn, pid, as_user_dict(user))
+        return result if isinstance(result, dict) else None
+    except Exception:  # noqa: BLE001 - 自动匹配失败不影响上传/建模主流程
+        return None
+
+
+def auto_typdesign_note(result: dict | None) -> str:
+    """把自动匹配结果变成一句提示；无目录/失败返回空串。"""
+    if not result:
+        return ""
+    return (f"；已自动执行典设匹配：匹配 {result.get('matched', 0)} 条"
+            f"（高 {result.get('high', 0)} / 中 {result.get('medium', 0)} / 低 {result.get('low', 0)}），"
+            f"待人工确认 {result.get('pending', 0)} 条")
+
+
 PROJECT_TYPES = ["台区改造", "业扩配套", "技改修理", "其他"]
 NEW_NAME_MAX = 60
 NEW_LOCATION_MAX = 40
@@ -939,6 +968,7 @@ async def drawings_upload(pid: int, request: Request, conn: sqlite3.Connection =
         msg += f"，需插件或解析失败 {pending} 个（可在表格中查看原因）"
     if skipped:
         msg += f"，跳过 {skipped} 个不支持或空文件"
+    msg += auto_typdesign_note(auto_typdesign_match(conn, pid, user))
     return redirect_msg(request, f"/project/{pid}/drawings", msg)
 
 
@@ -971,9 +1001,9 @@ async def drawings_delete(
     conn.execute("DELETE FROM drawings WHERE id=? AND project_id=?", (did, pid))
     conn.commit()
     audit(conn, pid, user, "删除图纸", f"删除 {row['name'] or row['code']}")
-    return redirect_msg(
-        request, f"/project/{pid}/drawings", f"已删除图纸：{row['name'] or row['code']}"
-    )
+    msg = f"已删除图纸：{row['name'] or row['code']}"
+    msg += auto_typdesign_note(auto_typdesign_match(conn, pid, user))
+    return redirect_msg(request, f"/project/{pid}/drawings", msg)
 
 
 @app.post("/project/{pid}/drawings/autofill")
@@ -996,6 +1026,7 @@ async def drawings_autofill(pid: int, request: Request, conn: sqlite3.Connection
         msg = f"已由已识别图纸补全模型初稿，新增 {added} 行数据，请到“建模”页人工校正后执行校验"
     else:
         msg = "模型初稿已存在（本次补全 0 行），请到“建模”页人工校正并执行校验"
+    msg += auto_typdesign_note(auto_typdesign_match(conn, pid, user))
     return redirect_msg(request, f"/project/{pid}/model", msg)
 
 
@@ -1810,6 +1841,7 @@ async def typdesign_import(pid: int, request: Request, conn: sqlite3.Connection 
         )
     modules = int(_num(data.get("modules")))
     msg = data.get("message") or f"已导入典设目录：{filename}，共 {modules} 个模块"
+    msg += auto_typdesign_note(auto_typdesign_match(conn, pid, user))
     return redirect_msg(request, f"/project/{pid}/typdesign", msg)
 
 

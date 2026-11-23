@@ -15,6 +15,8 @@
   </div>
 </div>
 
+<div class="hint" style="margin-bottom:10px">本页为典设匹配的明细、人工确认与导出页。典设匹配已在图纸上传/解析、删除图纸、生成建模初稿时<b>自动执行</b>，日常不需要在此单独点击“执行匹配”；仅在导入新目录或需要重算时使用“重新匹配”。</div>
+
 <div class="kpis kpis-6">
   <div class="kpi">
     <div class="kpi-label">典设目录模块</div>
@@ -67,7 +69,7 @@
       <button class="btn primary" type="submit">导入典设目录</button>
     </form>
     <div class="hint" data-file-hint>
-      目录字段：卷册 / 类别 / 模块编号 / 模块名称 / 模块单位（兼容“序号,卷册,类别,模块编号,模块名称,模块单位”CSV 与附件6-1 双表结构）。
+      目录字段：卷册 / 类别 / 模块编号 / 模块名称 / 模块单位；可选“图纸文件”列（本机典设库相对路径，导入后匹配结果可显示库内图纸位置，可用 scripts/build_typical_design_catalog.py 从本机典设库生成）。
       重复导入将覆盖本项目典设目录并清空匹配结果；演示数据为“演示用典设目录节选（40 条，非完整 V3.1 库）”。
     </div>
     {% else %}
@@ -139,6 +141,7 @@
           <th style="width:196px">模块名称</th>
           <th style="width:104px">卷册 / 类别</th>
           <th style="width:52px">单位</th>
+          <th style="width:170px">库内图纸</th>
           <th style="width:84px">匹配方式</th>
           <th style="width:62px">置信度</th>
           <th>证据摘要</th>
@@ -155,6 +158,7 @@
           <td>{{ m.name or '—' }}</td>
           <td class="muted small">{{ m.volume or '—' }}<div>{{ m.category or '' }}</div></td>
           <td>{{ m.unit or '—' }}</td>
+          <td class="file-path small" title="{{ m.file_path or '' }}">{{ m.file_path or '—' }}</td>
           <td>
             {% if m.match_type == '未匹配' %}
             <span class="badge muted">未匹配</span>
