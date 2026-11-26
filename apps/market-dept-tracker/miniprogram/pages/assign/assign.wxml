@@ -24,16 +24,6 @@
           <view>{{positions[positionIndex].name}}（{{positions[positionIndex].headcount}} 人）</view>
         </picker>
 
-        <view class="muted small" style="margin:12rpx 0 6rpx;">周期</view>
-        <picker
-          class="picker"
-          range="{{periods}}"
-          range-key="label"
-          bindchange="pickPeriod"
-        >
-          <view>{{periodLabel}}</view>
-        </picker>
-
         <view class="muted small" style="margin:12rpx 0 6rpx;">任务</view>
         <input class="input" placeholder="要下属做什么" value="{{title}}" bindinput="inputTitle" maxlength="200" />
 

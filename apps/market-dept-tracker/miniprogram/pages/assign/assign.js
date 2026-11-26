@@ -9,8 +9,6 @@ Page({
     positionIndex: 0,
     periodType: 'week',
     periodKey: '',
-    periodLabel: '',
-    periods: [],
     title: '',
     detail: '',
     submitting: false,
@@ -36,8 +34,6 @@ Page({
         loading: false,
         positions: data.positions,
         periodKey: this.data.periodKey || current.key,
-        periodLabel: current.label,
-        periods: periods.periods,
       })
     } catch (error) {
       const message = error.message || '加载失败'
@@ -47,12 +43,6 @@ Page({
 
   pickPosition(event) {
     this.setData({ positionIndex: Number(event.detail.value) })
-  },
-
-  pickPeriod(event) {
-    const index = Number(event.detail.value)
-    const period = this.data.periods[index]
-    this.setData({ periodKey: period.key, periodLabel: period.label })
   },
 
   inputTitle(event) {

@@ -163,10 +163,6 @@ export function renderTaskList(data: TaskListData): string {
           )
           .join('')}
       </select></label>
-      <label class="field"><span>周期</span><select name="periodType">
-        <option value="week"${data.periodType === 'week' ? ' selected' : ''}>周</option>
-        <option value="month"${data.periodType === 'month' ? ' selected' : ''}>月</option>
-      </select></label>
     </div>
     <div class="form-row">
       <label class="field"><span>重要程度</span><select name="priority">

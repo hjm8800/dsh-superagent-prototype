@@ -535,6 +535,20 @@ test('a superior can give a task over the page', async () => {
   })
 })
 
+test('the one-off assign form does not ask for a week or a month', async () => {
+  await withServer(async (base, store) => {
+    const leader = makeLeader(store)
+    const html = await (
+      await sessionFetch(`${base}/tasks?type=week&period=2026-W45&token=${leader.token}`)
+    ).text()
+    const assignSection = html.slice(html.indexOf('下达任务'), html.indexOf('设一个固定任务'))
+    assert.ok(assignSection.includes('交给哪个岗位'), 'the assign form is on the page')
+    assert.ok(!assignSection.includes('周期'), 'the one-off task does not ask for a period')
+    const fixedSection = html.slice(html.indexOf('设一个固定任务'))
+    assert.ok(fixedSection.includes('周期'), 'the fixed-task form still asks for a period')
+  })
+})
+
 test('a specialist gives a task to their own staff, without a leader grant', async () => {
   await withServer(async (base, store) => {
     const specialist = store.people().find((p) => p.name === '黎嘉良')!
