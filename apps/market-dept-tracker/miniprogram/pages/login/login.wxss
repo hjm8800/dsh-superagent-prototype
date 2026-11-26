@@ -1,0 +1,144 @@
+/* The login page: a light brand header and one card, so the first screen of
+   the mini program does not look like a bare form. */
+.login-page {
+  min-height: 100vh;
+  padding: 0 44rpx;
+  box-sizing: border-box;
+  background: linear-gradient(180deg, #eaf1ff 0%, #f5f6f8 42%, #f5f6f8 100%);
+  display: flex;
+  flex-direction: column;
+}
+
+.login-hero {
+  padding: 96rpx 0 52rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.login-logo {
+  width: 112rpx;
+  height: 112rpx;
+  border-radius: 30rpx;
+  background: linear-gradient(135deg, #2f7bf6, #1f5fd0);
+  color: #ffffff;
+  font-size: 52rpx;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 16rpx 32rpx rgba(31, 111, 235, 0.28);
+}
+
+.login-title {
+  margin-top: 26rpx;
+  font-size: 42rpx;
+  font-weight: 700;
+  letter-spacing: 2rpx;
+  color: #16233a;
+}
+
+.login-sub {
+  margin-top: 10rpx;
+  font-size: 24rpx;
+  color: #71809a;
+}
+
+.login-card {
+  background: rgba(255, 255, 255, 0.98);
+  border-radius: 28rpx;
+  padding: 40rpx 34rpx 34rpx;
+  box-shadow: 0 20rpx 60rpx rgba(23, 43, 77, 0.08);
+}
+
+.login-heading {
+  font-size: 32rpx;
+  font-weight: 650;
+  color: #16233a;
+}
+
+.login-hint {
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  line-height: 1.6;
+  color: #8b96a8;
+}
+
+.field {
+  margin-top: 30rpx;
+}
+
+.field-label {
+  margin-bottom: 12rpx;
+  font-size: 24rpx;
+  color: #5b6678;
+}
+
+.field-box {
+  display: flex;
+  align-items: center;
+  padding: 0 24rpx;
+  border: 1rpx solid #e6eaf0;
+  border-radius: 16rpx;
+  background: #f6f8fb;
+}
+
+.field-input {
+  flex: 1;
+  height: 92rpx;
+  font-size: 28rpx;
+  color: #16233a;
+}
+
+.field-placeholder {
+  color: #a8b1c0;
+}
+
+.field-eye {
+  padding-left: 16rpx;
+  font-size: 24rpx;
+  color: #1f6feb;
+}
+
+.login-error {
+  margin-top: 24rpx;
+  padding: 16rpx 20rpx;
+  border-radius: 12rpx;
+  background: #fdecea;
+  color: #b42318;
+  font-size: 24rpx;
+}
+
+.login-btn {
+  margin-top: 36rpx;
+  height: 96rpx;
+  line-height: 96rpx;
+  border: none;
+  border-radius: 16rpx;
+  background: linear-gradient(135deg, #2f7bf6, #1f5fd0);
+  color: #ffffff;
+  font-size: 32rpx;
+  font-weight: 600;
+  box-shadow: 0 14rpx 28rpx rgba(31, 111, 235, 0.22);
+}
+
+.login-btn[disabled] {
+  background: #b9c4d2;
+  box-shadow: none;
+  color: #ffffff;
+}
+
+.login-foot {
+  margin-top: 28rpx;
+  text-align: center;
+  font-size: 22rpx;
+  color: #8b96a8;
+}
+
+.login-version {
+  margin-top: auto;
+  padding: 40rpx 0 50rpx;
+  text-align: center;
+  font-size: 20rpx;
+  color: #a3adbd;
+}

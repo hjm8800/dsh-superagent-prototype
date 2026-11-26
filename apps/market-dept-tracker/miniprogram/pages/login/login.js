@@ -6,6 +6,7 @@ Page({
     password: '',
     busy: false,
     error: '',
+    showPassword: false,
   },
 
   onUsername(event) {
@@ -14,6 +15,10 @@ Page({
 
   onPassword(event) {
     this.setData({ password: event.detail.value, error: '' })
+  },
+
+  togglePassword() {
+    this.setData({ showPassword: !this.data.showPassword })
   },
 
   async submit() {

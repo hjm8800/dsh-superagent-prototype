@@ -1,33 +1,53 @@
-<view class="container">
-  <view class="card">
-    <view class="title">市场部工作台</view>
-    <view class="subtitle">用岗位账户登录，每个岗位一个账户。</view>
+<view class="login-page">
+  <view class="login-hero">
+    <view class="login-logo">市</view>
+    <view class="login-title">市场部工作台</view>
+    <view class="login-sub">岗位职责 · 周/月任务 · 部门看板</view>
+  </view>
 
-    <input
-      class="input"
-      placeholder="岗位账户"
-      value="{{username}}"
-      bindinput="onUsername"
-    />
+  <view class="login-card">
+    <view class="login-heading">岗位账户登录</view>
+    <view class="login-hint">每个岗位共用一个账户，首次登录请使用部门下发的密码</view>
 
-    <input
-      class="input"
-      placeholder="密码"
-      password="{{true}}"
-      value="{{password}}"
-      bindinput="onPassword"
-      confirm-type="done"
-      bindconfirm="submit"
-    />
+    <view class="field">
+      <view class="field-label">账户</view>
+      <view class="field-box">
+        <input
+          class="field-input"
+          placeholder="请输入岗位账户"
+          placeholder-class="field-placeholder"
+          value="{{username}}"
+          bindinput="onUsername"
+          confirm-type="next"
+        />
+      </view>
+    </view>
 
-    <view wx:if="{{error}}" class="muted" style="color:#b42318; margin-top:16rpx;">{{error}}</view>
+    <view class="field">
+      <view class="field-label">密码</view>
+      <view class="field-box">
+        <input
+          class="field-input"
+          placeholder="请输入密码"
+          placeholder-class="field-placeholder"
+          password="{{!showPassword}}"
+          value="{{password}}"
+          bindinput="onPassword"
+          confirm-type="done"
+          bindconfirm="submit"
+        />
+        <view class="field-eye" bindtap="togglePassword">{{showPassword ? '隐藏' : '显示'}}</view>
+      </view>
+    </view>
 
-    <button class="btn" style="margin-top:24rpx;" bindtap="submit" disabled="{{busy}}">
-      {{busy ? '正在登录…' : '登录'}}
+    <view wx:if="{{error}}" class="login-error">{{error}}</view>
+
+    <button class="login-btn" bindtap="submit" disabled="{{busy}}" loading="{{busy}}">
+      {{busy ? '正在登录…' : '登 录'}}
     </button>
 
-    <view class="muted small" style="margin-top:20rpx;">
-      账户和密码由部门负责人分配。
-    </view>
+    <view class="login-foot">账户和密码由部门负责人分配，忘记请联系管理员</view>
   </view>
+
+  <view class="login-version">市场部工作台 · 内部使用</view>
 </view>
