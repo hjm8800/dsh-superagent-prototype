@@ -163,6 +163,11 @@ export class Store {
     createdAt: string
   }) => void
   declare updateTask: (id: string, status: TaskStatus, note: string, updatedAt: string) => void
+  declare updateTaskDetails: (
+    id: string,
+    input: { title: string; detail: string; priority: string; dueDate: string },
+    updatedAt: string,
+  ) => void
   declare task: (id: string) => Task | undefined
   declare taskPhotos: (taskId: string) => TaskPhoto[]
   declare photoById: (id: string) => TaskPhoto | undefined

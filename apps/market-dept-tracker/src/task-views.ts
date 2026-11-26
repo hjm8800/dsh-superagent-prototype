@@ -461,6 +461,8 @@ export interface TaskPageData {
   today: string
   /** Whether the viewer may move it on or attach photos. */
   canEdit: boolean
+  /** Whether the viewer gave this task and may still correct it. */
+  canManage?: boolean
   /** The viewer's token, for the forms on the page. */
   viewerToken: string
 }
@@ -502,12 +504,39 @@ export function renderTaskPage(data: TaskPageData): string {
   <button class="btn" type="submit">上传照片</button>
 </form>`
     : ''
+  const manageCard = data.canManage
+    ? `<section class="card">
+  <h2>编辑任务</h2>
+  <p class="muted small">任务下达后，你可以在这里修改标题、说明、重要程度和截止日期，也可以撤销这条任务。</p>
+  <form class="task-form" method="post" action="/task/${escapeHtml(task.id)}/edit">
+    <input type="hidden" name="token" value="${escapeHtml(data.viewerToken)}">
+    <label class="field"><span>任务</span><input type="text" name="title" value="${escapeHtml(task.title)}" required></label>
+    <label class="field"><span>说明</span><input type="text" name="detail" value="${escapeHtml(task.detail)}" placeholder="补充要求（可选）"></label>
+    <div class="form-row">
+      <label class="field"><span>重要程度</span><select name="priority">
+        <option value=""${task.priority === '' ? ' selected' : ''}>未设</option>
+        ${Object.entries(PRIORITY_LABELS)
+          .map(
+            ([key, label]) =>
+              `<option value="${key}"${task.priority === key ? ' selected' : ''}>${escapeHtml(label)}</option>`,
+          )
+          .join('')}
+      </select></label>
+      <label class="field"><span>截止日期</span><input type="date" name="dueDate" value="${escapeHtml(task.dueDate)}"></label>
+    </div>
+    <div class="form-actions"><button class="btn btn-primary" type="submit">保存修改</button></div>
+  </form>
+  <form class="task-form" method="post" action="/task/${escapeHtml(task.id)}/cancel" onsubmit="return confirm('确定撤销这条任务吗？撤销后状态显示为已取消。')">
+    <input type="hidden" name="token" value="${escapeHtml(data.viewerToken)}">
+    <div class="form-actions"><button class="btn btn-ghost" type="submit">撤销任务</button></div>
+  </form>
+</section>`
+    : ''
   const body = `
 ${pageHead(
   `${task.positionName} · 任务详情`,
   `${task.periodLabel} · ${TASK_KIND_LABELS[task.kind] ?? ''}`,
-)}
-<div class="stat-row">
+)}<div class="stat-row">
   ${stat('状态', TASK_STATUS_LABELS[task.status] ?? '', '')}
   ${stat('重要程度', PRIORITY_LABELS[task.priority] ?? '未设', data.task.dueDate ? dueCell(data.task.dueDate, data.today) : '')}
   ${stat('照片', String(data.photos.length), '张')}
@@ -525,6 +554,7 @@ ${pageHead(
   ${statusForm}
   ${photoForm}
 </section>
+${manageCard}
 <section class="card">
   <h2>进展留言</h2>
   ${comments}

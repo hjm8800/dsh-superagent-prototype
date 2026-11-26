@@ -1023,6 +1023,9 @@ export function createTrackerServer(options: ServerOptions) {
         comments,
         today: todayKey(),
         canEdit: true,
+        canManage: Boolean(
+          viewer.person && task.kind === 'assigned' && (viewer.role === 'leader' || task.assignedById === viewer.person.id),
+        ),
         viewerToken: viewer.person?.token ?? token,
       }),
     )
@@ -1060,6 +1063,71 @@ export function createTrackerServer(options: ServerOptions) {
       })
     }
     redirect(res, `/task/${task.id}?token=${encodeURIComponent(viewer.person.token)}`)
+  }
+
+  /**
+   * The one who handed a task out may correct it afterwards: title, detail,
+   * priority and due date. Leaders may correct any assigned task.
+   */
+  const editTask = async (req: IncomingMessage, res: ServerResponse) => {
+    const form = await readBody(req)
+    const url = new URL(req.url ?? '/', options.baseUrl)
+    const id = url.pathname.replace(/^\/task\//, '').replace(/\/edit$/, '').split('/')[0] ?? ''
+    const task = store.task(id)
+    if (!task) {
+      sendText(res, '任务不存在', 404)
+      return
+    }
+    const token = (form.get('token') ?? cookieOf(req, SESSION_COOKIE)).toString()
+    const viewer = viewerOf(token)
+    const mayManage = Boolean(
+      viewer.person && task.kind === 'assigned' && (viewer.role === 'leader' || task.assignedById === viewer.person.id),
+    )
+    if (!mayManage) {
+      sendText(res, '只有下达任务的人可以修改', 403)
+      return
+    }
+    const title = (form.get('title') ?? '').toString().trim().slice(0, 200)
+    if (!title) {
+      sendText(res, '任务名称不能为空', 400)
+      return
+    }
+    const priorityRaw = (form.get('priority') ?? '').toString()
+    const priority = ['urgent', 'high', 'normal', 'low'].includes(priorityRaw) ? priorityRaw : ''
+    store.updateTaskDetails(
+      task.id,
+      {
+        title,
+        detail: (form.get('detail') ?? '').toString().slice(0, 2000),
+        priority,
+        dueDate: (form.get('dueDate') ?? '').toString().slice(0, 10),
+      },
+      now().toISOString(),
+    )
+    redirect(res, `/task/${task.id}?token=${encodeURIComponent(viewer.person?.token ?? '')}`)
+  }
+
+  /** Take an assigned task back, so nobody keeps working on a mistake. */
+  const cancelTask = async (req: IncomingMessage, res: ServerResponse) => {
+    const form = await readBody(req)
+    const url = new URL(req.url ?? '/', options.baseUrl)
+    const id = url.pathname.replace(/^\/task\//, '').replace(/\/cancel$/, '').split('/')[0] ?? ''
+    const task = store.task(id)
+    if (!task) {
+      sendText(res, '任务不存在', 404)
+      return
+    }
+    const token = (form.get('token') ?? cookieOf(req, SESSION_COOKIE)).toString()
+    const viewer = viewerOf(token)
+    const mayManage = Boolean(
+      viewer.person && task.kind === 'assigned' && (viewer.role === 'leader' || task.assignedById === viewer.person.id),
+    )
+    if (!mayManage) {
+      sendText(res, '只有下达任务的人可以撤销', 403)
+      return
+    }
+    store.updateTask(task.id, 'cancelled', task.note, now().toISOString())
+    redirect(res, `/task/${task.id}?token=${encodeURIComponent(viewer.person?.token ?? '')}`)
   }
 
   /** The tasks of a period, one column per status. */
@@ -1888,6 +1956,10 @@ export function createTrackerServer(options: ServerOptions) {
       if (route === '/board' && method === 'GET') return boardPage(req, res, url)
       if (route.startsWith('/task/') && route.endsWith('/comment') && method === 'POST')
         return void addTaskComment(req, res)
+      if (route.startsWith('/task/') && route.endsWith('/edit') && method === 'POST')
+        return void editTask(req, res)
+      if (route.startsWith('/task/') && route.endsWith('/cancel') && method === 'POST')
+        return void cancelTask(req, res)
       if (route.startsWith('/task/') && method === 'GET') return taskPage(req, res, url)
       if (route === '/my-tasks' && method === 'GET') return myTasks(req, res, url)
       if (route === '/my-tasks/status' && method === 'POST') return void updateMyTask(req, res)

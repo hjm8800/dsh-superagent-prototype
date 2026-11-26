@@ -1225,3 +1225,75 @@ test('a report can ask the superior for help with a problem', async () => {
     assert.ok(tasksPage.includes('合同模板缺失'))
   })
 })
+
+test('the person who gave a task may correct it afterwards', async () => {
+  await withServer(async (base, store) => {
+    const leader = makeLeader(store)
+    const clerk = store.people().find((p) => p.name === '黄美琳')!
+    const give = new URLSearchParams()
+    give.set('token', leader.token)
+    give.set('periodType', 'week')
+    give.set('periodKey', '2026-W45')
+    give.set('periodLabel', '2026年第45周')
+    give.set('title', '把合同台账补齐')
+    give.set('positionId', clerk.positionId)
+    const assigned = await sessionFetch(`${base}/tasks/assign`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: give.toString(),
+      redirect: 'manual',
+    })
+    assert.equal(assigned.status, 302)
+    const task = store.tasks('week', '2026-W45')[0]!
+
+    // The assigner corrects the title, the priority and the due date.
+    const edit = new URLSearchParams()
+    edit.set('token', leader.token)
+    edit.set('title', '把合同台账补齐并归档')
+    edit.set('detail', '周五前交')
+    edit.set('priority', 'urgent')
+    edit.set('dueDate', '2026-11-20')
+    const edited = await sessionFetch(`${base}/task/${task.id}/edit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: edit.toString(),
+      redirect: 'manual',
+    })
+    assert.equal(edited.status, 302)
+    const after = store.task(task.id)!
+    assert.equal(after.title, '把合同台账补齐并归档')
+    assert.equal(after.priority, 'urgent')
+    assert.equal(after.dueDate, '2026-11-20')
+
+    // The person doing it may not rewrite the task.
+    const deniedForm = new URLSearchParams()
+    deniedForm.set('token', clerk.token)
+    deniedForm.set('title', '改掉')
+    const denied = await sessionFetch(`${base}/task/${task.id}/edit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: deniedForm.toString(),
+      redirect: 'manual',
+    })
+    assert.equal(denied.status, 403)
+    assert.equal(store.task(task.id)?.title, '把合同台账补齐并归档')
+
+    // The assigner may take it back.
+    const cancelForm = new URLSearchParams()
+    cancelForm.set('token', leader.token)
+    const cancelled = await sessionFetch(`${base}/task/${task.id}/cancel`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: cancelForm.toString(),
+      redirect: 'manual',
+    })
+    assert.equal(cancelled.status, 302)
+    assert.equal(store.task(task.id)?.status, 'cancelled')
+
+    // The detail page shows the edit card to the assigner, not to the assignee.
+    const assignerPage = await (await sessionFetch(`${base}/task/${task.id}?token=${leader.token}`)).text()
+    assert.ok(assignerPage.includes('编辑任务'), 'the assigner sees the edit card')
+    const assigneePage = await (await sessionFetch(`${base}/task/${task.id}?token=${clerk.token}`)).text()
+    assert.ok(!assigneePage.includes('编辑任务'), 'the assignee does not')
+  })
+})

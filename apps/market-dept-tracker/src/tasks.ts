@@ -276,6 +276,21 @@ export const taskStore = {
       .run(status, note, updatedAt, id)
   },
 
+  /**
+   * Change what a task says after it was given out: the one who handed it out
+   * may correct the title, the detail, the priority or the due date.
+   */
+  updateTaskDetails(
+    this: TaskStore,
+    id: string,
+    input: { title: string; detail: string; priority: string; dueDate: string },
+    updatedAt: string,
+  ): void {
+    this.db.raw
+      .prepare('UPDATE tasks SET title = ?, detail = ?, priority = ?, due_date = ?, updated_at = ? WHERE id = ?')
+      .run(input.title, input.detail, input.priority, input.dueDate, updatedAt, id)
+  },
+
   /** One task, for the person who owns it. */
   task(this: TaskStore, id: string): Task | undefined {
     const row = this.db.raw
