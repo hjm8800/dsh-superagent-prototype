@@ -63,6 +63,8 @@ export interface TaskListData {
   assignablePositions: TaskPosition[]
   /** The photos of each task, by task id. */
   photos?: Record<string, TaskPhoto[]>
+  /** Subordinate posts asking the viewer for help with a problem. */
+  helpRequests?: { positionName: string; issue: string }[]
   error?: string
 }
 
@@ -227,6 +229,17 @@ ${data.error ? `<div class="alert is-error">${escapeHtml(data.error)}</div>` : '
   ${stat('上级下达', String(assigned), '临时交办')}
   ${stat('固定任务', String(recurringCount), blocked > 0 ? `另有 ${blocked} 项受阻` : '按周期自动生成')}
 </div>
+
+${
+  data.helpRequests && data.helpRequests.length > 0
+    ? `<section class="card">
+  <h2>需要上级协助解决的问题</h2>
+  <ul class="help-list">
+    ${data.helpRequests.map((r) => `<li><strong>${escapeHtml(r.positionName)}</strong>：${escapeHtml(r.issue)}</li>`).join('')}
+  </ul>
+</section>`
+    : ''
+}
 
 ${
   data.position && data.recurring.length > 0

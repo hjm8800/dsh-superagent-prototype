@@ -1180,3 +1180,48 @@ test('the api lets a leader set a fixed task, and refuses a member', async () =>
     assert.ok(mine.tasks.some((t) => t.title === '每周交回款台账'))
   })
 })
+
+test('a report can ask the superior for help with a problem', async () => {
+  await withServer(async (base, store) => {
+    const leader = makeLeader(store)
+    const clerk = store.people().find((p) => p.name === '黄美琳')!
+
+    // The person files the weekly report and ticks the help box.
+    const form = new URLSearchParams()
+    form.set('token', clerk.token)
+    form.set('periodType', 'week')
+    form.set('periodKey', '2026-W45')
+    form.set('summary', '本周合同归档')
+    form.set('blockers', '合同模板缺失，需要法务支持')
+    form.set('nextPlan', '等模板')
+    form.set('needHelp', '1')
+    const response = await sessionFetch(`${base}/report`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form.toString(),
+      redirect: 'manual',
+    })
+    assert.equal(response.status, 302)
+    const saved = store.reportFor(clerk.id, 'week', '2026-W45')
+    assert.equal(saved?.needHelp, true, 'the help flag is stored')
+    assert.equal(saved?.blockers, '合同模板缺失，需要法务支持')
+
+    // The form offers the option.
+    const formPage = await (
+      await sessionFetch(`${base}/report?type=week&period=2026-W45&token=${clerk.token}`)
+    ).text()
+    assert.ok(formPage.includes('需要上级协助解决'), 'the report form offers the option')
+
+    // The superior sees the problem on the department page and on the task list.
+    const overview = await (
+      await sessionFetch(`${base}/?type=week&period=2026-W45&token=${leader.token}`)
+    ).text()
+    assert.ok(overview.includes('需要上级协助解决的问题'), 'the leader sees the help requests')
+    assert.ok(overview.includes('合同模板缺失'), 'the problem text is shown')
+    const tasksPage = await (
+      await sessionFetch(`${base}/tasks?type=week&period=2026-W45&token=${leader.token}`)
+    ).text()
+    assert.ok(tasksPage.includes('需要上级协助解决的问题'), 'the task list shows them too')
+    assert.ok(tasksPage.includes('合同模板缺失'))
+  })
+})

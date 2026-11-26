@@ -391,7 +391,7 @@ export class Store {
   reportsForPeriod(periodType: string, periodKey: string): Report[] {
     const rows = this.db.raw
       .prepare(
-        `SELECT id, person_id, period_type, period_key, period_label, summary, blockers, next_plan, submitted_at
+        `SELECT id, person_id, period_type, period_key, period_label, summary, blockers, need_help, next_plan, submitted_at
          FROM reports WHERE period_type = ? AND period_key = ?`,
       )
       .all(periodType, periodKey) as unknown as Array<Record<string, string | number>>
@@ -405,6 +405,7 @@ export class Store {
         periodLabel: r.period_label as string,
         summary: (r.summary as string) ?? '',
         blockers: (r.blockers as string) ?? '',
+        needHelp: Boolean(r.need_help),
         nextPlan: (r.next_plan as string) ?? '',
         submittedAt: r.submitted_at as string,
         items: this.reportItems(id),
@@ -441,6 +442,7 @@ export class Store {
     periodLabel: string
     summary: string
     blockers: string
+    needHelp?: boolean
     nextPlan: string
     items: ReportItem[]
     submittedAt?: string
@@ -450,16 +452,17 @@ export class Store {
     try {
       this.db.raw
         .prepare(
-          `INSERT INTO reports (person_id, period_type, period_key, period_label, summary, blockers, next_plan, submitted_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO reports (person_id, period_type, period_key, period_label, summary, blockers, need_help, next_plan, submitted_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (person_id, period_type, period_key) DO UPDATE SET
              period_label = excluded.period_label, summary = excluded.summary,
-             blockers = excluded.blockers, next_plan = excluded.next_plan,
+             blockers = excluded.blockers, need_help = excluded.need_help,
+             next_plan = excluded.next_plan,
              submitted_at = excluded.submitted_at`,
         )
         .run(
           input.personId, input.periodType, input.periodKey, input.periodLabel,
-          input.summary, input.blockers, input.nextPlan, submittedAt,
+          input.summary, input.blockers, input.needHelp ? 1 : 0, input.nextPlan, submittedAt,
         )
 
       const row = this.db.raw

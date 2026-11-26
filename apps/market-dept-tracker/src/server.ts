@@ -320,6 +320,16 @@ export function createTrackerServer(options: ServerOptions) {
       recurring: taskList.filter((t) => t.kind === 'recurring').length,
     }
 
+    // The posts that asked their superior for help with a problem.
+    const helpRequests = reports
+      .filter((report) => report.needHelp && report.blockers.trim())
+      .map((report) => {
+        const person = people.find((p) => p.id === report.personId)
+        const position = person ? store.positionById(person.positionId) : undefined
+        return { positionName: position?.name ?? '', issue: report.blockers }
+      })
+      .filter((request) => request.positionName)
+
     sendHtml(
       res,
       renderOverview({
@@ -337,6 +347,7 @@ export function createTrackerServer(options: ServerOptions) {
         filePeople,
         unmatchedCount,
         tasks: taskStats,
+        helpRequests,
       }),
     )
   }
@@ -588,6 +599,7 @@ export function createTrackerServer(options: ServerOptions) {
       periodLabel,
       summary: (form.get('summary') ?? '').toString().slice(0, 5000),
       blockers: (form.get('blockers') ?? '').toString().slice(0, 5000),
+      needHelp: form.get('needHelp') === '1' || form.get('needHelp') === 'on',
       nextPlan: (form.get('nextPlan') ?? '').toString().slice(0, 5000),
       items,
     })
@@ -703,6 +715,19 @@ export function createTrackerServer(options: ServerOptions) {
     // Anyone with people directly under them gives tasks out.
     const viewerCanAssign = viewerPosition ? assignable.length > 0 : false
 
+    // The subordinate posts that asked their superior for help with a problem.
+    const people = store.people(dept.id)
+    const helpRequests = store
+      .reportsForPeriod(periodType, periodKey)
+      .filter((report) => report.needHelp && report.blockers.trim())
+      .map((report) => {
+        const person = people.find((p) => p.id === report.personId)
+        const position = person ? store.positionById(person.positionId) : undefined
+        return { positionId: position?.id ?? '', positionName: position?.name ?? '', issue: report.blockers }
+      })
+      .filter((request) => request.positionId !== viewerPosition?.id && inScope(request.positionId))
+      .map((request) => ({ positionName: request.positionName, issue: request.issue }))
+
     const wanted =
       positionId && inScope(positionId) ? store.positionById(positionId) : undefined
     const tasks = store
@@ -767,6 +792,7 @@ export function createTrackerServer(options: ServerOptions) {
         viewerToken: viewer?.token,
         viewerCanAssign,
         assignablePositions: assignable,
+        helpRequests,
       }),
     )
   }

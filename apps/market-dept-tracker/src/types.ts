@@ -168,6 +168,8 @@ export interface Report {
   summary: string
   /** What blocked the work, if anything. */
   blockers: string
+  /** Whether the person asks a superior for help with the problem. */
+  needHelp: boolean
   /** What comes next. */
   nextPlan: string
   submittedAt: string

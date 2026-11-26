@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS reports (
   summary        TEXT NOT NULL DEFAULT '',
   blockers       TEXT NOT NULL DEFAULT '',
   next_plan      TEXT NOT NULL DEFAULT '',
+  need_help      INTEGER NOT NULL DEFAULT 0,
   submitted_at   TEXT NOT NULL,
   UNIQUE (person_id, period_type, period_key)
 );
@@ -227,6 +228,11 @@ export function openDatabase(file: string): Database {
   const positionColumns = raw.prepare('PRAGMA table_info(positions)').all() as unknown as Array<{ name: string }>
   if (!positionColumns.some((column) => column.name === 'retired')) {
     raw.exec('ALTER TABLE positions ADD COLUMN retired INTEGER NOT NULL DEFAULT 0')
+  }
+  // A report can ask the superior for help on the problem it describes.
+  const reportColumns = raw.prepare('PRAGMA table_info(reports)').all() as unknown as Array<{ name: string }>
+  if (!reportColumns.some((column) => column.name === 'need_help')) {
+    raw.exec('ALTER TABLE reports ADD COLUMN need_help INTEGER NOT NULL DEFAULT 0')
   }
   return { raw, close: () => raw.close() }
 }
