@@ -13,6 +13,10 @@ const dutyColumns = db.prepare('PRAGMA table_info(duties)').all()
 if (!dutyColumns.some((column) => column.name === 'retired')) {
   db.exec('ALTER TABLE duties ADD COLUMN retired INTEGER NOT NULL DEFAULT 0')
 }
+const positionColumns = db.prepare('PRAGMA table_info(positions)').all()
+if (!positionColumns.some((column) => column.name === 'retired')) {
+  db.exec('ALTER TABLE positions ADD COLUMN retired INTEGER NOT NULL DEFAULT 0')
+}
 
 const log = []
 const position = (name) => db.prepare('SELECT id, name, parent_id FROM positions WHERE name = ?').get(name)
@@ -150,6 +154,20 @@ if (managerPerson && managerPerson.name !== '蔡金强') {
   db.prepare('UPDATE people SET name = ? WHERE id = ?').run('蔡金强', managerPerson.id)
   log.push('manager -> 蔡金强')
 }
+// The two deputy posts are held by real people now; keep the person and the
+// account name in step on every start.
+const renamePersonAt = (positionId, name) => {
+  if (!positionId) return
+  const person = db.prepare('SELECT id, name FROM people WHERE position_id = ? ORDER BY name LIMIT 1').get(positionId)
+  if (!person) return
+  if (person.name !== name) {
+    db.prepare('UPDATE people SET name = ? WHERE id = ?').run(name, person.id)
+    log.push(`${person.name} -> ${name}`)
+  }
+  db.prepare('UPDATE accounts SET username = ? WHERE person_id = ?').run(name, person.id)
+}
+renamePersonAt(dep1 && dep1.id, '袁静')
+renamePersonAt(dep2 && dep2.id, '李捷谦')
 const fengWenjing = personByName('冯文静')
 if (fengWenjing && bidStaff) movePerson('冯文静', bidStaff.id)
 const fengTianyou = warehouse ? ensurePerson('冯天佑', warehouse.id, 0) : undefined
@@ -196,10 +214,26 @@ const ensureSharedAccount = (positionId, username) => {
 if (marketingStaffPost) ensureSharedAccount(marketingStaffPost.id, '市场营销业务员')
 if (techStaff) ensureSharedAccount(techStaff.id, '技经业务员')
 
+// The 11-16 table leaves these posts out: they are retired (hidden from the
+// tree and the lists) and their logins stop working. Their history stays.
+const retiredPosts = ['光伏+用户标团', '市场拓展业务员', '客户服务业务员', '采购管理业务员']
+for (const name of retiredPosts) {
+  const row = position(name)
+  if (!row) continue
+  const before = db.prepare('SELECT retired FROM positions WHERE id = ?').get(row.id)
+  db.prepare('UPDATE positions SET retired = 1 WHERE id = ?').run(row.id)
+  const removed = db.prepare('DELETE FROM accounts WHERE position_id = ?').run(row.id)
+  if (!before || !before.retired || removed.changes) {
+    log.push('retired post ' + name + (removed.changes ? ' (account removed)' : ''))
+  }
+}
+// 李建眉 was on the buyer post; the new table has them helping the bid team.
+if (bidStaff) movePerson('李建眉', bidStaff.id)
+
 const summary = {
   log,
   posts: db
-    .prepare('SELECT p.name, p.level, p.parent_id, (SELECT COUNT(*) FROM duties d WHERE d.position_id = p.id AND d.retired = 0) AS duties FROM positions p ORDER BY p.ordinal')
+    .prepare('SELECT p.name, p.level, p.parent_id, (SELECT COUNT(*) FROM duties d WHERE d.position_id = p.id AND d.retired = 0) AS duties FROM positions p WHERE p.retired = 0 ORDER BY p.ordinal')
     .all(),
   people: db.prepare('SELECT name, position_id, pending FROM people ORDER BY name').all(),
 }
