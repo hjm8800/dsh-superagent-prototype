@@ -214,6 +214,32 @@ const ensureSharedAccount = (positionId, username) => {
 if (marketingStaffPost) ensureSharedAccount(marketingStaffPost.id, '市场营销业务员')
 if (techStaff) ensureSharedAccount(techStaff.id, '技经业务员')
 
+// The leadership post is held by 黄嘉明 now; keep the person and the account
+// name in step, and give the department a generic admin account with the same
+// full view (a second account on the same person).
+const vgmPerson = vgm
+  ? db.prepare('SELECT id, name FROM people WHERE position_id = ? ORDER BY name LIMIT 1').get(vgm.id)
+  : undefined
+if (vgmPerson && vgmPerson.name !== '黄嘉明') {
+  db.prepare('UPDATE people SET name = ? WHERE id = ?').run('黄嘉明', vgmPerson.id)
+  log.push(`${vgmPerson.name} -> 黄嘉明`)
+}
+if (vgmPerson) {
+  const vgmAccount = db.prepare('SELECT id, username FROM accounts WHERE person_id = ?').get(vgmPerson.id)
+  if (vgmAccount && vgmAccount.username !== '黄嘉明') {
+    db.prepare("UPDATE accounts SET username = '黄嘉明' WHERE id = ?").run(vgmAccount.id)
+  }
+  if (vgm) {
+    const admin = db.prepare("SELECT id FROM accounts WHERE username = '管理员'").get()
+    if (!admin) {
+      db.prepare(
+        'INSERT INTO accounts (id, position_id, person_id, username, password_hash, password_plain, token, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run('acct-admin', vgm.id, vgmPerson.id, '管理员', hash('test1234'), 'test1234', newToken(), new Date().toISOString())
+      log.push('added admin account 管理员')
+    }
+  }
+}
+
 // The 11-16 table leaves these posts out: they are retired (hidden from the
 // tree and the lists) and their logins stop working. Their history stays.
 const retiredPosts = ['光伏+用户标团', '市场拓展业务员', '客户服务业务员', '采购管理业务员']
