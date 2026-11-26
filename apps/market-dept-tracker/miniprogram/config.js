@@ -11,5 +11,5 @@
  * 并把下面的地址换成它。
  */
 module.exports = {
-  baseUrl: 'https://43.138.176.177:8443',
+  baseUrl: 'https://morebrighter.cn',
 }
