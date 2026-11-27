@@ -1,0 +1,93 @@
+<view class="container">
+  <view wx:if="{{error}}" class="card" style="color:#b42318;">{{error}}</view>
+  <view wx:if="{{loading}}" class="empty">正在加载…</view>
+
+  <block wx:elif="{{!error}}">
+    <view class="card">
+      <view class="title">{{position}}</view>
+      <view class="subtitle">{{periodLabel}}{{submittedAt ? '｜上次提交于 ' + submittedAt : ''}}</view>
+      <view class="seg">
+        <view
+          wx:for="{{periodTypes}}"
+          wx:key="value"
+          class="seg-item {{periodType === item.value ? 'seg-active' : ''}}"
+          data-type="{{item.value}}"
+          bindtap="switchType"
+        >{{item.label}}</view>
+      </view>
+      <view class="chips">
+        <view
+          wx:for="{{periods}}"
+          wx:key="key"
+          class="chip {{item.key === periodKey ? 'chip-active' : ''}}"
+          data-key="{{item.key}}"
+          bindtap="pickPeriod"
+        >{{item.label}}</view>
+      </view>
+      <view wx:if="{{instructions}}" class="muted small">工作指引：{{instructions}}</view>
+    </view>
+
+    <view class="card">
+      <view class="title">逐条职责</view>
+      <view class="subtitle">每条选一个状态；受阻的建议写一句说明。</view>
+
+      <view class="duty" wx:for="{{duties}}" wx:key="id">
+        <view class="duty-text">
+          <text class="duty-no">{{item.ordinal}}</text>
+          <text>{{item.text}}</text>
+        </view>
+        <view class="row">
+          <text class="muted small">状态</text>
+          <picker
+            class="picker"
+            range="{{statusChoices}}"
+            range-key="label"
+            value="{{item.statusIndex}}"
+            data-index="{{item.statusIndex}}"
+            data-duty="{{index}}"
+            bindchange="changeStatus"
+          >
+            <view>{{statusChoices[item.statusIndex].label}}</view>
+          </picker>
+        </view>
+        <view class="row">
+          <text class="muted small">完成度</text>
+          <input
+            class="input small-input"
+            type="number"
+            placeholder="0-100"
+            value="{{item.percent}}"
+            data-duty="{{index}}"
+            bindinput="inputPercent"
+          />
+          <text class="muted small">%</text>
+        </view>
+        <input
+          class="input"
+          style="margin-top:10rpx;"
+          placeholder="说明（可选）：做了什么 / 卡在哪里"
+          value="{{item.note}}"
+          data-duty="{{index}}"
+          bindinput="inputNote"
+        />
+      </view>
+
+      <view wx:if="{{duties.length === 0}}" class="empty">这个岗位还没有列出职责条目</view>
+    </view>
+
+    <view class="card">
+      <view class="title">本期小结</view>
+      <view class="muted small" style="margin:12rpx 0 6rpx;">本期完成情况</view>
+      <textarea class="input" placeholder="本期主要完成了哪些工作" value="{{summary}}" bindinput="inputSummary" maxlength="2000" />
+      <view class="muted small" style="margin:12rpx 0 6rpx;">遇到的问题</view>
+      <textarea class="input" placeholder="需要协调或支持的事项" value="{{blockers}}" bindinput="inputBlockers" maxlength="2000" />
+      <view class="muted small" style="margin:12rpx 0 6rpx;">下期计划</view>
+      <textarea class="input" placeholder="下一周期的工作安排" value="{{nextPlan}}" bindinput="inputNextPlan" maxlength="2000" />
+
+      <button class="btn" style="margin-top:24rpx;" bindtap="submit" disabled="{{submitting}}">
+        {{submitting ? '正在提交…' : '提交本周期填报'}}
+      </button>
+      <view class="muted small" style="margin-top:12rpx;">重复提交会覆盖本周期的内容</view>
+    </view>
+  </block>
+</view>
