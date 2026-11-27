@@ -1194,7 +1194,7 @@ test('a report can ask the superior for help with a problem', async () => {
     form.set('summary', '本周合同归档')
     form.set('blockers', '合同模板缺失，需要法务支持')
     form.set('nextPlan', '等模板')
-    form.set('needHelp', '1')
+    // No checkbox: the written problem is passed up on its own.
     const response = await sessionFetch(`${base}/report`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -1210,7 +1210,7 @@ test('a report can ask the superior for help with a problem', async () => {
     const formPage = await (
       await sessionFetch(`${base}/report?type=week&period=2026-W45&token=${clerk.token}`)
     ).text()
-    assert.ok(formPage.includes('需要上级协助解决'), 'the report form offers the option')
+    assert.ok(formPage.includes('转给上级协助解决'), 'the form says the problem goes to the superior')
 
     // The superior sees the problem on the department page and on the task list.
     const overview = await (

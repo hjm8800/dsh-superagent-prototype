@@ -545,8 +545,7 @@ ${data.saved ? `<div class="alert is-success">已提交${escapeHtml(PERIOD_LABEL
   <section class="card">
     <h2>本期小结</h2>
     <label class="field"><span>本期完成情况</span><textarea name="summary" rows="3" placeholder="本期主要完成了哪些工作">${escapeHtml(data.existing?.summary ?? '')}</textarea></label>
-    <label class="field"><span>遇到的问题</span><textarea name="blockers" rows="3" placeholder="需要协调或支持的事项">${escapeHtml(data.existing?.blockers ?? '')}</textarea></label>
-    <label class="check"><input type="checkbox" name="needHelp" value="1"${data.existing?.needHelp ? ' checked' : ''}> 存在问题，需要上级协助解决</label>
+    <label class="field"><span>遇到的问题</span><textarea name="blockers" rows="3" placeholder="填写后会自动转给上级协助解决">${escapeHtml(data.existing?.blockers ?? '')}</textarea></label>
     <label class="field"><span>下期计划</span><textarea name="nextPlan" rows="3" placeholder="下一周期的工作安排">${escapeHtml(data.existing?.nextPlan ?? '')}</textarea></label>
   </section>
 
@@ -663,7 +662,7 @@ ${pageHead(
   <p class="note-cell">${escapeHtml(data.report.summary || '—')}</p>
   <h3 class="small-heading">遇到的问题</h3>
   <p class="note-cell${data.report.blockers ? ' is-alert' : ''}">${escapeHtml(data.report.blockers || '—')}</p>
-  ${data.report.needHelp ? '<p class="note-cell is-alert">已标记：存在问题，需要上级协助解决。</p>' : ''}
+  ${data.report.blockers ? '<p class="note-cell is-alert">以上问题已转给上级协助解决。</p>' : ''}
   <h3 class="small-heading">下期计划</h3>
   <p class="note-cell">${escapeHtml(data.report.nextPlan || '—')}</p>
 </section>

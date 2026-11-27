@@ -322,7 +322,7 @@ export function createTrackerServer(options: ServerOptions) {
 
     // The posts that asked their superior for help with a problem.
     const helpRequests = reports
-      .filter((report) => report.needHelp && report.blockers.trim())
+      .filter((report) => report.blockers.trim())
       .map((report) => {
         const person = people.find((p) => p.id === report.personId)
         const position = person ? store.positionById(person.positionId) : undefined
@@ -592,14 +592,16 @@ export function createTrackerServer(options: ServerOptions) {
       })
     }
 
+    const blockers = (form.get('blockers') ?? '').toString().slice(0, 5000)
     store.saveReport({
       personId: person.id,
       periodType,
       periodKey,
       periodLabel,
       summary: (form.get('summary') ?? '').toString().slice(0, 5000),
-      blockers: (form.get('blockers') ?? '').toString().slice(0, 5000),
-      needHelp: form.get('needHelp') === '1' || form.get('needHelp') === 'on',
+      blockers,
+      // A written problem is passed up to the superior; no checkbox needed.
+      needHelp: blockers.trim() !== '',
       nextPlan: (form.get('nextPlan') ?? '').toString().slice(0, 5000),
       items,
     })
@@ -719,7 +721,7 @@ export function createTrackerServer(options: ServerOptions) {
     const people = store.people(dept.id)
     const helpRequests = store
       .reportsForPeriod(periodType, periodKey)
-      .filter((report) => report.needHelp && report.blockers.trim())
+      .filter((report) => report.blockers.trim())
       .map((report) => {
         const person = people.find((p) => p.id === report.personId)
         const position = person ? store.positionById(person.positionId) : undefined
