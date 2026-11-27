@@ -1297,3 +1297,40 @@ test('the person who gave a task may correct it afterwards', async () => {
     assert.ok(!assigneePage.includes('编辑任务'), 'the assignee does not')
   })
 })
+
+test('the board puts urgent tasks first in a column', async () => {
+  await withServer(async (base, store) => {
+    const leader = makeLeader(store)
+    const clerk = store.people().find((p) => p.name === '黄美琳')!
+    const makeTask = (id: string, title: string, priority: string, dueDate: string) =>
+      store.createTask({
+        id,
+        departmentId: 'mkt',
+        kind: 'assigned',
+        title,
+        detail: '',
+        personId: clerk.id,
+        positionId: clerk.positionId,
+        periodType: 'week',
+        periodKey: '2026-W45',
+        periodLabel: '2026年第45周',
+        priority,
+        dueDate,
+        assignedById: null,
+        recurringTaskId: null,
+        dutyId: null,
+        artifactId: null,
+        createdAt: NOW,
+      })
+    makeTask('task-low', '低优先任务', 'low', '')
+    makeTask('task-urgent', '紧急任务', 'urgent', '')
+    makeTask('task-normal', '普通任务', 'normal', '2026-11-10')
+    const board = await (
+      await sessionFetch(`${base}/board?type=week&period=2026-W45&token=${leader.token}`)
+    ).text()
+    const urgentAt = board.indexOf('紧急任务')
+    const normalAt = board.indexOf('普通任务')
+    const lowAt = board.indexOf('低优先任务')
+    assert.ok(urgentAt >= 0 && normalAt > urgentAt && lowAt > normalAt, 'urgent, then normal, then low')
+  })
+})

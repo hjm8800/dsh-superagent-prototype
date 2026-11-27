@@ -1153,10 +1153,24 @@ export function createTrackerServer(options: ServerOptions) {
         seen.add(key)
         return true
       })
+    // The board reads left to right; inside a column the urgent work comes
+    // first, then the nearest due date.
+    const priorityRank: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 }
+    const byUrgency = (a: (typeof tasks)[number], b: (typeof tasks)[number]): number => {
+      const rankA = priorityRank[a.priority] ?? 4
+      const rankB = priorityRank[b.priority] ?? 4
+      if (rankA !== rankB) return rankA - rankB
+      if (a.dueDate !== b.dueDate) {
+        if (!a.dueDate) return 1
+        if (!b.dueDate) return -1
+        return a.dueDate.localeCompare(b.dueDate)
+      }
+      return a.title.localeCompare(b.title, 'zh')
+    }
     const columns = (['open', 'in_progress', 'blocked', 'done'] as TaskStatus[]).map((status) => ({
       status,
       label: TASK_STATUS_LABELS[status],
-      tasks: tasks.filter((task) => task.status === status),
+      tasks: tasks.filter((task) => task.status === status).sort(byUrgency),
     }))
     sendHtml(
       res,

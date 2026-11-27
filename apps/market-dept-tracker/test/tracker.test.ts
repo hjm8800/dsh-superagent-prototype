@@ -417,3 +417,19 @@ test('a post can be shown under a display label', () => {
   const dep = tree.find((node) => node.name === '袁静')!
   assert.equal(dep.level, 'deputy_manager', 'the level is unchanged')
 })
+
+test('the posts are listed from the top level down', () => {
+  const { store } = freshStore()
+  const rank: Record<string, number> = {
+    leadership: 0,
+    manager: 1,
+    deputy_manager: 2,
+    specialist: 3,
+    specialist_staff: 4,
+    team: 5,
+  }
+  const levels = store.positions().map((position) => rank[position.level] ?? 6)
+  for (let index = 1; index < levels.length; index++) {
+    assert.ok((levels[index] ?? 0) >= (levels[index - 1] ?? 0), 'the level order must not go back up')
+  }
+})

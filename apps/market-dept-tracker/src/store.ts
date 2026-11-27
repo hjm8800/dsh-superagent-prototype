@@ -210,7 +210,15 @@ export class Store {
                 instructions, boundary, note
          FROM positions
          ${departmentId ? 'WHERE department_id = ? AND retired = 0' : 'WHERE retired = 0'}
-         ORDER BY ordinal, name`,
+         ORDER BY CASE level
+           WHEN 'leadership' THEN 0
+           WHEN 'manager' THEN 1
+           WHEN 'deputy_manager' THEN 2
+           WHEN 'specialist' THEN 3
+           WHEN 'specialist_staff' THEN 4
+           WHEN 'team' THEN 5
+           ELSE 6
+         END, ordinal, name`,
       )
       .all(...(departmentId ? [departmentId] : [])) as unknown as PositionRow[]
     return rows.map((r) => ({
