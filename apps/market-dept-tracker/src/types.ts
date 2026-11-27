@@ -86,7 +86,10 @@ export interface Position {
   /** Stable slug, e.g. `contract-clerk`. */
   id: string
   departmentId: string
+  /** The name the pages show; falls back to the post name. */
   name: string
+  /** A label the pages prefer over the post name, when set. */
+  displayName?: string
   role: string
   level: PositionLevel
   /** Id of the parent position, or null for the department root. */

@@ -90,6 +90,7 @@ interface PositionRow {
   id: string
   department_id: string
   name: string
+  display_name: string
   role: string
   level: string
   parent_id: string | null
@@ -205,7 +206,7 @@ export class Store {
   positions(departmentId?: string): Position[] {
     const rows = this.db.raw
       .prepare(
-        `SELECT id, department_id, name, role, level, parent_id, headcount_note,
+        `SELECT id, department_id, name, display_name, role, level, parent_id, headcount_note,
                 instructions, boundary, note
          FROM positions
          ${departmentId ? 'WHERE department_id = ? AND retired = 0' : 'WHERE retired = 0'}
@@ -215,7 +216,8 @@ export class Store {
     return rows.map((r) => ({
       id: r.id,
       departmentId: r.department_id,
-      name: r.name,
+      name: r.display_name || r.name,
+      displayName: r.display_name,
       role: r.role,
       level: r.level as Position['level'],
       parentId: r.parent_id,

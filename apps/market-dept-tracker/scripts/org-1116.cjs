@@ -168,6 +168,20 @@ const renamePersonAt = (positionId, name) => {
 }
 renamePersonAt(dep1 && dep1.id, '袁静')
 renamePersonAt(dep2 && dep2.id, '李捷谦')
+
+// The pages show the two deputy posts under their holders' names; the post
+// name itself stays 副经理1/副经理2.
+const setDisplayName = (positionId, label) => {
+  if (!positionId) return
+  const row = db.prepare('SELECT name, display_name FROM positions WHERE id = ?').get(positionId)
+  if (!row) return
+  if (row.display_name !== label) {
+    db.prepare('UPDATE positions SET display_name = ? WHERE id = ?').run(label, positionId)
+    log.push(`${row.name} displays as ${label}`)
+  }
+}
+setDisplayName(dep1 && dep1.id, '袁静')
+setDisplayName(dep2 && dep2.id, '李捷谦')
 const fengWenjing = personByName('冯文静')
 if (fengWenjing && bidStaff) movePerson('冯文静', bidStaff.id)
 const fengTianyou = warehouse ? ensurePerson('冯天佑', warehouse.id, 0) : undefined

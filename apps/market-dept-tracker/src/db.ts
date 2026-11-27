@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS positions (
   id              TEXT PRIMARY KEY,
   department_id   TEXT NOT NULL REFERENCES departments(id),
   name            TEXT NOT NULL,
+  display_name    TEXT NOT NULL DEFAULT '',
   role            TEXT NOT NULL DEFAULT '',
   level           TEXT NOT NULL,
   parent_id       TEXT REFERENCES positions(id),
@@ -228,6 +229,11 @@ export function openDatabase(file: string): Database {
   const positionColumns = raw.prepare('PRAGMA table_info(positions)').all() as unknown as Array<{ name: string }>
   if (!positionColumns.some((column) => column.name === 'retired')) {
     raw.exec('ALTER TABLE positions ADD COLUMN retired INTEGER NOT NULL DEFAULT 0')
+  }
+  // A post can show a different label in the pages than its table name; the
+  // deputy posts are shown under their holders' names.
+  if (!positionColumns.some((column) => column.name === 'display_name')) {
+    raw.exec("ALTER TABLE positions ADD COLUMN display_name TEXT NOT NULL DEFAULT ''")
   }
   // A report can ask the superior for help on the problem it describes.
   const reportColumns = raw.prepare('PRAGMA table_info(reports)').all() as unknown as Array<{ name: string }>

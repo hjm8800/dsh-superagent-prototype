@@ -405,3 +405,15 @@ test('the overview offers both ways of counting the completion', async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()))
   db.close()
 })
+
+test('a post can be shown under a display label', () => {
+  const { db, store } = freshStore()
+  const post = store.positions().find((p) => p.name === '副经理')!
+  db.raw.prepare('UPDATE positions SET display_name = ? WHERE id = ?').run('袁静', post.id)
+  const after = store.positionById(post.id)!
+  assert.equal(after.name, '袁静', 'the pages use the display label')
+  const tree = store.tree('mkt')
+  assert.ok(tree.some((node) => node.name === '袁静'), 'the tree shows the label')
+  const dep = tree.find((node) => node.name === '袁静')!
+  assert.equal(dep.level, 'deputy_manager', 'the level is unchanged')
+})
