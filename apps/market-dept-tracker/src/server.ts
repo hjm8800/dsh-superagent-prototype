@@ -16,6 +16,9 @@ import {
   renderPersonReport,
   renderCollection,
   renderWelcome,
+  renderForgotPage,
+  renderAccountPage,
+  renderResetRequestsPage,
   type OverviewItem,
 } from './views.ts'
 import {
@@ -29,7 +32,7 @@ import {
 } from './task-views.ts'
 import type { PeriodType, TaskStatus, Person, Position, PositionView, AccessRole, Account } from './types.ts'
 import { accessOf, leaderGrants } from './access.ts'
-import { verifyPassword } from './accounts.ts'
+import { hashPassword, verifyPassword } from './accounts.ts'
 import { escapeHtml, layout } from './html.ts'
 import type { Department } from './types.ts'
 import type { Database } from './db.ts'
@@ -251,6 +254,120 @@ export function createTrackerServer(options: ServerOptions) {
   /** The login page, also when a session cookie is still around. */
   const welcome = (_req: IncomingMessage, res: ServerResponse) => {
     sendHtml(res, renderWelcome({ departmentName: department().name }))
+  }
+
+  /** A locked-out person asks the head to reset the password. */
+  const forgotPage = (_req: IncomingMessage, res: ServerResponse) => {
+    sendHtml(res, renderForgotPage({ departmentName: department().name }))
+  }
+
+  const forgotSubmit = async (req: IncomingMessage, res: ServerResponse) => {
+    const form = await readBody(req)
+    const username = (form.get('username') ?? '').toString().trim()
+    const note = (form.get('note') ?? '').toString().slice(0, 500)
+    const account = username ? store.accountByUsername(username) : undefined
+    if (!account) {
+      sendHtml(
+        res,
+        renderForgotPage({
+          departmentName: department().name,
+          error: '没有这个账户，请核对账户名（例如：蔡金强）',
+          username,
+        }),
+        404,
+      )
+      return
+    }
+    store.createPasswordResetRequest({ accountId: account.id, note, createdAt: now().toISOString() })
+    sendHtml(res, renderForgotPage({ departmentName: department().name, sent: true }))
+  }
+
+  /** The logged-in account's own settings page. */
+  const accountPage = (req: IncomingMessage, res: ServerResponse, url: URL) => {
+    const account = accountOf(req)
+    if (!account) {
+      sendHtml(
+        res,
+        layout({
+          title: '账户设置',
+          active: 'account',
+          body: '<div class="page-head"><div><h1>请先登录</h1><p class="muted">当前没有登录岗位账户。</p></div></div><div class="card"><a class="btn" href="/login">去登录</a></div>',
+        }),
+      )
+      return
+    }
+    const position = store.positionById(account.positionId)
+    const person = account.personId ? store.personById(account.personId) : undefined
+    const role = person && position ? accessOf(person, position, leaderGrants(db.raw)) : 'member'
+    sendHtml(
+      res,
+      renderAccountPage({
+        departmentName: department().name,
+        username: account.username,
+        postName: position?.name ?? '',
+        isLeader: role === 'leader',
+        changed: url.searchParams.get('changed') === '1',
+        error: url.searchParams.get('error') ?? undefined,
+      }),
+    )
+  }
+
+  /** Change the logged-in account's own password. */
+  const changePassword = async (req: IncomingMessage, res: ServerResponse) => {
+    const form = await readBody(req)
+    const account = accountOf(req)
+    if (!account) {
+      redirect(res, '/login')
+      return
+    }
+    const current = (form.get('current') ?? '').toString()
+    const next = (form.get('next') ?? '').toString()
+    const confirm = (form.get('confirm') ?? '').toString()
+    const fail = (message: string) => redirect(res, `/account?error=${encodeURIComponent(message)}`)
+    if (!verifyPassword(current, account.passwordHash)) return void fail('当前密码不对')
+    if (next.length < 6) return void fail('新密码至少 6 位')
+    if (next !== confirm) return void fail('两次输入的新密码不一致')
+    store.setAccountPassword(account.id, hashPassword(next), next)
+    redirect(res, '/account?changed=1')
+  }
+
+  /** The head's list of password reset requests. */
+  const resetRequestsPage = (req: IncomingMessage, res: ServerResponse, url: URL) => {
+    const viewer = viewerOf(cookieOf(req, SESSION_COOKIE))
+    if (viewer.role !== 'leader') {
+      sendHtml(
+        res,
+        layout({ title: '没有权限', active: '', body: '<div class="page-head"><div><h1>没有权限</h1></div></div>' }),
+        403,
+      )
+      return
+    }
+    sendHtml(
+      res,
+      renderResetRequestsPage({
+        departmentName: department().name,
+        requests: store.passwordResetRequests(),
+        done: url.searchParams.get('done') === '1',
+      }),
+    )
+  }
+
+  /** Reset one requested account to the department's initial password. */
+  const resolveResetRequest = async (req: IncomingMessage, res: ServerResponse) => {
+    const viewer = viewerOf(cookieOf(req, SESSION_COOKIE))
+    if (viewer.role !== 'leader') {
+      sendText(res, '没有权限', 403)
+      return
+    }
+    const form = await readBody(req)
+    const id = Number(form.get('id') ?? 0)
+    const request = store.passwordResetRequests().find((item) => item.id === id && item.status === 'open')
+    if (request) {
+      const account = store.accounts().find((item) => item.id === request.accountId)
+      if (account) store.setAccountPassword(account.id, hashPassword('test1234'), 'test1234')
+      store.resolvePasswordResetRequest(request.id, now().toISOString())
+    }
+    redirect(res, '/reset-requests?done=1')
   }
 
   // ------------------------------------------------------------- routes
@@ -1915,6 +2032,9 @@ export function createTrackerServer(options: ServerOptions) {
       if (route === '/login' && method === 'GET') return welcome(req, res)
       if (route === '/login' && method === 'POST') return void login(req, res)
       if (route === '/logout' && method === 'GET') return logout(req, res)
+      // The forgot-password page is reachable before logging in.
+      if (route === '/forgot' && method === 'GET') return forgotPage(req, res)
+      if (route === '/forgot' && method === 'POST') return void forgotSubmit(req, res)
 
       // Content is only for a logged-in browser: the session cookie /login
       // set. Tokens in the address are no longer accepted.
@@ -1961,6 +2081,10 @@ export function createTrackerServer(options: ServerOptions) {
         if (memberOnly(role, res)) return
       }
       if (route === '/' && method === 'GET') return overview(req, res, url)
+      if (route === '/account' && method === 'GET') return accountPage(req, res, url)
+      if (route === '/account/password' && method === 'POST') return void changePassword(req, res)
+      if (route === '/reset-requests' && method === 'GET') return resetRequestsPage(req, res, url)
+      if (route === '/reset-requests' && method === 'POST') return void resolveResetRequest(req, res)
       if (route === '/collection' && method === 'GET') return collection(req, res, url)
       if (route === '/ledger' && method === 'GET') return ledger(req, res, url)
       if (route === '/report' && method === 'GET') return reportForm(req, res, url)

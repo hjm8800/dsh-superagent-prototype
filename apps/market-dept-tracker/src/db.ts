@@ -69,9 +69,17 @@ CREATE TABLE IF NOT EXISTS accounts (
   created_at     TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS password_reset_requests (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id   TEXT NOT NULL REFERENCES accounts(id),
+  note         TEXT NOT NULL DEFAULT '',
+  status       TEXT NOT NULL DEFAULT 'open',
+  created_at   TEXT NOT NULL,
+  resolved_at  TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS reports (
-  id             INTEGER PRIMARY KEY AUTOINCREMENT,
-  person_id      TEXT NOT NULL REFERENCES people(id),
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,  person_id      TEXT NOT NULL REFERENCES people(id),
   period_type    TEXT NOT NULL,
   period_key     TEXT NOT NULL,
   period_label   TEXT NOT NULL,

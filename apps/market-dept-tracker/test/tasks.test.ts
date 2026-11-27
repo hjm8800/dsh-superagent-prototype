@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { openDatabase, seedArtifacts, seedDatabase } from '../src/db.ts'
 import { grantLeaderAccess } from '../src/access.ts'
-import { hashPassword } from '../src/accounts.ts'
+import { hashPassword, verifyPassword } from '../src/accounts.ts'
 import { Store } from '../src/store.ts'
 import { createTrackerServer } from '../src/server.ts'
 import { assignablePosts } from '../src/task-views.ts'
@@ -1332,5 +1332,98 @@ test('the board puts urgent tasks first in a column', async () => {
     const normalAt = board.indexOf('普通任务')
     const lowAt = board.indexOf('低优先任务')
     assert.ok(urgentAt >= 0 && normalAt > urgentAt && lowAt > normalAt, 'urgent, then normal, then low')
+  })
+})
+
+test('a person may change their own password', async () => {
+  await withServer(async (base, store) => {
+    const person = store.people().find((p) => p.name === '黄美琳')!
+    store.createAccount({
+      id: 'acct-self',
+      positionId: person.positionId,
+      personId: person.id,
+      username: person.name,
+      passwordHash: hashPassword('abc12345'),
+      passwordPlain: 'abc12345',
+      token: 'c'.repeat(32),
+      createdAt: NOW,
+    })
+    const login = await sessionFetch(`${base}/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ username: person.name, password: 'abc12345' }).toString(),
+      redirect: 'manual',
+    })
+    assert.equal(login.status, 302)
+    const cookie = (login.headers.get('set-cookie') ?? '')
+      .split(',')
+      .map((part) => part.trim().split(';')[0])
+      .join('; ')
+    const change = await sessionFetch(`${base}/account/password`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+      body: new URLSearchParams({ current: 'abc12345', next: 'xyz78901', confirm: 'xyz78901' }).toString(),
+      redirect: 'manual',
+    })
+    assert.equal(change.status, 302)
+    const account = store.accountByUsername(person.name)!
+    assert.ok(verifyPassword('xyz78901', account.passwordHash), 'the new password is stored')
+    const relogin = await sessionFetch(`${base}/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ username: person.name, password: 'xyz78901' }).toString(),
+      redirect: 'manual',
+    })
+    assert.equal(relogin.status, 302, 'the new password logs in')
+    const stale = await sessionFetch(`${base}/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ username: person.name, password: 'abc12345' }).toString(),
+      redirect: 'manual',
+    })
+    assert.equal(stale.status, 401, 'the old password no longer works')
+  })
+})
+
+test('a forgotten password is asked for and reset by the head', async () => {
+  await withServer(async (base, store) => {
+    const leader = makeLeader(store)
+    const person = store.people().find((p) => p.name === '黄美琳')!
+    store.createAccount({
+      id: 'acct-forgot',
+      positionId: person.positionId,
+      personId: person.id,
+      username: person.name,
+      passwordHash: hashPassword('abc12345'),
+      passwordPlain: 'abc12345',
+      token: 'd'.repeat(32),
+      createdAt: NOW,
+    })
+    const forgot = await sessionFetch(`${base}/forgot`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ username: person.name, note: '密码忘了' }).toString(),
+    })
+    assert.equal(forgot.status, 200)
+    const page = await (
+      await sessionFetch(`${base}/reset-requests`, { headers: { cookie: `mdt_token=${leader.token}` } })
+    ).text()
+    assert.ok(page.includes(person.name), 'the head sees the request')
+    const idMatch = /name="id" value="(\d+)"/.exec(page)
+    assert.ok(idMatch, 'the request has a reset button')
+    const reset = await sessionFetch(`${base}/reset-requests`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: `mdt_token=${leader.token}` },
+      body: new URLSearchParams({ id: idMatch[1] ?? '0' }).toString(),
+      redirect: 'manual',
+    })
+    assert.equal(reset.status, 302)
+    const login = await sessionFetch(`${base}/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ username: person.name, password: 'test1234' }).toString(),
+      redirect: 'manual',
+    })
+    assert.equal(login.status, 302, 'the initial password works after the reset')
   })
 })

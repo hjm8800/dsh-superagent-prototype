@@ -368,6 +368,52 @@ export class Store {
     )
   }
 
+  /** Someone asks the department head to reset their password. */
+  createPasswordResetRequest(input: { accountId: string; note: string; createdAt: string }): void {
+    this.db.raw
+      .prepare('INSERT INTO password_reset_requests (account_id, note, status, created_at) VALUES (?, ?, ?, ?)')
+      .run(input.accountId, input.note, 'open', input.createdAt)
+  }
+
+  /** The reset requests, still open ones first. */
+  passwordResetRequests(): {
+    id: number
+    accountId: string
+    username: string
+    note: string
+    status: string
+    createdAt: string
+  }[] {
+    const rows = this.db.raw
+      .prepare(
+        `SELECT r.id, r.account_id, r.note, r.status, r.created_at, a.username
+         FROM password_reset_requests r LEFT JOIN accounts a ON a.id = r.account_id
+         ORDER BY CASE r.status WHEN 'open' THEN 0 ELSE 1 END, r.created_at DESC`,
+      )
+      .all() as unknown as Array<{
+      id: number
+      account_id: string
+      note: string
+      status: string
+      created_at: string
+      username: string | null
+    }>
+    return rows.map((row) => ({
+      id: row.id,
+      accountId: row.account_id,
+      username: row.username ?? '',
+      note: row.note,
+      status: row.status,
+      createdAt: row.created_at,
+    }))
+  }
+
+  resolvePasswordResetRequest(id: number, resolvedAt: string): void {
+    this.db.raw
+      .prepare("UPDATE password_reset_requests SET status = 'done', resolved_at = ? WHERE id = ?")
+      .run(resolvedAt, id)
+  }
+
   private accountFromRow(row: AccountRow): Account {
     return {
       id: row.id,

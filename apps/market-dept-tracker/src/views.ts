@@ -421,9 +421,132 @@ ${data.error ? `<div class="alert is-error">${escapeHtml(data.error)}</div>` : '
     </label>
     <div class="form-actions"><button class="btn btn-primary" type="submit">登录</button></div>
   </form>
+  <p class="muted small"><a href="/forgot">忘记密码？</a> · 账户由部门负责人分配</p>
 </section>
 `
   return layout({ title: '登录', active: '', body })
+}
+
+/** The page a locked-out person lands on: ask the head to reset the password. */
+export function renderForgotPage(data: {
+  departmentName: string
+  error?: string
+  sent?: boolean
+  username?: string
+}): string {
+  const body = data.sent
+    ? `
+${pageHead(`${data.departmentName} · 找回密码`, '申请已提交。')}
+<section class="card">
+  <h2>申请已提交</h2>
+  <p class="muted">请让部门负责人或管理员在“账户设置 → 密码重置申请”里处理；重置后的初始密码是 test1234。</p>
+  <div class="form-actions"><a class="btn" href="/login">返回登录</a></div>
+</section>
+`
+    : `
+${pageHead(`${data.departmentName} · 找回密码`, '填写你的岗位账户，提交后由部门负责人或管理员重置为初始密码。')}
+${data.error ? `<div class="alert is-error">${escapeHtml(data.error)}</div>` : ''}
+<section class="card">
+  <h2>找回密码</h2>
+  <form class="task-form" method="post" action="/forgot">
+    <label class="field"><span>岗位账户</span>
+      <input type="text" name="username" value="${escapeHtml(data.username ?? '')}" autocomplete="username" required autofocus>
+    </label>
+    <label class="field"><span>说明（可选）</span>
+      <input type="text" name="note" maxlength="200" placeholder="例如：密码忘了">
+    </label>
+    <div class="form-actions"><button class="btn btn-primary" type="submit">提交申请</button></div>
+  </form>
+  <p class="muted small"><a href="/login">返回登录</a></p>
+</section>
+`
+  return layout({ title: '找回密码', active: '', body })
+}
+
+/** The logged-in person's own account: who they are and a password change. */
+export function renderAccountPage(data: {
+  departmentName: string
+  username: string
+  postName: string
+  isLeader: boolean
+  changed?: boolean
+  error?: string
+}): string {
+  const body = `
+${pageHead('账户设置', '查看账户信息，修改登录密码。')}
+${data.changed ? '<div class="alert">密码已修改，请牢记新密码。</div>' : ''}
+${data.error ? `<div class="alert is-error">${escapeHtml(data.error)}</div>` : ''}
+<section class="card">
+  <h2>账户信息</h2>
+  <dl class="task-meta">
+    <div><dt>账户</dt><dd>${escapeHtml(data.username)}</dd></div>
+    <div><dt>所属岗位</dt><dd>${escapeHtml(data.postName)}</dd></div>
+  </dl>
+</section>
+<section class="card">
+  <h2>修改密码</h2>
+  <form class="task-form" method="post" action="/account/password">
+    <label class="field"><span>当前密码</span>
+      <input type="password" name="current" autocomplete="current-password" required>
+    </label>
+    <label class="field"><span>新密码</span>
+      <input type="password" name="next" autocomplete="new-password" minlength="6" placeholder="至少 6 位" required>
+    </label>
+    <label class="field"><span>确认新密码</span>
+      <input type="password" name="confirm" autocomplete="new-password" minlength="6" required>
+    </label>
+    <div class="form-actions"><button class="btn btn-primary" type="submit">保存新密码</button></div>
+  </form>
+</section>
+${
+  data.isLeader
+    ? `<section class="card">
+  <h2>密码重置申请</h2>
+  <p class="muted small">同事忘记密码时会在“忘记密码”页提交申请，在这里处理。</p>
+  <div class="form-actions"><a class="btn" href="/reset-requests">查看申请</a></div>
+</section>`
+    : ''
+}
+`
+  return layout({ title: '账户设置', active: 'account', body })
+}
+
+/** The head's list of password reset requests. */
+export function renderResetRequestsPage(data: {
+  departmentName: string
+  requests: { id: number; username: string; note: string; status: string; createdAt: string }[]
+  done?: boolean
+}): string {
+  const rows = data.requests
+    .map(
+      (request) => `<tr>
+  <td>${escapeHtml(request.username)}</td>
+  <td>${escapeHtml(request.note || '—')}</td>
+  <td>${escapeHtml(request.createdAt.slice(0, 16).replace('T', ' '))}</td>
+  <td>${
+    request.status === 'open'
+      ? `<form method="post" action="/reset-requests"><input type="hidden" name="id" value="${request.id}"><button class="btn" type="submit">重置为 test1234</button></form>`
+      : '<span class="muted small">已处理</span>'
+  }</td>
+</tr>`,
+    )
+    .join('')
+  const body = `
+${pageHead('密码重置申请', '处理后，该账户的密码会重置为 test1234。')}
+${data.done ? '<div class="alert">已重置该账户的密码。</div>' : ''}
+<section class="card">
+  ${
+    data.requests.length
+      ? `<div class="table-wrap"><table class="table">
+  <thead><tr><th>账户</th><th>说明</th><th>提交时间</th><th>处理</th></tr></thead>
+  <tbody>${rows}</tbody>
+</table></div>`
+      : empty('还没有重置申请。')
+  }
+  <div class="form-actions"><a class="btn" href="/account">返回账户设置</a></div>
+</section>
+`
+  return layout({ title: '密码重置申请', active: 'account', body })
 }
 
 export function renderLedger(data: LedgerData): string {

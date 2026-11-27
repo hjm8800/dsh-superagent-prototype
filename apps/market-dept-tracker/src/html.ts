@@ -34,6 +34,7 @@ const NAV = [
   { key: 'collection', label: '成果采集', href: '/collection' },
   { key: 'ledger', label: '岗位职责', href: '/ledger' },
   { key: 'report', label: '我的填报', href: '/report' },
+  { key: 'account', label: '账户', href: '/account' },
   { key: 'logout', label: '退出', href: '/logout' },
 ]
 
